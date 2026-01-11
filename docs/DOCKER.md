@@ -176,6 +176,52 @@ docker run --rm \
   dsagent run "Analyze this dataset" --data /workspace/data.csv
 ```
 
+## LaTeX Support (Docker Only)
+
+LaTeX is available in the `:full` variant of the Docker image for generating PDF reports and presentations.
+
+### Image Variants
+
+| Tag | Size | LaTeX | Use Case |
+|-----|------|-------|----------|
+| `dsagent:latest` | ~1GB | No | Standard data science tasks |
+| `dsagent:full` | ~1.5GB | Yes | When you need PDF report generation |
+
+```bash
+# Build without LaTeX (default)
+docker build -t dsagent:latest .
+
+# Build with LaTeX
+docker build -t dsagent:full --build-arg INSTALL_LATEX=true .
+```
+
+**Available LaTeX tools (`:full` only):** `pdflatex`, `xelatex`, `latexmk`
+
+### Example: Generate PDF Report
+
+Ask the agent to create a report:
+```
+Create a PDF report summarizing the analysis with charts
+```
+
+The agent can:
+1. Create a `.tex` file with your analysis results
+2. Include generated charts from `artifacts/`
+3. Compile to PDF using `!pdflatex report.tex`
+
+### Manual LaTeX Compilation
+
+```bash
+# Inside the container
+docker exec -it dsagent /bin/bash
+
+# Compile LaTeX
+cd /workspace/artifacts
+pdflatex report.tex
+```
+
+**Note:** LaTeX adds ~500MB to the image size. It's only available in the Docker image, not in pip installations.
+
 ## Building Locally
 
 ```bash

@@ -1,7 +1,14 @@
 # DSAgent Docker Image
 # Provides both CLI and API server for data science tasks
+#
+# Build variants:
+#   docker build -t dsagent:latest .                           # Without LaTeX (~1GB)
+#   docker build -t dsagent:full --build-arg INSTALL_LATEX=true .  # With LaTeX (~1.5GB)
 
 FROM python:3.11-slim
+
+# Build argument for LaTeX installation
+ARG INSTALL_LATEX=false
 
 # Labels
 LABEL maintainer="DSAgent Contributors"
@@ -17,12 +24,23 @@ ENV PYTHONUNBUFFERED=1 \
     DSAGENT_SESSIONS_DIR=/workspace \
     LLM_MODEL=gpt-4o
 
-# Install system dependencies
+# Install system dependencies (base)
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     curl \
     git \
     && rm -rf /var/lib/apt/lists/*
+
+# Install LaTeX (optional, for :full variant)
+RUN if [ "$INSTALL_LATEX" = "true" ]; then \
+    apt-get update && apt-get install -y --no-install-recommends \
+    texlive-latex-base \
+    texlive-latex-extra \
+    texlive-fonts-recommended \
+    texlive-xetex \
+    latexmk \
+    && rm -rf /var/lib/apt/lists/*; \
+    fi
 
 # Create non-root user for security
 RUN useradd --create-home --shell /bin/bash dsagent
