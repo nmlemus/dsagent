@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import asyncio
 import json
+import queue
+import threading
 from datetime import datetime
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING, Any, Dict, Optional, Tuple
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.responses import StreamingResponse
@@ -30,8 +32,39 @@ from dsagent.session import SessionManager
 
 if TYPE_CHECKING:
     from dsagent.agents.conversational import ChatResponse
+    from dsagent.schema.models import PlanState, ExecutionResult
 
 router = APIRouter(dependencies=[Depends(verify_api_key)])
+
+
+def _convert_plan_to_dict(plan: "PlanState") -> Dict[str, Any]:
+    """Convert PlanState to dictionary for JSON serialization."""
+    steps = []
+    if hasattr(plan, "steps"):
+        for step in plan.steps:
+            steps.append({
+                "number": step.number,
+                "description": step.description,
+                "completed": step.completed,
+            })
+    return {
+        "steps": steps,
+        "raw_text": getattr(plan, "raw_text", ""),
+        "total_steps": getattr(plan, "total_steps", len(steps)),
+        "completed_steps": getattr(plan, "completed_steps", 0),
+        "is_complete": getattr(plan, "is_complete", False),
+    }
+
+
+def _convert_execution_result_to_dict(result: "ExecutionResult") -> Dict[str, Any]:
+    """Convert ExecutionResult to dictionary for JSON serialization."""
+    return {
+        "stdout": result.stdout,
+        "stderr": result.stderr,
+        "error": result.error,
+        "images": result.images or [],
+        "success": result.success,
+    }
 
 
 def _convert_chat_response(response: "ChatResponse") -> ChatResponseModel:
@@ -139,11 +172,17 @@ async def chat_stream(
     connection_manager: AgentConnectionManager = Depends(get_connection_manager),
     session_manager: SessionManager = Depends(get_session_manager),
 ) -> StreamingResponse:
-    """Send a chat message and stream the response via SSE.
+    """Send a chat message and stream granular SSE events.
 
-    Server-Sent Events format:
-    - event: response
-    - data: JSON with ChatResponseModel fields
+    Server-Sent Events emitted (in order):
+    - event: thinking        - LLM is processing
+    - event: llm_response    - LLM response text received
+    - event: plan            - Plan extracted from response
+    - event: code_executing  - Code about to execute
+    - event: code_result     - Code execution result
+    - event: round_complete  - Full round data (for compatibility)
+    - event: done            - Stream complete
+    - event: error           - Error occurred
 
     Args:
         session_id: Session ID
@@ -152,7 +191,7 @@ async def chat_stream(
         session_manager: Session manager instance
 
     Returns:
-        Streaming response with SSE events
+        Streaming response with granular SSE events
 
     Raises:
         HTTPException: If session not found
@@ -167,24 +206,84 @@ async def chat_stream(
     # Get or create agent
     agent = await connection_manager.get_or_create_agent(session_id)
 
-    async def generate_events():
-        """Generate SSE events from chat stream."""
+    # Thread-safe queue for callback events
+    event_queue: queue.Queue[Tuple[str, Dict[str, Any]]] = queue.Queue()
+    round_num = 0
+
+    # Define callbacks that put events in the queue
+    def on_thinking():
+        event_queue.put(("thinking", {"message": "Processing..."}))
+
+    def on_llm_response(content: str):
+        event_queue.put(("llm_response", {"content": content}))
+
+    def on_plan_update(plan):
+        event_queue.put(("plan", _convert_plan_to_dict(plan)))
+
+    def on_code_executing(code: str):
+        event_queue.put(("code_executing", {"code": code}))
+
+    def on_code_result(result):
+        event_queue.put(("code_result", _convert_execution_result_to_dict(result)))
+
+    # Register callbacks
+    agent.set_callbacks(
+        on_thinking=on_thinking,
+        on_llm_response=on_llm_response,
+        on_plan_update=on_plan_update,
+        on_code_executing=on_code_executing,
+        on_code_result=on_code_result,
+    )
+
+    # Flag to signal completion
+    stream_done = threading.Event()
+    stream_error: Optional[Exception] = None
+
+    def run_chat_stream():
+        """Run chat_stream in a thread and put events in queue."""
+        nonlocal round_num, stream_error
         try:
-            # Get response generator in thread pool
-            response_gen = await asyncio.to_thread(agent.chat_stream, request.message)
-
-            # Iterate over responses
-            for response in response_gen:
+            for response in agent.chat_stream(request.message):
+                round_num += 1
                 api_response = _convert_chat_response(response)
-                data = api_response.model_dump_json()
-                yield f"event: response\ndata: {data}\n\n"
+                event_queue.put(("round_complete", {
+                    "round": round_num,
+                    **api_response.model_dump(),
+                }))
+            event_queue.put(("done", {}))
+        except Exception as e:
+            stream_error = e
+            event_queue.put(("error", {"error": str(e)}))
+        finally:
+            stream_done.set()
 
-            # Send done event
-            yield f"event: done\ndata: {{}}\n\n"
+    async def generate_events():
+        """Generate SSE events from the queue."""
+        # Start chat in background thread
+        chat_thread = threading.Thread(target=run_chat_stream, daemon=True)
+        chat_thread.start()
+
+        try:
+            while not stream_done.is_set() or not event_queue.empty():
+                try:
+                    # Non-blocking get with timeout to check stream_done
+                    event_type, data = event_queue.get(timeout=0.1)
+                    yield f"event: {event_type}\ndata: {json.dumps(data)}\n\n"
+
+                    if event_type in ("done", "error"):
+                        break
+                except queue.Empty:
+                    # No event yet, continue waiting
+                    await asyncio.sleep(0.01)
+                    continue
 
         except Exception as e:
             error_data = json.dumps({"error": str(e)})
             yield f"event: error\ndata: {error_data}\n\n"
+
+        finally:
+            # Clear callbacks to avoid memory leaks
+            agent.set_callbacks()
 
     return StreamingResponse(
         generate_events(),

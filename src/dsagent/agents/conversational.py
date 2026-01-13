@@ -310,6 +310,8 @@ class ConversationalAgent:
         self._on_plan_update: Optional[Callable[[PlanState], None]] = None
         self._on_code_executing: Optional[Callable[[str], None]] = None
         self._on_code_result: Optional[Callable[[ExecutionResult], None]] = None
+        self._on_thinking: Optional[Callable[[], None]] = None
+        self._on_llm_response: Optional[Callable[[str], None]] = None
 
     @property
     def session(self) -> Optional[Session]:
@@ -337,6 +339,8 @@ class ConversationalAgent:
         on_code_executing: Optional[Callable[[str], None]] = None,
         on_code_result: Optional[Callable[[ExecutionResult], None]] = None,
         on_notebook_change: Optional[Callable[[List[NotebookChange]], None]] = None,
+        on_thinking: Optional[Callable[[], None]] = None,
+        on_llm_response: Optional[Callable[[str], None]] = None,
     ) -> None:
         """Set callbacks for UI updates during autonomous execution.
 
@@ -345,11 +349,15 @@ class ConversationalAgent:
             on_code_executing: Called before code execution
             on_code_result: Called after code execution
             on_notebook_change: Called when user edits notebook in Jupyter
+            on_thinking: Called before LLM request (for "thinking" indicator)
+            on_llm_response: Called when LLM response is received (before code execution)
         """
         self._on_plan_update = on_plan_update
         self._on_code_executing = on_code_executing
         self._on_code_result = on_code_result
         self._on_notebook_change = on_notebook_change
+        self._on_thinking = on_thinking
+        self._on_llm_response = on_llm_response
 
     def start(self, session: Optional[Session] = None) -> None:
         """Start the agent and kernel.
@@ -805,6 +813,10 @@ The tools will be called automatically when you request them."""
 
         Handles MCP tool calls if available - executes tools and calls LLM again with results.
         """
+        # Notify thinking started (for UI updates)
+        if self._on_thinking:
+            self._on_thinking()
+
         # Log request
         if self._session_logger:
             self._session_logger.log_llm_request(
@@ -901,6 +913,10 @@ The tools will be called automatically when you request them."""
                     has_answer="<answer>" in content,
                 )
 
+            # Notify LLM response received (for UI updates)
+            if self._on_llm_response:
+                self._on_llm_response(content)
+
             return content
         except Exception as e:
             # Handle stop parameter not supported
@@ -926,6 +942,10 @@ The tools will be called automatically when you request them."""
                         has_plan="<plan>" in content,
                         has_answer="<answer>" in content,
                     )
+
+                # Notify LLM response received (for UI updates)
+                if self._on_llm_response:
+                    self._on_llm_response(content)
 
                 return content
 
