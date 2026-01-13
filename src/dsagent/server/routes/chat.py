@@ -75,6 +75,211 @@ def _convert_execution_result_to_dict(result: "ExecutionResult") -> Dict[str, An
 # =============================================================================
 
 import re
+from pathlib import Path
+
+
+# =============================================================================
+# Helper functions for reading events.jsonl
+# =============================================================================
+
+
+def _parse_events_jsonl(events_file: Path) -> list[Dict[str, Any]]:
+    """Parse events.jsonl file and return list of events."""
+    events = []
+    if not events_file.exists():
+        return events
+
+    with open(events_file, "r") as f:
+        for line in f:
+            line = line.strip()
+            if line:
+                try:
+                    events.append(json.loads(line))
+                except json.JSONDecodeError:
+                    continue
+    return events
+
+
+def _events_to_turns(events: list[Dict[str, Any]]) -> list[ConversationTurn]:
+    """Convert events from events.jsonl into conversation turns.
+
+    A turn consists of:
+    - Optional user_message (only at start of user interaction)
+    - llm_response (the assistant's response)
+    - Optional code_execution (if code was executed)
+    - Optional plan_update (latest plan state)
+    """
+    turns: list[ConversationTurn] = []
+    round_num = 0
+    current_user_message: Optional[str] = None
+    current_plan: Optional[PlanResponse] = None
+
+    i = 0
+    while i < len(events):
+        event = events[i]
+        event_type = event.get("type", "")
+        data = event.get("data", {})
+        timestamp_str = event.get("timestamp", "")
+
+        # Track user messages
+        if event_type == "user_message":
+            current_user_message = data.get("message", "")
+            i += 1
+            continue
+
+        # Track plan updates
+        if event_type == "plan_update":
+            plan_text = data.get("plan_text", "")
+            completed_steps = data.get("completed_steps", 0)
+            total_steps = data.get("total_steps", 0)
+
+            # Parse plan steps from plan_text
+            steps = []
+            step_pattern = re.compile(r"(\d+)\.\s*\[([ xX])\]\s*(.+)")
+            for line in plan_text.split("\n"):
+                step_match = step_pattern.match(line.strip())
+                if step_match:
+                    number = int(step_match.group(1))
+                    completed = step_match.group(2).lower() == "x"
+                    description = step_match.group(3).strip()
+                    steps.append(PlanStepResponse(
+                        number=number,
+                        description=description,
+                        completed=completed,
+                    ))
+
+            if steps:
+                current_plan = PlanResponse(
+                    steps=steps,
+                    raw_text=plan_text,
+                    total_steps=total_steps,
+                    completed_steps=completed_steps,
+                    is_complete=completed_steps == total_steps and total_steps > 0,
+                )
+            i += 1
+            continue
+
+        # Process LLM response - this is the core of a turn
+        if event_type == "llm_response":
+            round_num += 1
+            response_content = data.get("response", "")
+            has_code = data.get("has_code", False)
+            has_plan = data.get("has_plan", False)
+            has_answer = data.get("has_answer", False)
+
+            # Parse timestamp
+            try:
+                timestamp = datetime.fromisoformat(timestamp_str.replace("Z", "+00:00"))
+            except (ValueError, AttributeError):
+                timestamp = datetime.utcnow()
+
+            # Extract code from response
+            code = _extract_code_from_content(response_content) if has_code else None
+
+            # Extract answer from response
+            answer = _extract_answer_from_content(response_content) if has_answer else None
+
+            # Extract plan from response content (most accurate source)
+            # Parse from content first, fallback to current_plan if parsing fails
+            plan = None
+            if has_plan:
+                plan = _extract_plan_from_content(response_content)
+            if plan is None and current_plan is not None:
+                plan = current_plan
+
+            # Look ahead for code_execution event
+            execution_result = None
+            j = i + 1
+            while j < len(events):
+                next_event = events[j]
+                next_type = next_event.get("type", "")
+
+                # Skip llm_request events
+                if next_type == "llm_request":
+                    j += 1
+                    continue
+
+                # Found code_execution
+                if next_type == "code_execution":
+                    exec_data = next_event.get("data", {})
+                    success = exec_data.get("success", True)
+                    output = exec_data.get("output", "")
+                    error = exec_data.get("error")
+                    images = exec_data.get("images", [])
+
+                    execution_result = ExecutionResultResponse(
+                        stdout=output if success else "",
+                        stderr="",
+                        error=error if not success else None,
+                        images=images,
+                        success=success,
+                    )
+                    i = j  # Move past code_execution
+                    break
+
+                # Found plan_update - process it and continue looking
+                if next_type == "plan_update":
+                    plan_data = next_event.get("data", {})
+                    plan_text = plan_data.get("plan_text", "")
+                    completed_steps = plan_data.get("completed_steps", 0)
+                    total_steps = plan_data.get("total_steps", 0)
+
+                    steps = []
+                    step_pattern = re.compile(r"(\d+)\.\s*\[([ xX])\]\s*(.+)")
+                    for line in plan_text.split("\n"):
+                        step_match = step_pattern.match(line.strip())
+                        if step_match:
+                            number = int(step_match.group(1))
+                            completed = step_match.group(2).lower() == "x"
+                            description = step_match.group(3).strip()
+                            steps.append(PlanStepResponse(
+                                number=number,
+                                description=description,
+                                completed=completed,
+                            ))
+
+                    if steps:
+                        current_plan = PlanResponse(
+                            steps=steps,
+                            raw_text=plan_text,
+                            total_steps=total_steps,
+                            completed_steps=completed_steps,
+                            is_complete=completed_steps == total_steps and total_steps > 0,
+                        )
+                        plan = current_plan
+                    j += 1
+                    continue
+
+                # Any other event type means no code_execution for this response
+                break
+
+            # Determine if this turn completed the task
+            is_complete = has_answer and (plan is None or (plan and plan.is_complete))
+
+            turn = ConversationTurn(
+                round=round_num,
+                timestamp=timestamp,
+                user_message=current_user_message,
+                content=response_content,
+                code=code,
+                execution_result=execution_result,
+                plan=plan,
+                has_answer=has_answer,
+                answer=answer,
+                thinking=None,
+                is_complete=is_complete,
+            )
+            turns.append(turn)
+
+            # Clear user message after first turn that uses it
+            current_user_message = None
+            i += 1
+            continue
+
+        # Skip other event types
+        i += 1
+
+    return turns
 
 
 def _extract_code_from_content(content: str) -> Optional[str]:
@@ -450,6 +655,9 @@ async def get_turns(
     Returns conversation turns in the same format as `round_complete` SSE events,
     allowing the UI to render historical messages identically to live streaming.
 
+    This endpoint reads from the events.jsonl log file which contains the complete
+    history of all events (user messages, LLM responses, code executions, etc.).
+
     Each turn contains:
     - User message (if any - autonomous rounds have no user message)
     - Assistant response with parsed code, plan, and execution result
@@ -474,89 +682,27 @@ async def get_turns(
             detail=f"Session {session_id} not found",
         )
 
-    # Get messages from history
-    all_messages = session.history.messages if session.history else []
+    # Get workspace path from session and construct events.jsonl path
+    workspace_path = session.workspace_path
+    if workspace_path:
+        events_file = Path(workspace_path) / "logs" / "events.jsonl"
+    else:
+        # Fallback: try to find events.jsonl in default location
+        events_file = Path(f"workspace/runs/{session_id}/logs/events.jsonl")
 
-    # Group messages into turns
-    # A turn consists of: [optional USER] -> ASSISTANT -> [optional EXECUTION]
-    turns: list[ConversationTurn] = []
-    round_num = 0
-    i = 0
+    # Parse events from events.jsonl
+    events = _parse_events_jsonl(events_file)
 
-    while i < len(all_messages):
-        msg = all_messages[i]
+    if not events:
+        # No events found - return empty response
+        return TurnsResponse(
+            turns=[],
+            total=0,
+            has_more=False,
+        )
 
-        # Skip system messages
-        if msg.role == MessageRole.SYSTEM:
-            i += 1
-            continue
-
-        # Start of a turn - look for user message
-        user_message = None
-        if msg.role == MessageRole.USER:
-            # Check if this is actual user input or execution context
-            # Execution context messages usually start with "Code execution"
-            if not msg.content.startswith("Code execution"):
-                user_message = msg.content
-            i += 1
-            if i >= len(all_messages):
-                break
-            msg = all_messages[i]
-
-        # Expect assistant message
-        if msg.role == MessageRole.ASSISTANT:
-            round_num += 1
-            assistant_content = msg.content
-            assistant_metadata = msg.metadata or {}
-            timestamp = msg.timestamp
-
-            # Parse content for code, plan, answer
-            code = _extract_code_from_content(assistant_content)
-            # Also check metadata for code (more reliable)
-            if not code and "code" in assistant_metadata:
-                code = assistant_metadata["code"]
-
-            plan = _extract_plan_from_content(assistant_content)
-            answer = _extract_answer_from_content(assistant_content)
-            has_answer = _has_answer_tag(assistant_content)
-
-            i += 1
-
-            # Look for execution result
-            execution_result = None
-            if i < len(all_messages):
-                next_msg = all_messages[i]
-                if next_msg.role == MessageRole.EXECUTION:
-                    exec_metadata = next_msg.metadata or {}
-                    execution_result = ExecutionResultResponse(
-                        stdout=exec_metadata.get("output", ""),
-                        stderr="",
-                        error=exec_metadata.get("output", "") if not exec_metadata.get("success", True) else None,
-                        images=exec_metadata.get("images", []),
-                        success=exec_metadata.get("success", True),
-                    )
-                    i += 1
-
-            # Determine if this turn completed the task
-            is_complete = has_answer and (plan is None or (plan and plan.is_complete))
-
-            turn = ConversationTurn(
-                round=round_num,
-                timestamp=timestamp,
-                user_message=user_message,
-                content=assistant_content,
-                code=code,
-                execution_result=execution_result,
-                plan=plan,
-                has_answer=has_answer,
-                answer=answer,
-                thinking=None,  # Not stored in history currently
-                is_complete=is_complete,
-            )
-            turns.append(turn)
-        else:
-            # Unexpected message type, skip
-            i += 1
+    # Convert events to turns
+    turns = _events_to_turns(events)
 
     # Calculate total and pagination
     total = len(turns)

@@ -500,6 +500,12 @@ GET /sessions/{session_id}/messages?limit=50&offset=0&role=assistant
 Returns conversation history as structured turns, matching the `round_complete` SSE event format.
 **Use this endpoint to load historical messages** so the UI can render them identically to live streaming.
 
+!!! info "Data Source"
+    This endpoint reads from `{workspace}/logs/events.jsonl` which contains the complete
+    event history including all LLM responses, code executions, and plan updates.
+    This ensures the UI receives the full conversation history, even after internal
+    summarization events.
+
 ```http
 GET /sessions/{session_id}/turns?limit=50&offset=0
 ```
