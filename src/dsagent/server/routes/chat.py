@@ -21,14 +21,17 @@ from dsagent.server.manager import AgentConnectionManager
 from dsagent.server.models import (
     ChatRequest,
     ChatResponseModel,
+    ConversationTurn,
     ErrorResponse,
     ExecutionResultResponse,
     MessageResponse,
     MessagesResponse,
     PlanResponse,
     PlanStepResponse,
+    TurnsResponse,
 )
 from dsagent.session import SessionManager
+from dsagent.session.models import MessageRole
 
 if TYPE_CHECKING:
     from dsagent.agents.conversational import ChatResponse
@@ -65,6 +68,72 @@ def _convert_execution_result_to_dict(result: "ExecutionResult") -> Dict[str, An
         "images": result.images or [],
         "success": result.success,
     }
+
+
+# =============================================================================
+# Helper functions for parsing message content
+# =============================================================================
+
+import re
+
+
+def _extract_code_from_content(content: str) -> Optional[str]:
+    """Extract code from <code> tags in content."""
+    match = re.search(r"<code>(.*?)(?:</code>|$)", content, re.DOTALL)
+    if match:
+        return match.group(1).strip()
+    return None
+
+
+def _extract_answer_from_content(content: str) -> Optional[str]:
+    """Extract answer from <answer> tags in content."""
+    match = re.search(r"<answer>(.*?)(?:</answer>|$)", content, re.DOTALL)
+    if match:
+        return match.group(1).strip()
+    return None
+
+
+def _extract_plan_from_content(content: str) -> Optional[PlanResponse]:
+    """Extract and parse plan from <plan> tags in content."""
+    match = re.search(r"<plan>(.*?)(?:</plan>|$)", content, re.DOTALL)
+    if not match:
+        return None
+
+    raw_text = match.group(1).strip()
+    steps = []
+    completed_count = 0
+
+    # Parse plan steps: "1. [x] Description" or "1. [ ] Description"
+    step_pattern = re.compile(r"(\d+)\.\s*\[([ xX])\]\s*(.+)")
+    for line in raw_text.split("\n"):
+        step_match = step_pattern.match(line.strip())
+        if step_match:
+            number = int(step_match.group(1))
+            completed = step_match.group(2).lower() == "x"
+            description = step_match.group(3).strip()
+            steps.append(PlanStepResponse(
+                number=number,
+                description=description,
+                completed=completed,
+            ))
+            if completed:
+                completed_count += 1
+
+    if not steps:
+        return None
+
+    return PlanResponse(
+        steps=steps,
+        raw_text=raw_text,
+        total_steps=len(steps),
+        completed_steps=completed_count,
+        is_complete=completed_count == len(steps),
+    )
+
+
+def _has_answer_tag(content: str) -> bool:
+    """Check if content contains <answer> tag."""
+    return "<answer>" in content
 
 
 def _convert_chat_response(response: "ChatResponse") -> ChatResponseModel:
@@ -360,6 +429,144 @@ async def get_messages(
 
     return MessagesResponse(
         messages=message_responses,
+        total=total,
+        has_more=has_more,
+    )
+
+
+@router.get(
+    "/sessions/{session_id}/turns",
+    response_model=TurnsResponse,
+    responses={404: {"model": ErrorResponse}},
+)
+async def get_turns(
+    session_id: str,
+    limit: int = Query(50, ge=1, le=200),
+    offset: int = Query(0, ge=0),
+    session_manager: SessionManager = Depends(get_session_manager),
+) -> TurnsResponse:
+    """Get conversation history as structured turns.
+
+    Returns conversation turns in the same format as `round_complete` SSE events,
+    allowing the UI to render historical messages identically to live streaming.
+
+    Each turn contains:
+    - User message (if any - autonomous rounds have no user message)
+    - Assistant response with parsed code, plan, and execution result
+
+    Args:
+        session_id: Session ID
+        limit: Maximum number of turns to return
+        offset: Number of turns to skip
+        session_manager: Session manager instance
+
+    Returns:
+        List of conversation turns
+
+    Raises:
+        HTTPException: If session not found
+    """
+    session = session_manager.load_session(session_id)
+
+    if session is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Session {session_id} not found",
+        )
+
+    # Get messages from history
+    all_messages = session.history.messages if session.history else []
+
+    # Group messages into turns
+    # A turn consists of: [optional USER] -> ASSISTANT -> [optional EXECUTION]
+    turns: list[ConversationTurn] = []
+    round_num = 0
+    i = 0
+
+    while i < len(all_messages):
+        msg = all_messages[i]
+
+        # Skip system messages
+        if msg.role == MessageRole.SYSTEM:
+            i += 1
+            continue
+
+        # Start of a turn - look for user message
+        user_message = None
+        if msg.role == MessageRole.USER:
+            # Check if this is actual user input or execution context
+            # Execution context messages usually start with "Code execution"
+            if not msg.content.startswith("Code execution"):
+                user_message = msg.content
+            i += 1
+            if i >= len(all_messages):
+                break
+            msg = all_messages[i]
+
+        # Expect assistant message
+        if msg.role == MessageRole.ASSISTANT:
+            round_num += 1
+            assistant_content = msg.content
+            assistant_metadata = msg.metadata or {}
+            timestamp = msg.timestamp
+
+            # Parse content for code, plan, answer
+            code = _extract_code_from_content(assistant_content)
+            # Also check metadata for code (more reliable)
+            if not code and "code" in assistant_metadata:
+                code = assistant_metadata["code"]
+
+            plan = _extract_plan_from_content(assistant_content)
+            answer = _extract_answer_from_content(assistant_content)
+            has_answer = _has_answer_tag(assistant_content)
+
+            i += 1
+
+            # Look for execution result
+            execution_result = None
+            if i < len(all_messages):
+                next_msg = all_messages[i]
+                if next_msg.role == MessageRole.EXECUTION:
+                    exec_metadata = next_msg.metadata or {}
+                    execution_result = ExecutionResultResponse(
+                        stdout=exec_metadata.get("output", ""),
+                        stderr="",
+                        error=exec_metadata.get("output", "") if not exec_metadata.get("success", True) else None,
+                        images=exec_metadata.get("images", []),
+                        success=exec_metadata.get("success", True),
+                    )
+                    i += 1
+
+            # Determine if this turn completed the task
+            is_complete = has_answer and (plan is None or (plan and plan.is_complete))
+
+            turn = ConversationTurn(
+                round=round_num,
+                timestamp=timestamp,
+                user_message=user_message,
+                content=assistant_content,
+                code=code,
+                execution_result=execution_result,
+                plan=plan,
+                has_answer=has_answer,
+                answer=answer,
+                thinking=None,  # Not stored in history currently
+                is_complete=is_complete,
+            )
+            turns.append(turn)
+        else:
+            # Unexpected message type, skip
+            i += 1
+
+    # Calculate total and pagination
+    total = len(turns)
+    has_more = offset + limit < total
+
+    # Apply pagination
+    paginated_turns = turns[offset : offset + limit]
+
+    return TurnsResponse(
+        turns=paginated_turns,
         total=total,
         has_more=has_more,
     )

@@ -495,6 +495,87 @@ GET /sessions/{session_id}/messages?limit=50&offset=0&role=assistant
 }
 ```
 
+### Get Conversation Turns (Recommended for UI)
+
+Returns conversation history as structured turns, matching the `round_complete` SSE event format.
+**Use this endpoint to load historical messages** so the UI can render them identically to live streaming.
+
+```http
+GET /sessions/{session_id}/turns?limit=50&offset=0
+```
+
+**Query Parameters:**
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `limit` | int | 50 | Max turns to return (1-200) |
+| `offset` | int | 0 | Skip N turns |
+
+**Response:**
+```json
+{
+  "turns": [
+    {
+      "round": 1,
+      "timestamp": "2026-01-12T21:54:47.900Z",
+      "user_message": "Analyze the iris dataset and create visualizations",
+      "content": "I'll analyze the iris dataset...\n\n<plan>\n1. [ ] Load data\n</plan>\n\n<code>\nimport pandas as pd\n</code>",
+      "code": "import pandas as pd\ndf = pd.read_csv('data/iris.csv')",
+      "execution_result": {
+        "stdout": "   sepal.length  sepal.width...",
+        "stderr": "",
+        "error": null,
+        "images": [],
+        "success": true
+      },
+      "plan": {
+        "steps": [
+          {"number": 1, "description": "Load data", "completed": false}
+        ],
+        "total_steps": 3,
+        "completed_steps": 0,
+        "is_complete": false
+      },
+      "has_answer": false,
+      "answer": null,
+      "thinking": null,
+      "is_complete": false
+    },
+    {
+      "round": 2,
+      "timestamp": "2026-01-12T21:54:52.100Z",
+      "user_message": null,
+      "content": "Now I'll create visualizations...",
+      "code": "import matplotlib.pyplot as plt\n...",
+      "execution_result": {...},
+      "plan": {...},
+      "has_answer": false,
+      "answer": null,
+      "thinking": null,
+      "is_complete": false
+    }
+  ],
+  "total": 6,
+  "has_more": false
+}
+```
+
+**Note:** `user_message` is `null` for autonomous continuation rounds (when the agent continues without user input).
+
+**UI Usage Pattern:**
+```typescript
+// On session load, fetch historical turns
+const history = await fetch(`/api/v1/sessions/${sessionId}/turns`);
+const { turns } = await history.json();
+
+// Render each turn using the same component as round_complete events
+turns.forEach(turn => renderRoundComplete(turn));
+
+// For live streaming, connect to SSE
+const eventSource = connectToStream(sessionId);
+eventSource.on('round_complete', renderRoundComplete);
+```
+
 ---
 
 ## Files & Artifacts

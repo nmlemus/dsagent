@@ -198,6 +198,40 @@ class MessagesResponse(BaseModel):
     has_more: bool = Field(False, description="Whether there are more messages")
 
 
+class ConversationTurn(BaseModel):
+    """A single turn in the conversation (user message + agent response).
+
+    This matches the structure of `round_complete` SSE events so the UI
+    can render historical messages the same way as live streaming.
+    """
+
+    round: int = Field(..., description="Turn/round number")
+    timestamp: datetime = Field(..., description="Timestamp of the turn")
+
+    # User message (null for autonomous continuation rounds)
+    user_message: Optional[str] = Field(None, description="User's message if any")
+
+    # Agent response - same structure as ChatResponseModel
+    content: str = Field(..., description="Full LLM response text")
+    code: Optional[str] = Field(None, description="Extracted code if any")
+    execution_result: Optional[ExecutionResultResponse] = Field(
+        None, description="Code execution result"
+    )
+    plan: Optional[PlanResponse] = Field(None, description="Plan if extracted")
+    has_answer: bool = Field(False, description="Whether response contains final answer")
+    answer: Optional[str] = Field(None, description="Final answer if present")
+    thinking: Optional[str] = Field(None, description="Agent's thinking process")
+    is_complete: bool = Field(False, description="Whether the task is complete")
+
+
+class TurnsResponse(BaseModel):
+    """Response for conversation turns (structured history)."""
+
+    turns: List[ConversationTurn] = Field(default_factory=list)
+    total: int = Field(0, description="Total number of turns")
+    has_more: bool = Field(False, description="Whether there are more turns")
+
+
 # =============================================================================
 # WebSocket Event Models
 # =============================================================================
