@@ -348,6 +348,29 @@ class ConversationalAgent:
                 timeout=self.config.hitl_timeout,
             )
 
+    def set_model(self, model: str) -> None:
+        """Change LLM model at runtime.
+
+        The new model will be used for all subsequent LLM calls.
+        Does not affect any in-progress calls.
+
+        Args:
+            model: New model to use (e.g., 'gpt-4o', 'claude-sonnet-4-20250514')
+        """
+        from dsagent.llm.config import validate_configuration
+
+        # Validate model configuration
+        validate_configuration(model)
+
+        old_model = self.config.model
+        self.config.model = model
+
+        # Log the change
+        if self._session_logger:
+            self._session_logger._file_logger.info(
+                f"Model changed from {old_model} to {model}"
+            )
+
     def set_callbacks(
         self,
         on_plan_update: Optional[Callable[[PlanState], None]] = None,

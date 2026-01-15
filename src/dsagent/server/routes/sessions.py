@@ -217,6 +217,18 @@ async def update_session(
         # Update running agent if exists
         connection_manager.set_agent_hitl_mode(session_id, request.hitl_mode)
 
+    # Update model
+    if request.model is not None:
+        session.model = request.model
+        # Update running agent if exists
+        try:
+            connection_manager.set_agent_model(session_id, request.model)
+        except Exception as e:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Invalid model: {request.model}. Error: {str(e)}",
+            )
+
     # Save session
     session.touch()
     session_manager.save_session(session)

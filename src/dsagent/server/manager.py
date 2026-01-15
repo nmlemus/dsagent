@@ -201,6 +201,24 @@ class AgentConnectionManager:
         logger.info(f"Changed HITL mode for session {session_id} to {hitl_mode}")
         return True
 
+    def set_agent_model(self, session_id: str, model: str) -> bool:
+        """Change LLM model for an agent at runtime.
+
+        Args:
+            session_id: Session ID
+            model: New model to use
+
+        Returns:
+            True if successful, False if agent not found
+        """
+        agent = self._agents.get(session_id)
+        if not agent:
+            return False
+
+        agent.set_model(model)
+        logger.info(f"Changed model for session {session_id} to {model}")
+        return True
+
     async def get_or_create_agent(
         self,
         session_id: str,

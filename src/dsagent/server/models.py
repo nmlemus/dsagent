@@ -58,6 +58,7 @@ class UpdateSessionRequest(BaseModel):
     name: Optional[str] = Field(None, description="New name for the session")
     status: Optional[str] = Field(None, description="New status (active, paused, completed)")
     hitl_mode: Optional[str] = Field(None, description="HITL mode (none, plan_only, on_error, plan_and_answer, full)")
+    model: Optional[str] = Field(None, description="LLM model (e.g., gpt-4o, claude-sonnet-4-20250514)")
 
 
 class ChatRequest(BaseModel):
