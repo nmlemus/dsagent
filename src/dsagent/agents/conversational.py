@@ -312,6 +312,7 @@ class ConversationalAgent:
         self._on_code_result: Optional[Callable[[ExecutionResult], None]] = None
         self._on_thinking: Optional[Callable[[], None]] = None
         self._on_llm_response: Optional[Callable[[str], None]] = None
+        self._on_hitl_request: Optional[Callable[[str, Optional[PlanState], Optional[str], Optional[str]], None]] = None
 
     @property
     def session(self) -> Optional[Session]:
@@ -333,6 +334,20 @@ class ConversationalAgent:
         """Access to HITL gateway for providing feedback."""
         return self._hitl_gateway
 
+    def set_hitl_mode(self, mode: HITLMode) -> None:
+        """Change HITL mode at runtime.
+
+        Args:
+            mode: New HITL mode to use
+        """
+        if mode == HITLMode.NONE:
+            self._hitl_gateway = None
+        else:
+            self._hitl_gateway = HITLGateway(
+                mode=mode,
+                timeout=self.config.hitl_timeout,
+            )
+
     def set_callbacks(
         self,
         on_plan_update: Optional[Callable[[PlanState], None]] = None,
@@ -341,6 +356,7 @@ class ConversationalAgent:
         on_notebook_change: Optional[Callable[[List[NotebookChange]], None]] = None,
         on_thinking: Optional[Callable[[], None]] = None,
         on_llm_response: Optional[Callable[[str], None]] = None,
+        on_hitl_request: Optional[Callable[[str, Optional[PlanState], Optional[str], Optional[str]], None]] = None,
     ) -> None:
         """Set callbacks for UI updates during autonomous execution.
 
@@ -351,6 +367,7 @@ class ConversationalAgent:
             on_notebook_change: Called when user edits notebook in Jupyter
             on_thinking: Called before LLM request (for "thinking" indicator)
             on_llm_response: Called when LLM response is received (before code execution)
+            on_hitl_request: Called when HITL approval is needed (request_type, plan, code, error)
         """
         self._on_plan_update = on_plan_update
         self._on_code_executing = on_code_executing
@@ -358,6 +375,7 @@ class ConversationalAgent:
         self._on_notebook_change = on_notebook_change
         self._on_thinking = on_thinking
         self._on_llm_response = on_llm_response
+        self._on_hitl_request = on_hitl_request
 
     def start(self, session: Optional[Session] = None) -> None:
         """Start the agent and kernel.
@@ -1091,6 +1109,29 @@ The tools will be called automatically when you request them."""
                 total_steps=len(response.plan.steps),
             )
 
+        # HITL: Check if we need plan approval
+        # Only block if on_hitl_request callback is set (API/streaming use this)
+        # CLI handles HITL externally and doesn't set this callback
+        if (response.plan and self._hitl_gateway and
+            self._hitl_gateway.should_pause_for_plan() and self._on_hitl_request):
+            # Notify external handler (streaming endpoint)
+            self._on_hitl_request("plan", response.plan, None, None)
+
+            # Request approval and wait (blocking)
+            self._hitl_gateway.request_plan_approval(response.plan)
+            feedback = self._hitl_gateway.wait_for_feedback()
+
+            # Handle feedback
+            if feedback:
+                from dsagent.schema.models import HITLAction
+                if feedback.action == HITLAction.REJECT:
+                    response.is_complete = True
+                    response.answer = "Task aborted by user."
+                    if self._session:
+                        self._session.history.add_assistant(response_text)
+                    return response
+                # APPROVE or MODIFY: continue execution
+
         # Execute code if present
         if response.code:
             step_desc = self._get_current_step_desc()
@@ -1282,6 +1323,30 @@ The tools will be called automatically when you request them."""
                 completed_steps=completed,
                 total_steps=len(response.plan.steps),
             )
+
+        # HITL: Check if we need plan approval (only for initial plan)
+        # Only block if on_hitl_request callback is set (API/streaming use this)
+        # CLI handles HITL externally and doesn't set this callback
+        if (response.plan and self._hitl_gateway and
+            self._hitl_gateway.should_pause_for_plan() and self._on_hitl_request):
+            # Notify external handler (streaming endpoint)
+            self._on_hitl_request("plan", response.plan, None, None)
+
+            # Request approval and wait (blocking)
+            self._hitl_gateway.request_plan_approval(response.plan)
+            feedback = self._hitl_gateway.wait_for_feedback()
+
+            # Handle feedback
+            if feedback:
+                from dsagent.schema.models import HITLAction
+                if feedback.action == HITLAction.REJECT:
+                    response.is_complete = True
+                    response.answer = "Task aborted by user."
+                    if self._session:
+                        self._session.history.add_assistant(response_text)
+                    yield response
+                    return
+                # APPROVE or MODIFY: continue execution
 
         # Execute code if present
         if response.code:

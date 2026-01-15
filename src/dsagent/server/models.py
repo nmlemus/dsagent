@@ -25,6 +25,9 @@ class WebSocketEventType(str, Enum):
     ERROR = "error"
     COMPLETE = "complete"
     DISCONNECTED = "disconnected"
+    # HITL events
+    HITL_REQUEST = "hitl_request"  # Server requesting human input
+    HITL_RESPONSE = "hitl_response"  # Confirmation that feedback was received
 
 
 class WebSocketMessageType(str, Enum):
@@ -54,6 +57,7 @@ class UpdateSessionRequest(BaseModel):
 
     name: Optional[str] = Field(None, description="New name for the session")
     status: Optional[str] = Field(None, description="New status (active, paused, completed)")
+    hitl_mode: Optional[str] = Field(None, description="HITL mode (none, plan_only, on_error, plan_and_answer, full)")
 
 
 class ChatRequest(BaseModel):
@@ -76,6 +80,13 @@ class WebSocketMessage(BaseModel):
     code: Optional[str] = Field(None, description="Code to execute (for execute)")
     approved: Optional[bool] = Field(None, description="Approval status (for approve)")
     feedback: Optional[str] = Field(None, description="Optional feedback message")
+    # Extended HITL fields
+    action: Optional[str] = Field(
+        None,
+        description="HITL action: approve, reject, modify, retry, skip, feedback",
+    )
+    modified_plan: Optional[str] = Field(None, description="Modified plan text")
+    modified_code: Optional[str] = Field(None, description="Modified code")
 
 
 # =============================================================================
@@ -327,6 +338,49 @@ class WebSocketEvent(BaseModel):
         return cls(
             type=WebSocketEventType.COMPLETE,
             data={"message": "Task completed"},
+            session_id=session_id,
+        )
+
+    @classmethod
+    def hitl_request(
+        cls,
+        session_id: str,
+        request_type: str,
+        plan: Optional[Dict[str, Any]] = None,
+        code: Optional[str] = None,
+        error: Optional[str] = None,
+        answer: Optional[str] = None,
+    ) -> "WebSocketEvent":
+        """Create a HITL request event.
+
+        Args:
+            session_id: Session ID
+            request_type: Type of request (plan, code, error, answer)
+            plan: Plan data if requesting plan approval
+            code: Code if requesting code approval or showing error context
+            error: Error message if requesting error guidance
+            answer: Answer if requesting answer approval
+        """
+        return cls(
+            type=WebSocketEventType.HITL_REQUEST,
+            data={
+                "request_type": request_type,
+                "plan": plan,
+                "code": code,
+                "error": error,
+                "answer": answer,
+            },
+            session_id=session_id,
+        )
+
+    @classmethod
+    def hitl_response(
+        cls, session_id: str, accepted: bool, message: Optional[str] = None
+    ) -> "WebSocketEvent":
+        """Create a HITL response confirmation event."""
+        return cls(
+            type=WebSocketEventType.HITL_RESPONSE,
+            data={"accepted": accepted, "message": message},
             session_id=session_id,
         )
 

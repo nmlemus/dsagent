@@ -174,23 +174,116 @@ async def chat_websocket(
                         )
 
                 elif message.type == WebSocketMessageType.APPROVE:
-                    # Handle HITL approval
-                    # TODO: Implement HITL approval flow
-                    await connection_manager.send_to(
-                        websocket,
-                        WebSocketEvent.response(
-                            session_id,
-                            f"Approval received: {message.approved}",
-                        ),
-                    )
+                    # Handle HITL approval/rejection/modification
+                    agent = connection_manager.get_agent(session_id)
+                    if not agent or not agent.hitl:
+                        await connection_manager.send_to(
+                            websocket,
+                            WebSocketEvent.error(
+                                session_id, "No HITL session active for this agent"
+                            ),
+                        )
+                        continue
+
+                    hitl = agent.hitl
+                    if not hitl.is_awaiting_feedback:
+                        await connection_manager.send_to(
+                            websocket,
+                            WebSocketEvent.error(
+                                session_id, "Agent is not awaiting feedback"
+                            ),
+                        )
+                        continue
+
+                    # Determine action from message
+                    action = message.action or ("approve" if message.approved else "reject")
+
+                    if action == "approve":
+                        hitl.approve(message.feedback)
+                        await connection_manager.send_to(
+                            websocket,
+                            WebSocketEvent.hitl_response(
+                                session_id, accepted=True, message="Approved"
+                            ),
+                        )
+                    elif action == "reject":
+                        hitl.reject(message.feedback)
+                        await connection_manager.send_to(
+                            websocket,
+                            WebSocketEvent.hitl_response(
+                                session_id, accepted=True, message="Rejected - task aborted"
+                            ),
+                        )
+                    elif action == "modify":
+                        if message.modified_plan:
+                            hitl.modify_plan(message.modified_plan, message.feedback)
+                        elif message.modified_code:
+                            hitl.modify_code(message.modified_code, message.feedback)
+                        else:
+                            await connection_manager.send_to(
+                                websocket,
+                                WebSocketEvent.error(
+                                    session_id,
+                                    "Modify action requires modified_plan or modified_code",
+                                ),
+                            )
+                            continue
+                        await connection_manager.send_to(
+                            websocket,
+                            WebSocketEvent.hitl_response(
+                                session_id, accepted=True, message="Modification accepted"
+                            ),
+                        )
+                    elif action == "retry":
+                        hitl.retry(message.feedback)
+                        await connection_manager.send_to(
+                            websocket,
+                            WebSocketEvent.hitl_response(
+                                session_id, accepted=True, message="Retrying"
+                            ),
+                        )
+                    elif action == "skip":
+                        hitl.skip(message.feedback)
+                        await connection_manager.send_to(
+                            websocket,
+                            WebSocketEvent.hitl_response(
+                                session_id, accepted=True, message="Step skipped"
+                            ),
+                        )
+                    elif action == "feedback":
+                        hitl.send_feedback(message.feedback or "")
+                        await connection_manager.send_to(
+                            websocket,
+                            WebSocketEvent.hitl_response(
+                                session_id, accepted=True, message="Feedback sent"
+                            ),
+                        )
+                    else:
+                        await connection_manager.send_to(
+                            websocket,
+                            WebSocketEvent.error(
+                                session_id, f"Unknown HITL action: {action}"
+                            ),
+                        )
 
                 elif message.type == WebSocketMessageType.CANCEL:
-                    # Handle cancellation
-                    # TODO: Implement task cancellation
-                    await connection_manager.send_to(
-                        websocket,
-                        WebSocketEvent.response(session_id, "Cancellation not yet implemented"),
-                    )
+                    # Handle cancellation by rejecting any pending HITL
+                    agent = connection_manager.get_agent(session_id)
+                    if agent and agent.hitl and agent.hitl.is_awaiting_feedback:
+                        agent.hitl.reject("Cancelled by user")
+                        await connection_manager.send_to(
+                            websocket,
+                            WebSocketEvent.hitl_response(
+                                session_id, accepted=True, message="Task cancelled"
+                            ),
+                        )
+                    else:
+                        await connection_manager.send_to(
+                            websocket,
+                            WebSocketEvent.response(
+                                session_id, "No active task to cancel"
+                            ),
+                        )
 
                 else:
                     await connection_manager.send_to(

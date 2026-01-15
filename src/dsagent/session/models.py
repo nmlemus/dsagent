@@ -392,6 +392,10 @@ class Session(BaseModel):
     notebooks_path: Optional[str] = None
     logs_path: Optional[str] = None
 
+    # Agent configuration
+    model: Optional[str] = None  # LLM model for this session
+    hitl_mode: str = "none"  # HITL mode (none, plan_only, on_error, plan_and_answer, full)
+
     # Plan state (from existing models)
     plan_raw: Optional[str] = None
     plan_steps_completed: int = 0

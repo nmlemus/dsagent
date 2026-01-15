@@ -500,6 +500,15 @@ async def chat_stream(
     def on_code_result(result):
         event_queue.put(("code_result", _convert_execution_result_to_dict(result)))
 
+    def on_hitl_request(request_type: str, plan, code: Optional[str], error: Optional[str]):
+        """Called when HITL approval is needed."""
+        event_queue.put(("hitl_request", {
+            "request_type": request_type,
+            "plan": _convert_plan_to_dict(plan) if plan else None,
+            "code": code,
+            "error": error,
+        }))
+
     # Register callbacks
     agent.set_callbacks(
         on_thinking=on_thinking,
@@ -507,6 +516,7 @@ async def chat_stream(
         on_plan_update=on_plan_update,
         on_code_executing=on_code_executing,
         on_code_result=on_code_result,
+        on_hitl_request=on_hitl_request,
     )
 
     # Flag to signal completion
