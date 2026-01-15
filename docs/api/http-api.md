@@ -73,6 +73,202 @@ GET /sessions/{session_id}
 DELETE /sessions/{session_id}
 ```
 
+### Update Session
+
+Update session configuration including model and HITL mode at runtime.
+
+```http
+PUT /sessions/{session_id}
+Content-Type: application/json
+
+{
+  "name": "New Session Name",
+  "model": "claude-sonnet-4-20250514",
+  "hitl_mode": "plan_only"
+}
+```
+
+All fields are optional. Only provided fields will be updated.
+
+**Request Body:**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `name` | string | New name for the session |
+| `status` | string | Session status: `active`, `paused`, `completed` |
+| `model` | string | LLM model (e.g., `gpt-4o`, `claude-sonnet-4-20250514`) |
+| `hitl_mode` | string | HITL mode (see below) |
+
+**HITL Modes:**
+
+| Mode | Description |
+|------|-------------|
+| `none` | Fully autonomous (default) |
+| `plan_only` | Pause after generating plan for approval |
+| `on_error` | Pause only when code execution fails |
+| `plan_and_answer` | Pause for plan + before final answer |
+| `full` | Pause before every code execution |
+
+**Response:** Updated session object
+
+**Example - Change model mid-conversation:**
+```bash
+curl -X PUT "http://localhost:8000/api/sessions/{session_id}" \
+  -H "Content-Type: application/json" \
+  -d '{"model": "claude-sonnet-4-20250514"}'
+```
+
+**Example - Enable HITL:**
+```bash
+curl -X PUT "http://localhost:8000/api/sessions/{session_id}" \
+  -H "Content-Type: application/json" \
+  -d '{"hitl_mode": "plan_only"}'
+```
+
+---
+
+## Human-in-the-Loop (HITL)
+
+HITL allows human approval before the agent executes plans or code. When enabled, the agent pauses and waits for approval via these endpoints.
+
+### Get HITL Status
+
+Check if the agent is awaiting human approval.
+
+```http
+GET /sessions/{session_id}/hitl/status
+```
+
+**Response:**
+```json
+{
+  "enabled": true,
+  "mode": "plan_only",
+  "awaiting_feedback": true,
+  "awaiting_type": "plan",
+  "pending_plan": {
+    "raw_text": "1. [ ] Load data\n2. [ ] Analyze\n3. [ ] Visualize",
+    "steps": [
+      {"number": 1, "description": "Load data", "completed": false},
+      {"number": 2, "description": "Analyze", "completed": false},
+      {"number": 3, "description": "Visualize", "completed": false}
+    ]
+  },
+  "pending_code": null,
+  "pending_error": null,
+  "pending_answer": null
+}
+```
+
+### Approve
+
+Approve the pending plan/code and continue execution.
+
+```http
+POST /sessions/{session_id}/hitl/approve
+```
+
+**Response:**
+```json
+{
+  "success": true,
+  "message": "Approved"
+}
+```
+
+### Reject
+
+Reject and abort the current task.
+
+```http
+POST /sessions/{session_id}/hitl/reject
+```
+
+**Response:**
+```json
+{
+  "success": true,
+  "message": "Rejected - task aborted"
+}
+```
+
+### Respond (Advanced)
+
+Send detailed HITL response with optional modifications.
+
+```http
+POST /sessions/{session_id}/hitl/respond
+Content-Type: application/json
+
+{
+  "action": "modify",
+  "message": "Please also add error handling",
+  "modified_plan": "1. [ ] Load data with error handling\n2. [ ] Analyze\n3. [ ] Visualize"
+}
+```
+
+**Actions:**
+
+| Action | Description |
+|--------|-------------|
+| `approve` | Approve and continue |
+| `reject` | Reject and abort |
+| `modify` | Provide modified plan or code |
+| `retry` | Retry the failed operation |
+| `skip` | Skip current step |
+| `feedback` | Send textual feedback |
+
+### HITL Workflow Example
+
+**1. Create session with HITL enabled:**
+```bash
+curl -X POST "http://localhost:8000/api/sessions" \
+  -H "Content-Type: application/json" \
+  -d '{"name": "HITL Session", "hitl_mode": "plan_only"}'
+```
+
+**2. Send a message (this will block waiting for approval):**
+```bash
+# In terminal 1 - this will wait for approval
+curl -X POST "http://localhost:8000/api/sessions/{session_id}/chat" \
+  -H "Content-Type: application/json" \
+  -d '{"message": "Analyze sales data and create visualizations"}'
+```
+
+**3. Check status (in another terminal):**
+```bash
+# In terminal 2
+curl "http://localhost:8000/api/sessions/{session_id}/hitl/status"
+# Returns: awaiting_feedback: true, awaiting_type: "plan"
+```
+
+**4. Approve the plan:**
+```bash
+# In terminal 2
+curl -X POST "http://localhost:8000/api/sessions/{session_id}/hitl/approve"
+```
+
+**5. The chat request in terminal 1 now continues execution.**
+
+### HITL with Streaming
+
+When using the streaming endpoint, a `hitl_request` event is emitted when approval is needed:
+
+```
+event: hitl_request
+data: {
+  "request_type": "plan",
+  "plan": {
+    "steps": [...],
+    "raw_text": "..."
+  },
+  "code": null,
+  "error": null
+}
+```
+
+The stream pauses until you call `/hitl/approve` or `/hitl/reject`.
+
 ---
 
 ## Chat
