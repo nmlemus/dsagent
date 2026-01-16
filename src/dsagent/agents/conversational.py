@@ -1206,7 +1206,11 @@ The tools will be called automatically when you request them."""
 
         # Determine if task is complete
         is_complete = False
-        if has_answer and self._is_plan_complete():
+        if has_answer:
+            # Explicit answer provided
+            is_complete = True
+        elif self._is_plan_complete() and not code:
+            # Plan is complete and no more code to execute
             is_complete = True
         elif not plan and not code:
             # Simple conversational response
