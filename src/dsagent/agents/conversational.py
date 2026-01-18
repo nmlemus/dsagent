@@ -194,7 +194,7 @@ class ConversationalAgentConfig:
     enable_summarization: bool = True  # Auto-summarize long conversations
     summarization_threshold: int = 30  # Summarize when messages exceed this
     keep_recent_messages: int = 10  # Keep this many recent messages after summarization
-    summarization_model: str = "gpt-4o-mini"  # Cheaper model for summarization
+    summarization_model: Optional[str] = None  # None = use main model, or specify a cheaper one
 
     # Logging settings
     enable_logging: bool = True  # Enable event logging to files (run.log, events.jsonl)
@@ -453,7 +453,7 @@ class ConversationalAgent:
             summary_config = SummaryConfig(
                 max_messages=self.config.summarization_threshold,
                 keep_recent=self.config.keep_recent_messages,
-                model=self.config.summarization_model,
+                model=self.config.summarization_model or self.config.model,  # Use main model if not specified
             )
             self._summarizer = ConversationSummarizer(config=summary_config)
 
