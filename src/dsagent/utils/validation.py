@@ -96,8 +96,26 @@ MODEL_PROVIDER_KEYS = {
     # Google models
     "gemini": "GOOGLE_API_KEY",
     "google/": "GOOGLE_API_KEY",
+    # Groq
+    "groq/": "GROQ_API_KEY",
+    # Together AI
+    "together/": "TOGETHER_API_KEY",
+    "together_ai/": "TOGETHER_API_KEY",
+    # OpenRouter
+    "openrouter/": "OPENROUTER_API_KEY",
+    # Mistral
+    "mistral/": "MISTRAL_API_KEY",
     # DeepSeek
     "deepseek/": "DEEPSEEK_API_KEY",
+    # Cohere
+    "cohere/": "COHERE_API_KEY",
+    "command": "COHERE_API_KEY",
+    # Perplexity
+    "perplexity/": "PERPLEXITYAI_API_KEY",
+    # Fireworks
+    "fireworks_ai/": "FIREWORKS_API_KEY",
+    # Hugging Face
+    "huggingface/": "HUGGINGFACE_API_KEY",
     # Azure OpenAI
     "azure/": "AZURE_API_KEY",
     # Local models (no key required)
