@@ -1,12 +1,10 @@
 name: Build and Push Docker Images
 
 on:
-  push:
-    branches:
-      - main
-    tags:
-      - 'v*'
-  # Allow manual trigger
+  # Only build on releases (not on every push to main)
+  release:
+    types: [published]
+  # Allow manual trigger for testing
   workflow_dispatch:
 
 env:
@@ -42,9 +40,9 @@ jobs:
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
           tags: |
-            # Always set 'latest' tag on main branch push
-            type=raw,value=latest,enable={{is_default_branch}}
-            # Version tag only from git tags (v1.0.0 -> 1.0.0)
+            # 'latest' tag on every release
+            type=raw,value=latest
+            # Version tag from release (v1.0.0 -> 1.0.0)
             type=semver,pattern={{version}}
 
       - name: Generate Docker metadata (full variant)
@@ -53,9 +51,9 @@ jobs:
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
           tags: |
-            # Always set 'full' tag on main branch push
-            type=raw,value=full,enable={{is_default_branch}}
-            # Version-full tag only from git tags (v1.0.0 -> 1.0.0-full)
+            # 'full' tag on every release
+            type=raw,value=full
+            # Version-full tag from release (v1.0.0 -> 1.0.0-full)
             type=semver,pattern={{version}}-full
 
       - name: Build and push (latest - without LaTeX)
