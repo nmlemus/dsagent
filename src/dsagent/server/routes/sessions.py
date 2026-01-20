@@ -80,6 +80,11 @@ async def create_session(
     # Create session
     session = session_manager.create_session(name=request.name)
 
+    # Store agent configuration in session for persistence
+    session.model = request.model
+    session.hitl_mode = request.hitl_mode or "none"
+    session_manager.save_session(session)
+
     # Create and start agent for this session
     await connection_manager.get_or_create_agent(
         session.id,
@@ -163,6 +168,7 @@ async def update_session(
     session_id: str,
     request: UpdateSessionRequest,
     session_manager: SessionManager = Depends(get_session_manager),
+    connection_manager: AgentConnectionManager = Depends(get_connection_manager),
 ) -> SessionResponse:
     """Update a session.
 
@@ -170,6 +176,7 @@ async def update_session(
         session_id: Session ID
         request: Update parameters
         session_manager: Session manager instance
+        connection_manager: Connection manager instance
 
     Returns:
         Updated session information
@@ -196,6 +203,30 @@ async def update_session(
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=f"Invalid status: {request.status}",
+            )
+
+    # Update HITL mode
+    if request.hitl_mode is not None:
+        valid_modes = ["none", "plan_only", "plan", "on_error", "plan_and_answer", "full"]
+        if request.hitl_mode not in valid_modes:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Invalid hitl_mode: {request.hitl_mode}. Valid: {valid_modes}",
+            )
+        session.hitl_mode = request.hitl_mode
+        # Update running agent if exists
+        connection_manager.set_agent_hitl_mode(session_id, request.hitl_mode)
+
+    # Update model
+    if request.model is not None:
+        session.model = request.model
+        # Update running agent if exists
+        try:
+            connection_manager.set_agent_model(session_id, request.model)
+        except Exception as e:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Invalid model: {request.model}. Error: {str(e)}",
             )
 
     # Save session

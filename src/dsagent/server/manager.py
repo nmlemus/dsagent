@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING, Any, Callable, Dict, Optional, Set
 from fastapi import WebSocket
 
 from dsagent.agents import ConversationalAgent, ConversationalAgentConfig
+from dsagent.schema.models import HITLMode
 from dsagent.server.models import (
     ExecutionResultResponse,
     PlanResponse,
@@ -173,6 +174,51 @@ class AgentConnectionManager:
         """
         return self._agents.get(session_id)
 
+    def set_agent_hitl_mode(self, session_id: str, hitl_mode: str) -> bool:
+        """Change HITL mode for an agent at runtime.
+
+        Args:
+            session_id: Session ID
+            hitl_mode: New HITL mode (none, plan_only, on_error, plan_and_answer, full)
+
+        Returns:
+            True if successful, False if agent not found
+        """
+        agent = self._agents.get(session_id)
+        if not agent:
+            return False
+
+        hitl_mode_map = {
+            "none": HITLMode.NONE,
+            "plan_only": HITLMode.PLAN_ONLY,
+            "plan": HITLMode.PLAN_ONLY,
+            "on_error": HITLMode.ON_ERROR,
+            "plan_and_answer": HITLMode.PLAN_AND_ANSWER,
+            "full": HITLMode.FULL,
+        }
+        mode = hitl_mode_map.get(hitl_mode, HITLMode.NONE)
+        agent.set_hitl_mode(mode)
+        logger.info(f"Changed HITL mode for session {session_id} to {hitl_mode}")
+        return True
+
+    def set_agent_model(self, session_id: str, model: str) -> bool:
+        """Change LLM model for an agent at runtime.
+
+        Args:
+            session_id: Session ID
+            model: New model to use
+
+        Returns:
+            True if successful, False if agent not found
+        """
+        agent = self._agents.get(session_id)
+        if not agent:
+            return False
+
+        agent.set_model(model)
+        logger.info(f"Changed model for session {session_id} to {model}")
+        return True
+
     async def get_or_create_agent(
         self,
         session_id: str,
@@ -214,12 +260,35 @@ class AgentConnectionManager:
         # Get or create session
         session = self._session_manager.get_or_create(session_id)
 
-        # Create agent config - use environment default if not specified
+        # Create agent config - use session config, then params, then defaults
         import os
-        effective_model = model or self._default_model or os.getenv("LLM_MODEL", "gpt-4o")
+        effective_model = (
+            model
+            or getattr(session, "model", None)
+            or self._default_model
+            or os.getenv("LLM_MODEL", "gpt-4o")
+        )
+
+        # Convert hitl_mode string to HITLMode enum
+        # Priority: parameter > session > default
+        hitl_mode_str = (
+            hitl_mode
+            or getattr(session, "hitl_mode", None)
+            or self._default_hitl_mode
+        )
+        hitl_mode_map = {
+            "none": HITLMode.NONE,
+            "plan_only": HITLMode.PLAN_ONLY,
+            "plan": HITLMode.PLAN_ONLY,  # Alias
+            "on_error": HITLMode.ON_ERROR,
+            "plan_and_answer": HITLMode.PLAN_AND_ANSWER,
+            "full": HITLMode.FULL,
+        }
+        effective_hitl_mode = hitl_mode_map.get(hitl_mode_str, HITLMode.NONE)
+
         config = ConversationalAgentConfig(
             model=effective_model,
-            hitl_mode=hitl_mode or self._default_hitl_mode,
+            hitl_mode=effective_hitl_mode,
         )
 
         # Create agent

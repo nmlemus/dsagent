@@ -109,8 +109,9 @@ nav:
     - Model Configuration: guide/models.md
     - MCP Tools: guide/mcp.md
     - Docker Deployment: guide/docker.md
-  - Python API:
-    - Overview: api/overview.md
+  - API Reference:
+    - Python API: api/overview.md
+    - HTTP API (REST/SSE): api/http-api.md
     - PlannerAgent: api/planner-agent.md
     - ConversationalAgent: api/conversational-agent.md
   - Examples:

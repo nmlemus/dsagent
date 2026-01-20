@@ -110,6 +110,7 @@ def create_app(
         from dsagent.server.routes.chat import router as chat_router
         from dsagent.server.routes.files import router as files_router
         from dsagent.server.routes.health import router as health_router
+        from dsagent.server.routes.hitl import router as hitl_router
         from dsagent.server.routes.kernel import router as kernel_router
         from dsagent.server.routes.sessions import router as sessions_router
         from dsagent.server.websocket import router as websocket_router
@@ -123,6 +124,7 @@ def create_app(
         app.include_router(kernel_router, prefix="/api", tags=["Kernel"])
         app.include_router(files_router, prefix="/api", tags=["Files"])
         app.include_router(artifacts_router, prefix="/api", tags=["Artifacts"])
+        app.include_router(hitl_router, prefix="/api", tags=["HITL"])
 
         # WebSocket route
         app.include_router(websocket_router, tags=["WebSocket"])
