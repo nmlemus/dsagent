@@ -11,14 +11,22 @@ LiteLLM automatically detects the provider from the model name and routes reques
 
 **Provider prefixes:**
 
-| Provider | Prefix Required | Example |
-|----------|-----------------|---------|
-| OpenAI | No | `gpt-4o` |
-| Anthropic | No | `claude-sonnet-4-5` |
-| Google AI Studio | **Yes** | `gemini/gemini-2.5-flash` |
-| DeepSeek | Yes | `deepseek/deepseek-chat` |
-| Ollama | Yes | `ollama/llama3.2` |
-| Azure | Yes | `azure/deployment-name` |
+| Provider | Prefix | API Key Variable | Example |
+|----------|--------|------------------|---------|
+| OpenAI | No | `OPENAI_API_KEY` | `gpt-4o` |
+| Anthropic | No | `ANTHROPIC_API_KEY` | `claude-sonnet-4-5` |
+| Google AI Studio | `gemini/` | `GOOGLE_API_KEY` | `gemini/gemini-2.5-flash` |
+| Groq | `groq/` | `GROQ_API_KEY` | `groq/llama-3.3-70b-versatile` |
+| Together AI | `together/` | `TOGETHER_API_KEY` | `together/meta-llama/Llama-3-70b` |
+| OpenRouter | `openrouter/` | `OPENROUTER_API_KEY` | `openrouter/anthropic/claude-3.5-sonnet` |
+| Mistral | `mistral/` | `MISTRAL_API_KEY` | `mistral/mistral-large-latest` |
+| DeepSeek | `deepseek/` | `DEEPSEEK_API_KEY` | `deepseek/deepseek-chat` |
+| Cohere | `cohere/` | `COHERE_API_KEY` | `cohere/command-r-plus` |
+| Perplexity | `perplexity/` | `PERPLEXITYAI_API_KEY` | `perplexity/llama-3.1-sonar-large` |
+| Fireworks | `fireworks_ai/` | `FIREWORKS_API_KEY` | `fireworks_ai/llama-v3-70b` |
+| Hugging Face | `huggingface/` | `HUGGINGFACE_API_KEY` | `huggingface/meta-llama/Llama-3` |
+| Ollama | `ollama/` | None (local) | `ollama/llama3.2` |
+| Azure | `azure/` | `AZURE_API_KEY` | `azure/deployment-name` |
 
 ## Cloud Providers
 
@@ -80,6 +88,65 @@ dsagent run "Your task" --model deepseek/deepseek-r1
 ```
 
 **Available models:** `deepseek/deepseek-chat`, `deepseek/deepseek-r1`, `deepseek/deepseek-r1-distill-llama-70b`
+
+### Groq
+
+[Groq](https://groq.com/) offers ultra-fast inference for open-source models.
+
+```bash
+# Set API key
+export GROQ_API_KEY="gsk_..."
+
+# Use Groq models (always use groq/ prefix)
+dsagent run "Your task" --model groq/llama-3.3-70b-versatile
+dsagent run "Your task" --model groq/llama-3.1-8b-instant
+dsagent run "Your task" --model groq/mixtral-8x7b-32768
+```
+
+**Available models:** `groq/llama-3.3-70b-versatile`, `groq/llama-3.1-8b-instant`, `groq/mixtral-8x7b-32768`, `groq/gemma2-9b-it`
+
+> **Tip:** Groq is great for fast iteration during development due to its low latency.
+
+### Together AI
+
+[Together AI](https://together.ai/) provides access to many open-source models.
+
+```bash
+# Set API key
+export TOGETHER_API_KEY="..."
+
+# Use Together models
+dsagent run "Your task" --model together/meta-llama/Llama-3-70b-chat-hf
+dsagent run "Your task" --model together/mistralai/Mixtral-8x7B-Instruct-v0.1
+```
+
+### OpenRouter
+
+[OpenRouter](https://openrouter.ai/) is a unified API for multiple providers (OpenAI, Anthropic, Google, etc.).
+
+```bash
+# Set API key
+export OPENROUTER_API_KEY="sk-or-..."
+
+# Use any model through OpenRouter
+dsagent run "Your task" --model openrouter/anthropic/claude-3.5-sonnet
+dsagent run "Your task" --model openrouter/google/gemini-pro
+dsagent run "Your task" --model openrouter/meta-llama/llama-3-70b-instruct
+```
+
+> **Tip:** OpenRouter is useful if you want to switch between providers without managing multiple API keys.
+
+### Mistral
+
+```bash
+# Set API key
+export MISTRAL_API_KEY="..."
+
+# Use Mistral models
+dsagent run "Your task" --model mistral/mistral-large-latest
+dsagent run "Your task" --model mistral/mistral-medium
+dsagent run "Your task" --model mistral/codestral-latest
+```
 
 ### Azure OpenAI
 

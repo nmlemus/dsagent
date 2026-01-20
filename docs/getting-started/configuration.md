@@ -7,10 +7,12 @@ DSAgent can be configured through environment variables, configuration files, or
 Configuration is loaded in this order (later sources override earlier):
 
 1. Default values
-2. Environment variables
-3. `.env` file in `~/.dsagent/`
-4. `.env` file in current directory
-5. Command-line arguments
+2. `~/.dsagent/.env` - Global configuration (API keys, default model)
+3. `./.env` - Local project configuration (overrides global)
+4. Environment variables (already set in shell)
+5. Command-line arguments (highest priority)
+
+This allows you to set API keys globally in `~/.dsagent/.env` and override settings per-project in a local `.env` file.
 
 ## Environment Variables
 
@@ -22,8 +24,17 @@ Configuration is loaded in this order (later sources override earlier):
 | `OPENAI_API_KEY` | OpenAI API key | - |
 | `ANTHROPIC_API_KEY` | Anthropic API key | - |
 | `GOOGLE_API_KEY` | Google API key | - |
+| `GROQ_API_KEY` | Groq API key | - |
+| `TOGETHER_API_KEY` | Together AI API key | - |
+| `OPENROUTER_API_KEY` | OpenRouter API key | - |
+| `MISTRAL_API_KEY` | Mistral API key | - |
 | `DEEPSEEK_API_KEY` | DeepSeek API key | - |
-| `LLM_API_BASE` | Custom API endpoint | - |
+| `COHERE_API_KEY` | Cohere API key | - |
+| `PERPLEXITYAI_API_KEY` | Perplexity API key | - |
+| `FIREWORKS_API_KEY` | Fireworks API key | - |
+| `HUGGINGFACE_API_KEY` | Hugging Face API key | - |
+| `AZURE_API_KEY` | Azure OpenAI API key | - |
+| `LLM_API_BASE` | Custom API endpoint (LiteLLM proxy) | - |
 | `OLLAMA_API_BASE` | Ollama server URL | `http://localhost:11434` |
 
 ### Agent Settings
@@ -45,21 +56,38 @@ Configuration is loaded in this order (later sources override earlier):
 
 ## Configuration File
 
-Create a `.env` file in `~/.dsagent/` for persistent configuration:
+Create a `.env` file in `~/.dsagent/` for persistent **global** configuration:
 
 ```bash
-# ~/.dsagent/.env
+# ~/.dsagent/.env - Global config (all your API keys)
 
-# LLM Configuration
+# Default model
 LLM_MODEL=gpt-4o
+
+# API Keys - add all providers you use
 OPENAI_API_KEY=sk-your-key-here
+ANTHROPIC_API_KEY=sk-ant-your-key-here
+GROQ_API_KEY=gsk_your-key-here
+GOOGLE_API_KEY=your-key-here
 
 # Agent Settings
 DSAGENT_MAX_ROUNDS=30
 DSAGENT_TEMPERATURE=0.3
 ```
 
-The setup wizard (`dsagent init`) creates this file automatically.
+Create a `.env` file in your **project directory** to override settings:
+
+```bash
+# ~/my-project/.env - Project-specific config
+
+# Use a different model for this project
+LLM_MODEL=groq/llama-3.3-70b-versatile
+
+# Or use Claude for this project
+# LLM_MODEL=claude-sonnet-4-20250514
+```
+
+The setup wizard (`dsagent init`) creates the global file automatically.
 
 ## Command-Line Options
 
