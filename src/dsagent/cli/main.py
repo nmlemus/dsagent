@@ -17,16 +17,17 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
-# Load .env file from common locations
-_env_locations = [
-    Path.cwd() / ".env",
-    Path(__file__).parent.parent.parent.parent / ".env",
-    Path.home() / ".dsagent" / ".env",
-]
-for _env_path in _env_locations:
-    if _env_path.exists():
-        load_dotenv(_env_path)
-        break
+# Load .env files: global first, then local (local overrides global)
+_global_env = Path.home() / ".dsagent" / ".env"
+_local_env = Path.cwd() / ".env"
+
+# Load global config first (defaults)
+if _global_env.exists():
+    load_dotenv(_global_env)
+
+# Load local config second (overrides global)
+if _local_env.exists():
+    load_dotenv(_local_env, override=True)
 
 
 def cmd_chat(args: argparse.Namespace) -> int:
