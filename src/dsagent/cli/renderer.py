@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from typing import Any, Dict, List, Optional
 
 from rich.console import Console
@@ -11,6 +12,12 @@ from rich.syntax import Syntax
 from rich.table import Table
 from rich.text import Text
 from rich.tree import Tree
+
+# Pattern to match internal tags that shouldn't be shown to users
+INTERNAL_TAGS_PATTERN = re.compile(
+    r"<(intent|think)>.*?</\1>\s*",
+    re.DOTALL | re.IGNORECASE
+)
 
 
 class CLIRenderer:
@@ -233,11 +240,18 @@ class CLIRenderer:
         code: Optional[str] = None,
     ) -> None:
         """Render assistant response."""
+        # Strip internal tags (intent, think) that shouldn't be shown to users
+        display_content = INTERNAL_TAGS_PATTERN.sub("", content).strip()
+
+        # Skip if nothing to display after stripping
+        if not display_content:
+            return
+
         # Check if content contains markdown code blocks
-        if "```" in content:
+        if "```" in display_content:
             self.console.print(
                 Panel(
-                    Markdown(content),
+                    Markdown(display_content),
                     title="[cyan]Assistant[/cyan]",
                     border_style="cyan",
                 )
@@ -245,7 +259,7 @@ class CLIRenderer:
         else:
             self.console.print(
                 Panel(
-                    Text(content),
+                    Text(display_content),
                     title="[cyan]Assistant[/cyan]",
                     border_style="cyan",
                 )
