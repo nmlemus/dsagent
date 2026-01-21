@@ -44,6 +44,8 @@ CONVERSATIONAL_SYSTEM_PROMPT = '''You are a Data Science assistant in an interac
 You help users with data analysis, machine learning, visualization, and Python programming.
 You can execute code, remember previous results, and build upon earlier work.
 
+**Current date**: {current_date}
+
 ## Current Session Context
 {kernel_context}
 
@@ -306,6 +308,9 @@ class ConversationalAgent:
         # MCP manager for external tools
         self._mcp_manager: Optional["MCPManager"] = None
 
+        # Skills registry for Agent Skills
+        self._skill_registry: Optional["SkillRegistry"] = None
+
         # Callbacks for UI updates
         self._on_plan_update: Optional[Callable[[PlanState], None]] = None
         self._on_code_executing: Optional[Callable[[str], None]] = None
@@ -461,6 +466,9 @@ class ConversationalAgent:
         if self.config.mcp_config:
             self._init_mcp()
 
+        # Initialize skills registry
+        self._init_skills()
+
         self._started = True
 
     def shutdown(self, save_notebook: bool = True) -> Optional[Path]:
@@ -548,6 +556,27 @@ class ConversationalAgent:
             if self._session_logger:
                 self._session_logger.log_error(f"Failed to initialize MCP: {e}", error_type="mcp_error")
 
+    def _init_skills(self) -> None:
+        """Initialize skills registry and discover installed skills."""
+        try:
+            from dsagent.skills import SkillRegistry, SkillLoader
+
+            loader = SkillLoader()
+            self._skill_registry = SkillRegistry(loader)
+            count = self._skill_registry.discover()
+
+            if count > 0 and self._session_logger:
+                self._session_logger._file_logger.info(
+                    f"Skills: Discovered {count} skill(s)"
+                )
+
+        except ImportError:
+            # Skills module not available
+            pass
+        except Exception as e:
+            if self._session_logger:
+                self._session_logger.log_error(f"Failed to initialize skills: {e}", error_type="skills_error")
+
     def _get_kernel_context(self) -> str:
         """Get kernel context for the system prompt."""
         if not self._introspector or not self.is_running:
@@ -560,21 +589,37 @@ class ConversationalAgent:
 
     def _build_system_prompt(self) -> str:
         """Build the system prompt with current context and available tools."""
+        from datetime import date
+
         kernel_context = self._get_kernel_context()
-        base_prompt = CONVERSATIONAL_SYSTEM_PROMPT.format(kernel_context=kernel_context)
+        current_date = date.today().strftime("%Y-%m-%d")
+        base_prompt = CONVERSATIONAL_SYSTEM_PROMPT.format(
+            kernel_context=kernel_context,
+            current_date=current_date,
+        )
+
+        additions = []
 
         # Add MCP tools section if available
         if self._mcp_manager and self._mcp_manager.available_tools:
             tools_list = "\n".join(f"- {tool}" for tool in self._mcp_manager.available_tools)
             tools_section = f"""
-
 ## Available External Tools
 You have access to the following external tools via function calling:
 {tools_list}
 
 Use these tools when you need external information (e.g., web search, file access) before writing code.
 The tools will be called automatically when you request them."""
-            return base_prompt + tools_section
+            additions.append(tools_section)
+
+        # Add skills section if available
+        if self._skill_registry and self._skill_registry.skills:
+            skills_context = self._skill_registry.get_prompt_context()
+            if skills_context:
+                additions.append(f"\n{skills_context}")
+
+        if additions:
+            return base_prompt + "\n".join(additions)
 
         return base_prompt
 
