@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from typing import Any, Dict, List, Optional
 
 from rich.console import Console
@@ -11,6 +12,12 @@ from rich.syntax import Syntax
 from rich.table import Table
 from rich.text import Text
 from rich.tree import Tree
+
+# Pattern to match internal tags that shouldn't be shown to users
+INTERNAL_TAGS_PATTERN = re.compile(
+    r"<(intent|think)>.*?</\1>\s*",
+    re.DOTALL | re.IGNORECASE
+)
 
 
 class CLIRenderer:
@@ -233,23 +240,22 @@ class CLIRenderer:
         code: Optional[str] = None,
     ) -> None:
         """Render assistant response."""
-        # Check if content contains markdown code blocks
-        if "```" in content:
-            self.console.print(
-                Panel(
-                    Markdown(content),
-                    title="[cyan]Assistant[/cyan]",
-                    border_style="cyan",
-                )
+        # Strip internal tags (intent, think) that shouldn't be shown to users
+        display_content = INTERNAL_TAGS_PATTERN.sub("", content).strip()
+
+        # Skip if nothing to display after stripping
+        if not display_content:
+            return
+
+        # Always use Markdown rendering for assistant messages
+        # Rich's Markdown handles headers, bold, italic, lists, code, etc.
+        self.console.print(
+            Panel(
+                Markdown(display_content),
+                title="[cyan]Assistant[/cyan]",
+                border_style="cyan",
             )
-        else:
-            self.console.print(
-                Panel(
-                    Text(content),
-                    title="[cyan]Assistant[/cyan]",
-                    border_style="cyan",
-                )
-            )
+        )
 
         if code:
             self.render_code(code, title="Code to execute")
@@ -316,6 +322,22 @@ class CLIRenderer:
                 Text(message),
                 title=f"[cyan]{title}[/cyan]",
                 border_style="cyan",
+            )
+        )
+
+    def render_answer(self, content: str, title: str = "Final Answer") -> None:
+        """Render final answer with Markdown formatting."""
+        # Strip internal tags
+        display_content = INTERNAL_TAGS_PATTERN.sub("", content).strip()
+
+        if not display_content:
+            return
+
+        self.console.print(
+            Panel(
+                Markdown(display_content),
+                title=f"[bold green]{title}[/bold green]",
+                border_style="green",
             )
         )
 

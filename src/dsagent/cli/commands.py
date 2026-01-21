@@ -465,11 +465,15 @@ class DataCommand(Command):
         import shutil
         from pathlib import Path
 
-        # Use session's data directory if session exists, otherwise fallback to workspace
-        if ctx.session and ctx.session.data_path:
-            data_dir = Path(ctx.session.data_path)
-        else:
-            data_dir = ctx.workspace / "data"
+        # Create a session if one doesn't exist (ensures data goes to correct location)
+        session_created = False
+        if not ctx.session:
+            session = ctx.manager.create_session()
+            ctx.set_session(session)
+            session_created = True
+
+        # Use session's data directory
+        data_dir = Path(ctx.session.data_path)
         data_dir.mkdir(parents=True, exist_ok=True)
 
         # If no args, list files in data directory
@@ -499,8 +503,9 @@ class DataCommand(Command):
             dest = data_dir / source.name
             shutil.copy2(source, dest)
             ctx.data_path = str(dest)
+            session_msg = "New session created.\n" if session_created else ""
             return CommandResult(
-                message=f"Copied: {source.name} → data/\n"
+                message=f"{session_msg}Copied: {source.name} → data/\n"
                 f"Use 'data/{source.name}' in your code."
             )
         elif source.is_dir():
@@ -513,8 +518,9 @@ class DataCommand(Command):
 
             if copied:
                 ctx.data_path = str(data_dir)
+                session_msg = "New session created.\n" if session_created else ""
                 return CommandResult(
-                    message=f"Copied {len(copied)} files from {source.name}/:\n"
+                    message=f"{session_msg}Copied {len(copied)} files from {source.name}/:\n"
                     + "\n".join(f"  - {f}" for f in copied[:10])
                     + (f"\n  ... and {len(copied) - 10} more" if len(copied) > 10 else "")
                 )
@@ -684,6 +690,116 @@ class WorkspaceCommand(Command):
         return CommandResult(message="\n".join(lines))
 
 
+class SkillsCommand(Command):
+    """List installed skills."""
+
+    name = "skills"
+    aliases = ["sk"]
+    description = "List installed agent skills"
+    usage = "/skills"
+
+    def execute(self, ctx: "CLIContext", args: List[str]) -> CommandResult:
+        from dsagent.skills import SkillLoader, SkillRegistry
+
+        try:
+            loader = SkillLoader()
+            registry = SkillRegistry(loader)
+            count = registry.discover()
+        except Exception as e:
+            return CommandResult(
+                success=False,
+                message=f"Error loading skills: {e}"
+            )
+
+        if count == 0:
+            return CommandResult(
+                message="No skills installed.\n\n"
+                "Install skills with:\n"
+                "  dsagent skills install github:dsagent-skills/eda-analysis\n\n"
+                "Or see: /help skill"
+            )
+
+        lines = ["Installed Skills:\n"]
+        for name, meta in registry.skills.items():
+            skill = registry.get_skill(name)
+            script_count = len(skill.scripts) if skill else 0
+            desc = meta.description[:45] + "..." if len(meta.description) > 45 else meta.description
+            lines.append(f"  {name} (v{meta.version}) - {desc}")
+            if script_count:
+                lines.append(f"    Scripts: {script_count}")
+
+        lines.append(f"\nSkills directory: {loader.skills_dir}")
+        lines.append("Use /skill <name> for details")
+
+        return CommandResult(message="\n".join(lines))
+
+
+class SkillInfoCommand(Command):
+    """Show details about a skill."""
+
+    name = "skill"
+    aliases = []
+    description = "Show details about an installed skill"
+    usage = "/skill <name>"
+
+    def execute(self, ctx: "CLIContext", args: List[str]) -> CommandResult:
+        from dsagent.skills import SkillLoader
+
+        if not args:
+            return CommandResult(
+                success=False,
+                message="Skill name required. Use /skills to list installed skills."
+            )
+
+        name = args[0]
+        loader = SkillLoader()
+
+        if not loader.skill_exists(name):
+            return CommandResult(
+                success=False,
+                message=f"Skill not found: {name}\n"
+                "Use /skills to see installed skills."
+            )
+
+        try:
+            skill = loader.load_skill(name)
+        except Exception as e:
+            return CommandResult(
+                success=False,
+                message=f"Error loading skill: {e}"
+            )
+
+        lines = [
+            f"{skill.metadata.name} (v{skill.metadata.version})",
+            "",
+        ]
+
+        if skill.metadata.description:
+            lines.append(skill.metadata.description)
+            lines.append("")
+
+        if skill.metadata.author:
+            lines.append(f"Author: {skill.metadata.author}")
+
+        if skill.metadata.tags:
+            lines.append(f"Tags: {', '.join(skill.metadata.tags)}")
+
+        if skill.metadata.compatibility.python:
+            lines.append(f"Dependencies: {', '.join(skill.metadata.compatibility.python)}")
+
+        if skill.scripts:
+            lines.append("")
+            lines.append("Scripts:")
+            for script in skill.scripts:
+                desc = f" - {script.description}" if script.description else ""
+                lines.append(f"  - {script.name}{desc}")
+
+        lines.append("")
+        lines.append(f"Path: {skill.path}")
+
+        return CommandResult(message="\n".join(lines))
+
+
 def create_default_registry() -> CommandRegistry:
     """Create a registry with all default commands."""
     registry = CommandRegistry()
@@ -706,6 +822,8 @@ def create_default_registry() -> CommandRegistry:
         StatusCommand(),
         DataCommand(),
         WorkspaceCommand(),
+        SkillsCommand(),
+        SkillInfoCommand(),
     ]
 
     for cmd in commands:

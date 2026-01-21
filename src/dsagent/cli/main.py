@@ -5,6 +5,7 @@ Provides subcommands:
 - dsagent run      : One-shot task execution
 - dsagent init     : Setup wizard
 - dsagent mcp      : MCP server management
+- dsagent skills   : Agent Skills management
 - dsagent serve    : Run API server (REST + WebSocket)
 """
 
@@ -76,6 +77,12 @@ def cmd_serve(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_skills(args: argparse.Namespace) -> int:
+    """Manage skills."""
+    from dsagent.cli.skills_cmd import run_skills
+    return run_skills(args)
+
+
 def create_parser() -> argparse.ArgumentParser:
     """Create the main argument parser with subcommands."""
     parser = argparse.ArgumentParser(
@@ -90,6 +97,8 @@ Examples:
   dsagent run "Analyze sales.csv"  # One-shot task
   dsagent init                     # Setup wizard
   dsagent mcp add brave-search     # Add MCP server
+  dsagent skills list              # List installed skills
+  dsagent skills install github:dsagent-skills/eda-analysis
   dsagent serve --port 8000        # Start API server
 
 For more info on a command:
@@ -319,6 +328,54 @@ API Endpoints:
     )
     serve_parser.set_defaults(func=cmd_serve)
 
+    # ========== skills subcommand ==========
+    skills_parser = subparsers.add_parser(
+        "skills",
+        help="Manage Agent Skills",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Examples:
+  dsagent skills list                                    # List installed skills
+  dsagent skills install github:dsagent-skills/eda      # Install from GitHub
+  dsagent skills install ./my-skill                     # Install from local
+  dsagent skills remove eda-analysis                    # Remove a skill
+  dsagent skills info eda-analysis                      # Show skill details
+
+Skills extend the agent's capabilities with specialized knowledge.
+They are stored in ~/.dsagent/skills/
+        """,
+    )
+    skills_subparsers = skills_parser.add_subparsers(dest="skills_command")
+
+    # skills list
+    skills_list = skills_subparsers.add_parser("list", help="List installed skills")
+    skills_list.set_defaults(skills_action="list")
+
+    # skills install
+    skills_install = skills_subparsers.add_parser("install", help="Install a skill")
+    skills_install.add_argument(
+        "source",
+        help="Skill source (github:owner/repo, github:owner/repo/path, or local path)",
+    )
+    skills_install.add_argument(
+        "--force", "-f",
+        action="store_true",
+        help="Overwrite existing skill",
+    )
+    skills_install.set_defaults(skills_action="install")
+
+    # skills remove
+    skills_remove = skills_subparsers.add_parser("remove", help="Remove a skill")
+    skills_remove.add_argument("name", help="Skill name to remove")
+    skills_remove.set_defaults(skills_action="remove")
+
+    # skills info
+    skills_info = skills_subparsers.add_parser("info", help="Show skill details")
+    skills_info.add_argument("name", help="Skill name")
+    skills_info.set_defaults(skills_action="info")
+
+    skills_parser.set_defaults(func=cmd_skills)
+
     return parser
 
 
@@ -328,7 +385,7 @@ def main() -> int:
 
     # Check if we need to default to 'chat' subcommand
     # This handles cases like: dsagent --model gpt-4o (no subcommand specified)
-    valid_commands = {'chat', 'run', 'init', 'mcp', 'serve'}
+    valid_commands = {'chat', 'run', 'init', 'mcp', 'serve', 'skills'}
     argv = sys.argv[1:]
 
     # If no args, or first arg starts with '-', or first arg is not a valid command

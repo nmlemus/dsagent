@@ -44,16 +44,28 @@ CONVERSATIONAL_SYSTEM_PROMPT = '''You are a Data Science assistant in an interac
 You help users with data analysis, machine learning, visualization, and Python programming.
 You can execute code, remember previous results, and build upon earlier work.
 
+**Current date**: {current_date}
+
 ## Current Session Context
 {kernel_context}
 
-## How to Respond
+## Response Protocol
 
-### For simple questions or explanations:
-Just respond naturally with text. No need for code or plans.
+**FIRST**, classify the user's request (skip this if continuing an existing plan):
+<intent>question|simple|complex</intent>
 
-### For tasks requiring code execution:
-Use <code> tags to write Python code that will be executed:
+Classification criteria:
+- **question**: Conceptual questions, explanations, "what is", "how does", "explain" (no data/code needed)
+- **simple**: Single clear operation like "load this file", "show columns", "plot X" (1-2 steps max)
+- **complex**: Requires exploration + analysis + multiple outputs, modeling, reports (3+ steps)
+
+**THEN**, respond according to your classification:
+
+### For `question` intent:
+Respond directly with explanation. No code tags needed.
+
+### For `simple` intent:
+Execute directly with a single <code> block:
 
 <code>
 import pandas as pd
@@ -61,8 +73,8 @@ df = pd.read_csv('data/file.csv')
 print(df.head())
 </code>
 
-### For complex multi-step tasks:
-Create a DETAILED plan with numbered steps, then execute step by step:
+### For `complex` intent:
+Create a plan FIRST, then execute step by step:
 
 <plan>
 1. [ ] Load and explore data
@@ -78,14 +90,16 @@ Create a DETAILED plan with numbered steps, then execute step by step:
 ...
 </code>
 
-IMPORTANT: When you create a <plan>, you MUST:
+## Plan Rules (for complex tasks)
+
+When you have an active <plan>, you MUST:
 - Mark steps as [x] when completed
-- Include <plan> in EVERY response to show progress
+- Include <plan> in EVERY response showing current progress
 - Execute ONE step at a time with <code>
 - Only provide <answer> when ALL steps show [x]
 
-### For final answers or summaries:
-Use <answer> tags when you've completed ALL plan steps:
+### For final answers:
+Use <answer> tags when ALL plan steps are complete:
 
 <answer>
 Based on the analysis, the key findings are:
@@ -95,15 +109,15 @@ Based on the analysis, the key findings are:
 
 ## Critical Rules
 
-1. **ALWAYS include <plan>** in every response when working on a multi-step task
-2. **Mark steps [x]** immediately when completed
-3. **NEVER use <answer>** if ANY step shows [ ]
-4. **One code block per response**: Execute one step at a time
+1. **Classify first**: Always start with <intent> for new requests
+2. **Match response to intent**: Don't create plans for simple tasks
+3. **One code block per response**: Execute one step at a time
+4. **Mark progress**: Update [x] in plan after each step
 
 ## Important Guidelines
 
 1. **Reference existing variables**: Check the kernel context above
-2. **Be concise**: For simple tasks, just execute the code directly
+2. **Be concise**: Simple tasks don't need lengthy explanations
 3. **Explain errors**: If code fails, explain what went wrong
 
 ## CRITICAL: Saving Outputs
@@ -172,6 +186,7 @@ class ChatResponse:
     has_answer: bool = False  # Whether response contains <answer>
     answer: Optional[str] = None  # Extracted answer text
     thinking: Optional[str] = None  # Extracted thinking/reasoning
+    intent: Optional[str] = None  # Classified intent: question, simple, complex
     is_complete: bool = False  # Whether task is complete (all steps done or no plan)
 
 
@@ -305,6 +320,9 @@ class ConversationalAgent:
 
         # MCP manager for external tools
         self._mcp_manager: Optional["MCPManager"] = None
+
+        # Skills registry for Agent Skills
+        self._skill_registry: Optional["SkillRegistry"] = None
 
         # Callbacks for UI updates
         self._on_plan_update: Optional[Callable[[PlanState], None]] = None
@@ -461,6 +479,9 @@ class ConversationalAgent:
         if self.config.mcp_config:
             self._init_mcp()
 
+        # Initialize skills registry
+        self._init_skills()
+
         self._started = True
 
     def shutdown(self, save_notebook: bool = True) -> Optional[Path]:
@@ -548,6 +569,27 @@ class ConversationalAgent:
             if self._session_logger:
                 self._session_logger.log_error(f"Failed to initialize MCP: {e}", error_type="mcp_error")
 
+    def _init_skills(self) -> None:
+        """Initialize skills registry and discover installed skills."""
+        try:
+            from dsagent.skills import SkillRegistry, SkillLoader
+
+            loader = SkillLoader()
+            self._skill_registry = SkillRegistry(loader)
+            count = self._skill_registry.discover()
+
+            if count > 0 and self._session_logger:
+                self._session_logger._file_logger.info(
+                    f"Skills: Discovered {count} skill(s)"
+                )
+
+        except ImportError:
+            # Skills module not available
+            pass
+        except Exception as e:
+            if self._session_logger:
+                self._session_logger.log_error(f"Failed to initialize skills: {e}", error_type="skills_error")
+
     def _get_kernel_context(self) -> str:
         """Get kernel context for the system prompt."""
         if not self._introspector or not self.is_running:
@@ -560,21 +602,37 @@ class ConversationalAgent:
 
     def _build_system_prompt(self) -> str:
         """Build the system prompt with current context and available tools."""
+        from datetime import date
+
         kernel_context = self._get_kernel_context()
-        base_prompt = CONVERSATIONAL_SYSTEM_PROMPT.format(kernel_context=kernel_context)
+        current_date = date.today().strftime("%Y-%m-%d")
+        base_prompt = CONVERSATIONAL_SYSTEM_PROMPT.format(
+            kernel_context=kernel_context,
+            current_date=current_date,
+        )
+
+        additions = []
 
         # Add MCP tools section if available
         if self._mcp_manager and self._mcp_manager.available_tools:
             tools_list = "\n".join(f"- {tool}" for tool in self._mcp_manager.available_tools)
             tools_section = f"""
-
 ## Available External Tools
 You have access to the following external tools via function calling:
 {tools_list}
 
 Use these tools when you need external information (e.g., web search, file access) before writing code.
 The tools will be called automatically when you request them."""
-            return base_prompt + tools_section
+            additions.append(tools_section)
+
+        # Add skills section if available
+        if self._skill_registry and self._skill_registry.skills:
+            skills_context = self._skill_registry.get_prompt_context()
+            if skills_context:
+                additions.append(f"\n{skills_context}")
+
+        if additions:
+            return base_prompt + "\n".join(additions)
 
         return base_prompt
 
@@ -801,6 +859,17 @@ The tools will be called automatically when you request them."""
             return match.group(1).strip()
         return None
 
+    def _extract_intent(self, text: str) -> Optional[str]:
+        """Extract intent classification from <intent> tags.
+
+        Returns:
+            One of: 'question', 'simple', 'complex', or None if not found.
+        """
+        match = re.search(r"<intent>\s*(question|simple|complex)\s*</intent>", text, re.IGNORECASE)
+        if match:
+            return match.group(1).lower()
+        return None
+
     def _extract_thinking_from_response(self, response: Any) -> Optional[str]:
         """Extract thinking/reasoning from LLM response.
 
@@ -849,10 +918,23 @@ The tools will be called automatically when you request them."""
         """Check if response contains <answer> tag."""
         return PlanParser.has_final_answer(text)
 
-    def _call_llm(self, messages: List[Dict[str, Any]]) -> str:
+    def _call_llm(
+        self,
+        messages: List[Dict[str, Any]],
+        use_stop: bool = True,
+        use_temperature: bool = True,
+        use_max_tokens: bool = True,
+    ) -> str:
         """Call the LLM and return response text.
 
         Handles MCP tool calls if available - executes tools and calls LLM again with results.
+        Also handles fallbacks for unsupported parameters (stop, temperature, max_tokens).
+
+        Args:
+            messages: Chat messages to send
+            use_stop: Whether to use stop sequences
+            use_temperature: Whether to use temperature parameter
+            use_max_tokens: Whether to use max_tokens (vs max_completion_tokens)
         """
         # Notify thinking started (for UI updates)
         if self._on_thinking:
@@ -863,7 +945,7 @@ The tools will be called automatically when you request them."""
             self._session_logger.log_llm_request(
                 model=self.config.model,
                 messages_count=len(messages),
-                temperature=self.config.temperature,
+                temperature=self.config.temperature if use_temperature else None,
                 max_tokens=self.config.max_tokens,
             )
 
@@ -871,19 +953,25 @@ The tools will be called automatically when you request them."""
         # Transform model name for proxy if LLM_API_BASE is set
         model_name = get_proxy_model_name(self.config.model)
 
-        # Build completion kwargs
+        # Build completion kwargs conditionally based on what's supported
         kwargs: Dict[str, Any] = {
             "model": model_name,
             "messages": messages,
-            "temperature": self.config.temperature,
-            "max_tokens": self.config.max_tokens,
         }
+
+        if use_temperature:
+            kwargs["temperature"] = self.config.temperature
+        if use_max_tokens:
+            kwargs["max_tokens"] = self.config.max_tokens
+        else:
+            # Some providers use max_completion_tokens instead
+            kwargs["max_completion_tokens"] = self.config.max_tokens
 
         # Add tools if available
         tools = self._get_tools_for_llm()
         if tools:
             kwargs["tools"] = tools
-        else:
+        elif use_stop:
             # Only use stop sequences when no tools (tools don't work well with stop)
             kwargs["stop"] = self.STOP_SEQUENCES
 
@@ -921,13 +1009,17 @@ The tools will be called automatically when you request them."""
                 tool_results = self._handle_tool_calls(tool_calls)
                 messages.extend(tool_results)
 
-                # Call LLM again with tool results (without stop sequences)
-                kwargs_retry = {
+                # Call LLM again with tool results (using same parameter settings)
+                kwargs_retry: Dict[str, Any] = {
                     "model": model_name,
                     "messages": messages,
-                    "temperature": self.config.temperature,
-                    "max_tokens": self.config.max_tokens,
                 }
+                if use_temperature:
+                    kwargs_retry["temperature"] = self.config.temperature
+                if use_max_tokens:
+                    kwargs_retry["max_tokens"] = self.config.max_tokens
+                else:
+                    kwargs_retry["max_completion_tokens"] = self.config.max_tokens
                 if tools:
                     kwargs_retry["tools"] = tools
 
@@ -959,36 +1051,48 @@ The tools will be called automatically when you request them."""
                 self._on_llm_response(content)
 
             return content
+
         except Exception as e:
+            error_msg = str(e).lower()
+
             # Handle stop parameter not supported
-            if "stop" in str(e).lower():
-                kwargs.pop("stop", None)
-                response = completion(**kwargs)
-                content = response.choices[0].message.content or ""
-                latency_ms = (time.time() - start_time) * 1000
-
-                # Extract thinking from Claude responses (if present)
-                thinking = self._extract_thinking_from_response(response)
-                if thinking and self._session_logger:
-                    self._session_logger.log_thinking(thinking)
-
+            if use_stop and "stop" in error_msg:
                 if self._session_logger:
-                    tokens = getattr(response.usage, 'total_tokens', 0) if response.usage else 0
-                    self._session_logger.log_llm_response(
-                        response=content,
-                        tokens_used=tokens,
-                        latency_ms=latency_ms,
-                        model=self.config.model,
-                        has_code="<code>" in content,
-                        has_plan="<plan>" in content,
-                        has_answer="<answer>" in content,
+                    self._session_logger._file_logger.warning(
+                        "Provider doesn't support 'stop', retrying without it"
                     )
+                return self._call_llm(
+                    messages,
+                    use_stop=False,
+                    use_temperature=use_temperature,
+                    use_max_tokens=use_max_tokens,
+                )
 
-                # Notify LLM response received (for UI updates)
-                if self._on_llm_response:
-                    self._on_llm_response(content)
+            # Handle temperature not supported
+            if use_temperature and "temperature" in error_msg:
+                if self._session_logger:
+                    self._session_logger._file_logger.warning(
+                        "Provider doesn't support 'temperature', retrying without it"
+                    )
+                return self._call_llm(
+                    messages,
+                    use_stop=use_stop,
+                    use_temperature=False,
+                    use_max_tokens=use_max_tokens,
+                )
 
-                return content
+            # Handle max_tokens vs max_completion_tokens
+            if use_max_tokens and "max_tokens" in error_msg:
+                if self._session_logger:
+                    self._session_logger._file_logger.warning(
+                        "Provider requires 'max_completion_tokens', retrying"
+                    )
+                return self._call_llm(
+                    messages,
+                    use_stop=use_stop,
+                    use_temperature=use_temperature,
+                    use_max_tokens=False,
+                )
 
             # Log error
             if self._session_logger:
@@ -1195,8 +1299,13 @@ The tools will be called automatically when you request them."""
         code = self._extract_code(response_text)
         answer = self._extract_answer(response_text)
         thinking = self._extract_thinking(response_text)
+        intent = self._extract_intent(response_text)
         plan = self._extract_plan(response_text)
         has_answer = self._has_final_answer(response_text)
+
+        # Log intent if found
+        if intent and self._session_logger:
+            self._session_logger._log_event("intent", {"intent": intent})
 
         # Update current plan
         if plan:
@@ -1223,6 +1332,7 @@ The tools will be called automatically when you request them."""
             has_answer=has_answer,
             answer=answer,
             thinking=thinking,
+            intent=intent,
             is_complete=is_complete,
         )
 

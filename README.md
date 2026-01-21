@@ -26,6 +26,7 @@ An AI-powered autonomous agent for data science with persistent Jupyter kernel e
 - **MCP Tools**: Connect to external tools (web search, databases, etc.) via Model Context Protocol
 - **Human-in-the-Loop**: Configurable checkpoints for plan and code approval
 - **Notebook Generation**: Automatically generates clean, runnable Jupyter notebooks
+- **Agent Skills**: Extensible skill system for specialized tasks (EDA, ML, etc.)
 
 ## Installation
 
@@ -117,6 +118,8 @@ dsagent run "Analyze sales trends" --data ./sales.csv
 | `dsagent chat` | Same as above, with explicit options |
 | `dsagent run "task"` | Execute a one-shot task |
 | `dsagent init` | Setup wizard for configuration |
+| `dsagent skills list` | List installed skills |
+| `dsagent skills install <source>` | Install a skill |
 | `dsagent mcp list` | List configured MCP servers |
 | `dsagent mcp add <template>` | Add an MCP server |
 
@@ -259,6 +262,7 @@ DSAgent comes with essential data science libraries pre-installed:
 - [Python API](docs/PYTHON_API.md) - Detailed API documentation
 - [Model Configuration](docs/MODELS.md) - LLM provider setup
 - [MCP Tools](docs/MCP.md) - External tools integration
+- [Agent Skills](docs/SKILLS.md) - Extensible skill system
 - [Docker Guide](docs/DOCKER.md) - Container deployment
 
 ## License

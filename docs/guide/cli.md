@@ -9,6 +9,9 @@ dsagent                          # Start interactive chat (default)
 dsagent chat                     # Same as above
 dsagent run "task"               # Execute one-shot task
 dsagent init                     # Setup wizard
+dsagent skills list              # List installed skills
+dsagent skills install <source>  # Install a skill
+dsagent skills remove <name>     # Remove a skill
 dsagent mcp list                 # List MCP servers
 dsagent mcp add <template>       # Add MCP server
 dsagent mcp remove <name>        # Remove MCP server
@@ -87,6 +90,8 @@ Once in a chat session, you can use slash commands:
 | `/export [file]` | Export session to notebook |
 | `/clear` | Clear the screen |
 | `/model <name>` | Change the model |
+| `/skills` | List installed skills |
+| `/skill <name>` | Show skill details |
 | `/status` | Show current status |
 | `/quit` | Exit the session |
 
@@ -263,6 +268,61 @@ Remove an MCP server by name.
 
 ```bash
 dsagent mcp remove brave_search
+```
+
+---
+
+## `dsagent skills`
+
+Manage agent skills for extended capabilities. Skills extend DSAgent with reusable knowledge packages. See [Skills](skills.md) for complete documentation.
+
+### `dsagent skills list`
+
+List all installed skills.
+
+```bash
+$ dsagent skills list
+
+Installed Skills
+┏━━━━━━━━━━━━━━━┳━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━┓
+┃ Name          ┃ Version ┃ Description                              ┃ Scripts ┃
+┡━━━━━━━━━━━━━━━╇━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━┩
+│ eda-analysis  │ 1.0.0   │ Comprehensive exploratory data analysis  │ 3       │
+└───────────────┴─────────┴──────────────────────────────────────────┴─────────┘
+
+Skills directory: /Users/you/.dsagent/skills
+```
+
+### `dsagent skills install <source>`
+
+Install a skill from GitHub or a local directory.
+
+```bash
+# From GitHub
+dsagent skills install github:dsagent-skills/eda-analysis
+dsagent skills install github:user/repo/path/to/skill
+
+# From local directory
+dsagent skills install ./my-local-skill
+
+# Force reinstall
+dsagent skills install --force github:dsagent-skills/eda-analysis
+```
+
+### `dsagent skills remove <name>`
+
+Remove an installed skill.
+
+```bash
+dsagent skills remove eda-analysis
+```
+
+### `dsagent skills info <name>`
+
+Show detailed information about a skill.
+
+```bash
+dsagent skills info eda-analysis
 ```
 
 ---

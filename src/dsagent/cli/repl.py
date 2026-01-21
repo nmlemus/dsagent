@@ -495,7 +495,7 @@ class ConversationalCLI:
         # Show answer if present (final response)
         if response.has_answer and response.answer:
             self.console.print()
-            self.renderer.render_info(response.answer, title="Final Answer")
+            self.renderer.render_answer(response.answer)
         elif not response.code and not response.plan:
             # Just show the text response (simple conversational reply)
             self.renderer.render_assistant_message(response.content)

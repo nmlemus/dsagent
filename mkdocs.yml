@@ -107,6 +107,7 @@ nav:
   - User Guide:
     - CLI Reference: guide/cli.md
     - Model Configuration: guide/models.md
+    - Skills: guide/skills.md
     - MCP Tools: guide/mcp.md
     - Docker Deployment: guide/docker.md
   - API Reference:
