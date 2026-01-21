@@ -325,6 +325,22 @@ class CLIRenderer:
             )
         )
 
+    def render_answer(self, content: str, title: str = "Final Answer") -> None:
+        """Render final answer with Markdown formatting."""
+        # Strip internal tags
+        display_content = INTERNAL_TAGS_PATTERN.sub("", content).strip()
+
+        if not display_content:
+            return
+
+        self.console.print(
+            Panel(
+                Markdown(display_content),
+                title=f"[bold green]{title}[/bold green]",
+                border_style="green",
+            )
+        )
+
     def render_warning(self, message: str, title: str = "Warning") -> None:
         """Render warning message."""
         self.console.print(
