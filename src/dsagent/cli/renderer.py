@@ -247,23 +247,15 @@ class CLIRenderer:
         if not display_content:
             return
 
-        # Check if content contains markdown code blocks
-        if "```" in display_content:
-            self.console.print(
-                Panel(
-                    Markdown(display_content),
-                    title="[cyan]Assistant[/cyan]",
-                    border_style="cyan",
-                )
+        # Always use Markdown rendering for assistant messages
+        # Rich's Markdown handles headers, bold, italic, lists, code, etc.
+        self.console.print(
+            Panel(
+                Markdown(display_content),
+                title="[cyan]Assistant[/cyan]",
+                border_style="cyan",
             )
-        else:
-            self.console.print(
-                Panel(
-                    Text(display_content),
-                    title="[cyan]Assistant[/cyan]",
-                    border_style="cyan",
-                )
-            )
+        )
 
         if code:
             self.render_code(code, title="Code to execute")
