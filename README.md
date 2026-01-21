@@ -262,7 +262,7 @@ DSAgent comes with essential data science libraries pre-installed:
 - [Python API](docs/PYTHON_API.md) - Detailed API documentation
 - [Model Configuration](docs/MODELS.md) - LLM provider setup
 - [MCP Tools](docs/MCP.md) - External tools integration
-- [Agent Skills](docs/SKILLS.md) - Extensible skill system
+- [Agent Skills](docs/guide/skills.md) - Extensible skill system
 - [Docker Guide](docs/DOCKER.md) - Container deployment
 
 ## License
