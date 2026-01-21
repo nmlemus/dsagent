@@ -49,13 +49,23 @@ You can execute code, remember previous results, and build upon earlier work.
 ## Current Session Context
 {kernel_context}
 
-## How to Respond
+## Response Protocol
 
-### For simple questions or explanations:
-Just respond naturally with text. No need for code or plans.
+**FIRST**, classify the user's request (skip this if continuing an existing plan):
+<intent>question|simple|complex</intent>
 
-### For tasks requiring code execution:
-Use <code> tags to write Python code that will be executed:
+Classification criteria:
+- **question**: Conceptual questions, explanations, "what is", "how does", "explain" (no data/code needed)
+- **simple**: Single clear operation like "load this file", "show columns", "plot X" (1-2 steps max)
+- **complex**: Requires exploration + analysis + multiple outputs, modeling, reports (3+ steps)
+
+**THEN**, respond according to your classification:
+
+### For `question` intent:
+Respond directly with explanation. No code tags needed.
+
+### For `simple` intent:
+Execute directly with a single <code> block:
 
 <code>
 import pandas as pd
@@ -63,8 +73,8 @@ df = pd.read_csv('data/file.csv')
 print(df.head())
 </code>
 
-### For complex multi-step tasks:
-Create a DETAILED plan with numbered steps, then execute step by step:
+### For `complex` intent:
+Create a plan FIRST, then execute step by step:
 
 <plan>
 1. [ ] Load and explore data
@@ -80,14 +90,16 @@ Create a DETAILED plan with numbered steps, then execute step by step:
 ...
 </code>
 
-IMPORTANT: When you create a <plan>, you MUST:
+## Plan Rules (for complex tasks)
+
+When you have an active <plan>, you MUST:
 - Mark steps as [x] when completed
-- Include <plan> in EVERY response to show progress
+- Include <plan> in EVERY response showing current progress
 - Execute ONE step at a time with <code>
 - Only provide <answer> when ALL steps show [x]
 
-### For final answers or summaries:
-Use <answer> tags when you've completed ALL plan steps:
+### For final answers:
+Use <answer> tags when ALL plan steps are complete:
 
 <answer>
 Based on the analysis, the key findings are:
@@ -97,15 +109,15 @@ Based on the analysis, the key findings are:
 
 ## Critical Rules
 
-1. **ALWAYS include <plan>** in every response when working on a multi-step task
-2. **Mark steps [x]** immediately when completed
-3. **NEVER use <answer>** if ANY step shows [ ]
-4. **One code block per response**: Execute one step at a time
+1. **Classify first**: Always start with <intent> for new requests
+2. **Match response to intent**: Don't create plans for simple tasks
+3. **One code block per response**: Execute one step at a time
+4. **Mark progress**: Update [x] in plan after each step
 
 ## Important Guidelines
 
 1. **Reference existing variables**: Check the kernel context above
-2. **Be concise**: For simple tasks, just execute the code directly
+2. **Be concise**: Simple tasks don't need lengthy explanations
 3. **Explain errors**: If code fails, explain what went wrong
 
 ## CRITICAL: Saving Outputs
@@ -174,6 +186,7 @@ class ChatResponse:
     has_answer: bool = False  # Whether response contains <answer>
     answer: Optional[str] = None  # Extracted answer text
     thinking: Optional[str] = None  # Extracted thinking/reasoning
+    intent: Optional[str] = None  # Classified intent: question, simple, complex
     is_complete: bool = False  # Whether task is complete (all steps done or no plan)
 
 
@@ -846,6 +859,17 @@ The tools will be called automatically when you request them."""
             return match.group(1).strip()
         return None
 
+    def _extract_intent(self, text: str) -> Optional[str]:
+        """Extract intent classification from <intent> tags.
+
+        Returns:
+            One of: 'question', 'simple', 'complex', or None if not found.
+        """
+        match = re.search(r"<intent>\s*(question|simple|complex)\s*</intent>", text, re.IGNORECASE)
+        if match:
+            return match.group(1).lower()
+        return None
+
     def _extract_thinking_from_response(self, response: Any) -> Optional[str]:
         """Extract thinking/reasoning from LLM response.
 
@@ -1240,8 +1264,13 @@ The tools will be called automatically when you request them."""
         code = self._extract_code(response_text)
         answer = self._extract_answer(response_text)
         thinking = self._extract_thinking(response_text)
+        intent = self._extract_intent(response_text)
         plan = self._extract_plan(response_text)
         has_answer = self._has_final_answer(response_text)
+
+        # Log intent if found
+        if intent and self._session_logger:
+            self._session_logger._log_event("intent", {"intent": intent})
 
         # Update current plan
         if plan:
@@ -1268,6 +1297,7 @@ The tools will be called automatically when you request them."""
             has_answer=has_answer,
             answer=answer,
             thinking=thinking,
+            intent=intent,
             is_complete=is_complete,
         )
 
