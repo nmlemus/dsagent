@@ -465,11 +465,15 @@ class DataCommand(Command):
         import shutil
         from pathlib import Path
 
-        # Use session's data directory if session exists, otherwise fallback to workspace
-        if ctx.session and ctx.session.data_path:
-            data_dir = Path(ctx.session.data_path)
-        else:
-            data_dir = ctx.workspace / "data"
+        # Create a session if one doesn't exist (ensures data goes to correct location)
+        session_created = False
+        if not ctx.session:
+            session = ctx.manager.create_session()
+            ctx.set_session(session)
+            session_created = True
+
+        # Use session's data directory
+        data_dir = Path(ctx.session.data_path)
         data_dir.mkdir(parents=True, exist_ok=True)
 
         # If no args, list files in data directory
@@ -499,8 +503,9 @@ class DataCommand(Command):
             dest = data_dir / source.name
             shutil.copy2(source, dest)
             ctx.data_path = str(dest)
+            session_msg = "New session created.\n" if session_created else ""
             return CommandResult(
-                message=f"Copied: {source.name} → data/\n"
+                message=f"{session_msg}Copied: {source.name} → data/\n"
                 f"Use 'data/{source.name}' in your code."
             )
         elif source.is_dir():
@@ -513,8 +518,9 @@ class DataCommand(Command):
 
             if copied:
                 ctx.data_path = str(data_dir)
+                session_msg = "New session created.\n" if session_created else ""
                 return CommandResult(
-                    message=f"Copied {len(copied)} files from {source.name}/:\n"
+                    message=f"{session_msg}Copied {len(copied)} files from {source.name}/:\n"
                     + "\n".join(f"  - {f}" for f in copied[:10])
                     + (f"\n  ... and {len(copied) - 10} more" if len(copied) > 10 else "")
                 )
