@@ -918,10 +918,23 @@ The tools will be called automatically when you request them."""
         """Check if response contains <answer> tag."""
         return PlanParser.has_final_answer(text)
 
-    def _call_llm(self, messages: List[Dict[str, Any]]) -> str:
+    def _call_llm(
+        self,
+        messages: List[Dict[str, Any]],
+        use_stop: bool = True,
+        use_temperature: bool = True,
+        use_max_tokens: bool = True,
+    ) -> str:
         """Call the LLM and return response text.
 
         Handles MCP tool calls if available - executes tools and calls LLM again with results.
+        Also handles fallbacks for unsupported parameters (stop, temperature, max_tokens).
+
+        Args:
+            messages: Chat messages to send
+            use_stop: Whether to use stop sequences
+            use_temperature: Whether to use temperature parameter
+            use_max_tokens: Whether to use max_tokens (vs max_completion_tokens)
         """
         # Notify thinking started (for UI updates)
         if self._on_thinking:
@@ -932,7 +945,7 @@ The tools will be called automatically when you request them."""
             self._session_logger.log_llm_request(
                 model=self.config.model,
                 messages_count=len(messages),
-                temperature=self.config.temperature,
+                temperature=self.config.temperature if use_temperature else None,
                 max_tokens=self.config.max_tokens,
             )
 
@@ -940,19 +953,25 @@ The tools will be called automatically when you request them."""
         # Transform model name for proxy if LLM_API_BASE is set
         model_name = get_proxy_model_name(self.config.model)
 
-        # Build completion kwargs
+        # Build completion kwargs conditionally based on what's supported
         kwargs: Dict[str, Any] = {
             "model": model_name,
             "messages": messages,
-            "temperature": self.config.temperature,
-            "max_tokens": self.config.max_tokens,
         }
+
+        if use_temperature:
+            kwargs["temperature"] = self.config.temperature
+        if use_max_tokens:
+            kwargs["max_tokens"] = self.config.max_tokens
+        else:
+            # Some providers use max_completion_tokens instead
+            kwargs["max_completion_tokens"] = self.config.max_tokens
 
         # Add tools if available
         tools = self._get_tools_for_llm()
         if tools:
             kwargs["tools"] = tools
-        else:
+        elif use_stop:
             # Only use stop sequences when no tools (tools don't work well with stop)
             kwargs["stop"] = self.STOP_SEQUENCES
 
@@ -990,13 +1009,17 @@ The tools will be called automatically when you request them."""
                 tool_results = self._handle_tool_calls(tool_calls)
                 messages.extend(tool_results)
 
-                # Call LLM again with tool results (without stop sequences)
-                kwargs_retry = {
+                # Call LLM again with tool results (using same parameter settings)
+                kwargs_retry: Dict[str, Any] = {
                     "model": model_name,
                     "messages": messages,
-                    "temperature": self.config.temperature,
-                    "max_tokens": self.config.max_tokens,
                 }
+                if use_temperature:
+                    kwargs_retry["temperature"] = self.config.temperature
+                if use_max_tokens:
+                    kwargs_retry["max_tokens"] = self.config.max_tokens
+                else:
+                    kwargs_retry["max_completion_tokens"] = self.config.max_tokens
                 if tools:
                     kwargs_retry["tools"] = tools
 
@@ -1028,36 +1051,48 @@ The tools will be called automatically when you request them."""
                 self._on_llm_response(content)
 
             return content
+
         except Exception as e:
+            error_msg = str(e).lower()
+
             # Handle stop parameter not supported
-            if "stop" in str(e).lower():
-                kwargs.pop("stop", None)
-                response = completion(**kwargs)
-                content = response.choices[0].message.content or ""
-                latency_ms = (time.time() - start_time) * 1000
-
-                # Extract thinking from Claude responses (if present)
-                thinking = self._extract_thinking_from_response(response)
-                if thinking and self._session_logger:
-                    self._session_logger.log_thinking(thinking)
-
+            if use_stop and "stop" in error_msg:
                 if self._session_logger:
-                    tokens = getattr(response.usage, 'total_tokens', 0) if response.usage else 0
-                    self._session_logger.log_llm_response(
-                        response=content,
-                        tokens_used=tokens,
-                        latency_ms=latency_ms,
-                        model=self.config.model,
-                        has_code="<code>" in content,
-                        has_plan="<plan>" in content,
-                        has_answer="<answer>" in content,
+                    self._session_logger._file_logger.warning(
+                        "Provider doesn't support 'stop', retrying without it"
                     )
+                return self._call_llm(
+                    messages,
+                    use_stop=False,
+                    use_temperature=use_temperature,
+                    use_max_tokens=use_max_tokens,
+                )
 
-                # Notify LLM response received (for UI updates)
-                if self._on_llm_response:
-                    self._on_llm_response(content)
+            # Handle temperature not supported
+            if use_temperature and "temperature" in error_msg:
+                if self._session_logger:
+                    self._session_logger._file_logger.warning(
+                        "Provider doesn't support 'temperature', retrying without it"
+                    )
+                return self._call_llm(
+                    messages,
+                    use_stop=use_stop,
+                    use_temperature=False,
+                    use_max_tokens=use_max_tokens,
+                )
 
-                return content
+            # Handle max_tokens vs max_completion_tokens
+            if use_max_tokens and "max_tokens" in error_msg:
+                if self._session_logger:
+                    self._session_logger._file_logger.warning(
+                        "Provider requires 'max_completion_tokens', retrying"
+                    )
+                return self._call_llm(
+                    messages,
+                    use_stop=use_stop,
+                    use_temperature=use_temperature,
+                    use_max_tokens=False,
+                )
 
             # Log error
             if self._session_logger:
