@@ -373,6 +373,7 @@ Use these tools when you need external information (e.g., web search) before wri
         use_stop: bool = True,
         use_temperature: bool = True,
         use_max_tokens: bool = True,
+        disable_thinking: bool = False,
     ) -> tuple[str, Optional[List[Any]]]:
         """Call LLM with recursive fallbacks for parameter issues.
 
@@ -381,6 +382,7 @@ Use these tools when you need external information (e.g., web search) before wri
             use_stop: Whether to use stop sequences
             use_temperature: Whether to use temperature
             use_max_tokens: Whether to use max_tokens (vs max_completion_tokens)
+            disable_thinking: Whether to disable thinking mode (for Gemini thought_signature issues)
 
         Returns:
             Tuple of (response text, tool_calls or None)
@@ -404,6 +406,10 @@ Use these tools when you need external information (e.g., web search) before wri
         else:
             kwargs["max_completion_tokens"] = self.config.max_tokens
 
+        # Disable thinking mode for Gemini if requested (fallback for thought_signature issues)
+        if disable_thinking and "gemini" in self.config.model.lower():
+            kwargs["thinking"] = {"type": "disabled", "budget_tokens": 0}
+
         try:
             response = completion(**kwargs)
             message = response.choices[0].message
@@ -423,6 +429,19 @@ Use these tools when you need external information (e.g., web search) before wri
         except Exception as e:
             error_msg = str(e).lower()
 
+            # Handle Gemini thought_signature error - disable thinking mode as fallback
+            if not disable_thinking and "thought_signature" in error_msg:
+                self.logger.warning(
+                    "Gemini thought_signature error, retrying with thinking disabled"
+                )
+                return self._call_llm_with_fallbacks(
+                    messages,
+                    use_stop=use_stop,
+                    use_temperature=use_temperature,
+                    use_max_tokens=use_max_tokens,
+                    disable_thinking=True,
+                )
+
             # Handle stop parameter not supported
             if use_stop and "stop" in error_msg:
                 self.logger.warning(
@@ -433,6 +452,7 @@ Use these tools when you need external information (e.g., web search) before wri
                     use_stop=False,
                     use_temperature=use_temperature,
                     use_max_tokens=use_max_tokens,
+                    disable_thinking=disable_thinking,
                 )
 
             # Handle temperature not supported
@@ -445,6 +465,7 @@ Use these tools when you need external information (e.g., web search) before wri
                     use_stop=use_stop,
                     use_temperature=False,
                     use_max_tokens=use_max_tokens,
+                    disable_thinking=disable_thinking,
                 )
 
             # Handle max_tokens vs max_completion_tokens
@@ -457,6 +478,7 @@ Use these tools when you need external information (e.g., web search) before wri
                     use_stop=use_stop,
                     use_temperature=use_temperature,
                     use_max_tokens=False,
+                    disable_thinking=disable_thinking,
                 )
 
             raise
@@ -602,20 +624,26 @@ Use these tools when you need external information (e.g., web search) before wri
                     self.logger.print_status("🔧", f"LLM requested {len(tool_calls)} tool(s)")
 
                     # Add assistant message with tool calls
+                    # Preserve provider_specific_fields for Gemini thought_signature support
+                    tool_calls_list = []
+                    for tc in tool_calls:
+                        tc_dict = {
+                            "id": tc.id,
+                            "type": "function",
+                            "function": {
+                                "name": tc.function.name,
+                                "arguments": tc.function.arguments,
+                            },
+                        }
+                        # Preserve provider_specific_fields if present (for Gemini thought_signature)
+                        if hasattr(tc, "provider_specific_fields") and tc.provider_specific_fields:
+                            tc_dict["provider_specific_fields"] = tc.provider_specific_fields
+                        tool_calls_list.append(tc_dict)
+
                     self.messages.append({
                         "role": "assistant",
                         "content": response,
-                        "tool_calls": [
-                            {
-                                "id": tc.id,
-                                "type": "function",
-                                "function": {
-                                    "name": tc.function.name,
-                                    "arguments": tc.function.arguments,
-                                },
-                            }
-                            for tc in tool_calls
-                        ],
+                        "tool_calls": tool_calls_list,
                     })
 
                     # Execute tools and add results

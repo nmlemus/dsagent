@@ -924,6 +924,7 @@ The tools will be called automatically when you request them."""
         use_stop: bool = True,
         use_temperature: bool = True,
         use_max_tokens: bool = True,
+        disable_thinking: bool = False,
     ) -> str:
         """Call the LLM and return response text.
 
@@ -935,6 +936,7 @@ The tools will be called automatically when you request them."""
             use_stop: Whether to use stop sequences
             use_temperature: Whether to use temperature parameter
             use_max_tokens: Whether to use max_tokens (vs max_completion_tokens)
+            disable_thinking: Whether to disable thinking mode (for Gemini thought_signature issues)
         """
         # Notify thinking started (for UI updates)
         if self._on_thinking:
@@ -975,6 +977,10 @@ The tools will be called automatically when you request them."""
             # Only use stop sequences when no tools (tools don't work well with stop)
             kwargs["stop"] = self.STOP_SEQUENCES
 
+        # Disable thinking mode for Gemini if requested (fallback for thought_signature issues)
+        if disable_thinking and "gemini" in model_name.lower():
+            kwargs["thinking"] = {"type": "disabled", "budget_tokens": 0}
+
         try:
             response = completion(**kwargs)
             message = response.choices[0].message
@@ -989,20 +995,26 @@ The tools will be called automatically when you request them."""
                     )
 
                 # Add assistant message with tool calls to messages
+                # Preserve provider_specific_fields for Gemini thought_signature support
+                tool_calls_list = []
+                for tc in tool_calls:
+                    tc_dict = {
+                        "id": tc.id,
+                        "type": "function",
+                        "function": {
+                            "name": tc.function.name,
+                            "arguments": tc.function.arguments,
+                        },
+                    }
+                    # Preserve provider_specific_fields if present (for Gemini thought_signature)
+                    if hasattr(tc, "provider_specific_fields") and tc.provider_specific_fields:
+                        tc_dict["provider_specific_fields"] = tc.provider_specific_fields
+                    tool_calls_list.append(tc_dict)
+
                 messages.append({
                     "role": "assistant",
                     "content": content,
-                    "tool_calls": [
-                        {
-                            "id": tc.id,
-                            "type": "function",
-                            "function": {
-                                "name": tc.function.name,
-                                "arguments": tc.function.arguments,
-                            },
-                        }
-                        for tc in tool_calls
-                    ],
+                    "tool_calls": tool_calls_list,
                 })
 
                 # Execute tools and add results
@@ -1055,6 +1067,20 @@ The tools will be called automatically when you request them."""
         except Exception as e:
             error_msg = str(e).lower()
 
+            # Handle Gemini thought_signature error - disable thinking mode as fallback
+            if not disable_thinking and "thought_signature" in error_msg:
+                if self._session_logger:
+                    self._session_logger._file_logger.warning(
+                        "Gemini thought_signature error, retrying with thinking disabled"
+                    )
+                return self._call_llm(
+                    messages,
+                    use_stop=use_stop,
+                    use_temperature=use_temperature,
+                    use_max_tokens=use_max_tokens,
+                    disable_thinking=True,
+                )
+
             # Handle stop parameter not supported
             if use_stop and "stop" in error_msg:
                 if self._session_logger:
@@ -1066,6 +1092,7 @@ The tools will be called automatically when you request them."""
                     use_stop=False,
                     use_temperature=use_temperature,
                     use_max_tokens=use_max_tokens,
+                    disable_thinking=disable_thinking,
                 )
 
             # Handle temperature not supported
@@ -1079,6 +1106,7 @@ The tools will be called automatically when you request them."""
                     use_stop=use_stop,
                     use_temperature=False,
                     use_max_tokens=use_max_tokens,
+                    disable_thinking=disable_thinking,
                 )
 
             # Handle max_tokens vs max_completion_tokens
@@ -1092,6 +1120,7 @@ The tools will be called automatically when you request them."""
                     use_stop=use_stop,
                     use_temperature=use_temperature,
                     use_max_tokens=False,
+                    disable_thinking=disable_thinking,
                 )
 
             # Log error
