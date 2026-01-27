@@ -23,159 +23,17 @@ from dsagent.core.executor import JupyterExecutor
 from dsagent.core.hitl import HITLGateway
 from dsagent.utils.notebook import NotebookBuilder
 from dsagent.utils.logger import AgentLogger, Colors
+from dsagent.prompts import PromptBuilder
 
 if TYPE_CHECKING:
     from dsagent.schema.models import Message
     from dsagent.utils.run_logger import RunLogger
     from dsagent.tools.mcp_manager import MCPManager
+    from dsagent.observability import ObservabilityManager
 
 
-# System prompt for the planner agent
-SYSTEM_PROMPT = '''You are an autonomous AI agent that works with a STRUCTURED PLAN to complete data analysis and machine learning tasks.
-
-## How You Work
-
-1. **FIRST**: Create a DETAILED plan with numbered steps (8-12 steps for complex tasks)
-2. **THEN**: Execute each step one by one
-3. **TRACK**: Mark steps as complete [x] or pending [ ]
-4. **ADAPT**: Adjust the plan if needed based on results
-5. **FINISH**: Only provide final answer when ALL steps are complete
-
-## Response Format
-
-EVERY response must include these XML tags:
-
-### <plan> - Your current plan status (REQUIRED in every response)
-```
-<plan>
-1. [x] Completed step
-2. [ ] Current step          <- Working on this
-3. [ ] Future step
-</plan>
-```
-
-### <think> - Your reasoning (not executed)
-Analyze results, explain decisions, plan next actions.
-
-### <plan_update> - When adjusting the plan
-```
-<plan_update>
-Adding data cleaning step because missing values were found.
-</plan_update>
-```
-
-### <code> - Python code to execute
-One focused code block per response. Variables persist between executions.
-
-### <answer> - Final answer (ONLY when ALL steps show [x])
-Comprehensive summary of findings, insights, and recommendations.
-
-## Critical Rules
-
-1. **ALWAYS include <plan>** in every response showing current status
-2. **Mark steps [x]** immediately when completed
-3. **NEVER use <answer>** if ANY step shows [ ]
-4. **Be THOROUGH**: Include steps for:
-   - Data loading and exploration
-   - Data cleaning and preprocessing
-   - Feature engineering
-   - Model building/analysis
-   - Model evaluation and metrics
-   - Visualizations and charts
-   - Summary and recommendations
-5. **Adjust plan** when results suggest different approach or errors occur
-6. **One code block per response**: Execute one step at a time
-
-## Data Rules - CRITICAL
-
-1. **NEVER generate synthetic/fake data** unless the user EXPLICITLY asks for it
-   - If you cannot access real data, STOP and explain the issue
-   - Do NOT create mock data, random data, or placeholder values as a workaround
-
-2. **When a data source fails** (API error, connection issue, etc.):
-   - STOP and report the specific error to the user
-   - Ask for guidance on how to proceed
-   - Do NOT silently switch to alternative data sources or generate fake data
-
-3. **When a required library is not installed**:
-   - STOP and report which library is missing
-   - Ask if the user wants you to try installing it or use an alternative approach
-   - Do NOT proceed with workarounds without user confirmation
-
-4. **When MCP tools fail or are unavailable**:
-   - Report the tool failure clearly
-   - Ask the user for alternative data sources or approaches
-   - Do NOT attempt to generate equivalent data yourself
-
-## Available Libraries
-pandas, numpy, scipy, polars, pyarrow, matplotlib, seaborn, plotly, scikit-learn, xgboost, lightgbm, statsmodels, pycaret, boruta, tqdm, joblib
-
-## Bash Commands & LaTeX
-You can execute bash commands using IPython magic:
-- Single command: `!pdflatex report.tex`
-- Multi-line: Use `%%bash` cell magic
-
-LaTeX tools available (Docker only): pdflatex, xelatex, latexmk
-Use this to generate PDF reports or presentations from your analysis.
-
-{tools_section}
-
-## Workspace Structure
-
-Your working directory has this structure:
-```
-./
-├── data/        # READ input data from here, SAVE downloaded/generated datasets here
-├── artifacts/   # SAVE ALL outputs here: images, models, CSVs, reports, etc.
-├── notebooks/   # Auto-generated (don't write here)
-└── logs/        # Auto-generated (don't write here)
-```
-
-**CRITICAL FILE RULES - ALWAYS FOLLOW:**
-
-1. **Input data**: Read from `data/` folder
-   - `pd.read_csv('data/filename.csv')`
-   - `pd.read_excel('data/filename.xlsx')`
-
-2. **ALL outputs go to `artifacts/`** - This includes:
-   - Images/charts: `plt.savefig('artifacts/chart.png')`
-   - Trained models: `joblib.dump(model, 'artifacts/model.pkl')`
-   - Result CSVs: `df.to_csv('artifacts/results.csv')`
-   - Reports/text: `open('artifacts/report.txt', 'w')`
-   - Any other generated files
-
-3. **Downloaded/created datasets go to `data/`**:
-   - Synthetic data you generate
-   - Data downloaded from APIs or external tools
-   - Preprocessed data for reuse
-
-4. **NEVER save files to the root directory (./)** - always use `data/` or `artifacts/`
-
-## Saving Files Examples
-
-**Images and charts:**
-```python
-plt.figure(figsize=(10, 6))
-plt.plot(data)
-plt.savefig('artifacts/my_chart.png', dpi=150, bbox_inches='tight')
-plt.show()
-```
-
-**Models:**
-```python
-import joblib
-joblib.dump(model, 'artifacts/trained_model.pkl')
-# To load: model = joblib.load('artifacts/trained_model.pkl')
-```
-
-**Results and reports:**
-```python
-results_df.to_csv('artifacts/analysis_results.csv', index=False)
-
-with open('artifacts/summary.txt', 'w') as f:
-    f.write(summary_text)
-```
-'''
+# System prompt is now managed by PromptBuilder
+# See dsagent/prompts/sections.py for prompt content
 
 
 class AgentEngine:
@@ -239,6 +97,10 @@ class AgentEngine:
         self.answer: Optional[str] = None
         self._initial_plan_approved = False  # Track if first plan was approved
 
+        # Initialize observability from environment
+        self._observability: Optional["ObservabilityManager"] = None
+        self._init_observability()
+
     def _emit(
         self,
         event_type: EventType,
@@ -251,19 +113,29 @@ class AgentEngine:
             self.event_callback(event)
         return event
 
+    def _init_observability(self) -> None:
+        """Initialize observability from environment variables."""
+        try:
+            from dsagent.observability import ObservabilityManager, ObservabilityConfig
+
+            obs_config = ObservabilityConfig.from_env()
+            if obs_config.enabled:
+                self._observability = ObservabilityManager(obs_config)
+                if self._observability.setup():
+                    self.logger.debug("Observability initialized")
+                else:
+                    self._observability = None
+        except Exception as e:
+            self.logger.warning(f"Failed to initialize observability: {e}")
+            self._observability = None
+
     def _get_system_prompt(self) -> str:
         """Get the system prompt with tools section if MCP is available."""
-        tools_section = ""
-
+        tools = None
         if self.mcp and self.mcp.available_tools:
-            tools_list = "\n".join(f"- {tool}" for tool in self.mcp.available_tools)
-            tools_section = f"""## Available Tools
-You have access to the following external tools via function calling:
-{tools_list}
+            tools = self.mcp.available_tools
 
-Use these tools when you need external information (e.g., web search) before writing code."""
-
-        return SYSTEM_PROMPT.format(tools_section=tools_section)
+        return PromptBuilder.build_engine_prompt(tools=tools)
 
     def _get_tools_for_llm(self) -> Optional[List[Dict[str, Any]]]:
         """Get tool definitions for LLM if MCP is available."""
@@ -280,6 +152,7 @@ Use these tools when you need external information (e.g., web search) before wri
         Returns:
             List of tool result messages
         """
+        import time as _time
         results = []
 
         for tool_call in tool_calls:
@@ -289,16 +162,63 @@ Use these tools when you need external information (e.g., web search) before wri
             except json.JSONDecodeError:
                 arguments = {}
 
+            # Emit tool calling event
+            self._emit(
+                EventType.TOOL_CALLING,
+                f"Calling tool: {tool_name}",
+                data={"tool_name": tool_name, "arguments": arguments},
+            )
             self.logger.print_status("🔧", f"Calling tool: {tool_name}")
+
+            start_time = _time.time()
+            success = False
+            error = None
 
             try:
                 # Use the synchronous API which uses MCPManager's dedicated event loop
                 result = self.mcp.execute_tool_sync(tool_name, arguments)
+                success = True
                 self.logger.print_status("✅", f"Tool {tool_name} completed")
 
             except Exception as e:
-                result = f"Error executing tool {tool_name}: {str(e)}"
+                error = str(e)
+                result = f"Error executing tool {tool_name}: {error}"
                 self.logger.print_error(f"Tool error: {result}")
+
+            execution_time_ms = (_time.time() - start_time) * 1000
+
+            # Emit tool result event
+            if success:
+                self._emit(
+                    EventType.TOOL_SUCCESS,
+                    f"Tool {tool_name} succeeded",
+                    data={
+                        "tool_name": tool_name,
+                        "result": result[:500] if len(result) > 500 else result,
+                        "execution_time_ms": execution_time_ms,
+                    },
+                )
+            else:
+                self._emit(
+                    EventType.TOOL_FAILED,
+                    f"Tool {tool_name} failed: {error}",
+                    data={
+                        "tool_name": tool_name,
+                        "error": error,
+                        "execution_time_ms": execution_time_ms,
+                    },
+                )
+
+            # Log tool execution if run_logger available
+            if self.run_logger:
+                self.run_logger.log_tool_execution(
+                    tool_name=tool_name,
+                    arguments=arguments,
+                    success=success,
+                    result=result if success else None,
+                    error=error,
+                    execution_time_ms=execution_time_ms,
+                )
 
             results.append({
                 "role": "tool",
@@ -373,6 +293,7 @@ Use these tools when you need external information (e.g., web search) before wri
         use_stop: bool = True,
         use_temperature: bool = True,
         use_max_tokens: bool = True,
+        disable_thinking: bool = False,
     ) -> tuple[str, Optional[List[Any]]]:
         """Call LLM with recursive fallbacks for parameter issues.
 
@@ -381,6 +302,7 @@ Use these tools when you need external information (e.g., web search) before wri
             use_stop: Whether to use stop sequences
             use_temperature: Whether to use temperature
             use_max_tokens: Whether to use max_tokens (vs max_completion_tokens)
+            disable_thinking: Whether to disable thinking mode (for Gemini thought_signature issues)
 
         Returns:
             Tuple of (response text, tool_calls or None)
@@ -404,6 +326,16 @@ Use these tools when you need external information (e.g., web search) before wri
         else:
             kwargs["max_completion_tokens"] = self.config.max_tokens
 
+        # Disable thinking mode for Gemini if requested (fallback for thought_signature issues)
+        if disable_thinking and "gemini" in self.config.model.lower():
+            kwargs["thinking"] = {"type": "disabled", "budget_tokens": 0}
+
+        # Add observability metadata for tracing
+        if self._observability and self._observability.is_active():
+            kwargs["metadata"] = self._observability.get_call_metadata(
+                call_type="engine",
+            )
+
         try:
             response = completion(**kwargs)
             message = response.choices[0].message
@@ -423,6 +355,19 @@ Use these tools when you need external information (e.g., web search) before wri
         except Exception as e:
             error_msg = str(e).lower()
 
+            # Handle Gemini thought_signature error - disable thinking mode as fallback
+            if not disable_thinking and "thought_signature" in error_msg:
+                self.logger.warning(
+                    "Gemini thought_signature error, retrying with thinking disabled"
+                )
+                return self._call_llm_with_fallbacks(
+                    messages,
+                    use_stop=use_stop,
+                    use_temperature=use_temperature,
+                    use_max_tokens=use_max_tokens,
+                    disable_thinking=True,
+                )
+
             # Handle stop parameter not supported
             if use_stop and "stop" in error_msg:
                 self.logger.warning(
@@ -433,6 +378,7 @@ Use these tools when you need external information (e.g., web search) before wri
                     use_stop=False,
                     use_temperature=use_temperature,
                     use_max_tokens=use_max_tokens,
+                    disable_thinking=disable_thinking,
                 )
 
             # Handle temperature not supported
@@ -445,6 +391,7 @@ Use these tools when you need external information (e.g., web search) before wri
                     use_stop=use_stop,
                     use_temperature=False,
                     use_max_tokens=use_max_tokens,
+                    disable_thinking=disable_thinking,
                 )
 
             # Handle max_tokens vs max_completion_tokens
@@ -457,6 +404,7 @@ Use these tools when you need external information (e.g., web search) before wri
                     use_stop=use_stop,
                     use_temperature=use_temperature,
                     use_max_tokens=False,
+                    disable_thinking=disable_thinking,
                 )
 
             raise
@@ -602,20 +550,26 @@ Use these tools when you need external information (e.g., web search) before wri
                     self.logger.print_status("🔧", f"LLM requested {len(tool_calls)} tool(s)")
 
                     # Add assistant message with tool calls
+                    # Preserve provider_specific_fields for Gemini thought_signature support
+                    tool_calls_list = []
+                    for tc in tool_calls:
+                        tc_dict = {
+                            "id": tc.id,
+                            "type": "function",
+                            "function": {
+                                "name": tc.function.name,
+                                "arguments": tc.function.arguments,
+                            },
+                        }
+                        # Preserve provider_specific_fields if present (for Gemini thought_signature)
+                        if hasattr(tc, "provider_specific_fields") and tc.provider_specific_fields:
+                            tc_dict["provider_specific_fields"] = tc.provider_specific_fields
+                        tool_calls_list.append(tc_dict)
+
                     self.messages.append({
                         "role": "assistant",
                         "content": response,
-                        "tool_calls": [
-                            {
-                                "id": tc.id,
-                                "type": "function",
-                                "function": {
-                                    "name": tc.function.name,
-                                    "arguments": tc.function.arguments,
-                                },
-                            }
-                            for tc in tool_calls
-                        ],
+                        "tool_calls": tool_calls_list,
                     })
 
                     # Execute tools and add results
@@ -956,3 +910,15 @@ Use these tools when you need external information (e.g., web search) before wri
         if state.get("current_plan"):
             self.current_plan = PlanState(**state["current_plan"])
         self.answer = state.get("answer")
+
+    def shutdown(self) -> None:
+        """Clean up resources.
+
+        Call this when done with the engine to clean up observability and other resources.
+        """
+        if self._observability:
+            try:
+                self._observability.teardown()
+            except Exception:
+                pass
+            self._observability = None

@@ -334,6 +334,95 @@ class SessionLogger:
             "size_bytes": size_bytes,
         })
 
+    def _sanitize_arguments(
+        self,
+        arguments: Dict[str, Any],
+        max_length: int = 500,
+    ) -> Dict[str, Any]:
+        """Sanitize tool arguments by redacting sensitive keys and truncating long values.
+
+        Args:
+            arguments: Original arguments dictionary
+            max_length: Maximum length for string values before truncation
+
+        Returns:
+            Sanitized arguments dictionary
+        """
+        # Keys that should be redacted
+        sensitive_keys = {
+            "api_key", "apikey", "api-key",
+            "password", "passwd", "pwd",
+            "token", "access_token", "auth_token", "bearer",
+            "secret", "secret_key", "secretkey",
+            "credential", "credentials",
+            "private_key", "privatekey",
+            "authorization", "auth",
+        }
+
+        sanitized = {}
+        for key, value in arguments.items():
+            key_lower = key.lower()
+
+            # Check if key contains any sensitive pattern
+            is_sensitive = any(sens in key_lower for sens in sensitive_keys)
+
+            if is_sensitive:
+                sanitized[key] = "[REDACTED]"
+            elif isinstance(value, str) and len(value) > max_length:
+                sanitized[key] = value[:max_length] + f"... (truncated, {len(value)} chars)"
+            elif isinstance(value, dict):
+                sanitized[key] = self._sanitize_arguments(value, max_length)
+            else:
+                sanitized[key] = value
+
+        return sanitized
+
+    def log_tool_execution(
+        self,
+        tool_name: str,
+        arguments: Dict[str, Any],
+        success: bool,
+        result: Optional[str] = None,
+        error: Optional[str] = None,
+        execution_time_ms: float = 0,
+    ) -> None:
+        """Log a tool (MCP) execution.
+
+        Args:
+            tool_name: Name of the tool called
+            arguments: Tool arguments (will be sanitized)
+            success: Whether the tool execution succeeded
+            result: Result from the tool (if success)
+            error: Error message (if failed)
+            execution_time_ms: Execution time in milliseconds
+        """
+        if not self._file_logger:
+            return
+
+        status = "SUCCESS" if success else "FAILED"
+        self._file_logger.info(
+            f"[TOOL {status}] {tool_name}, Time: {execution_time_ms:.0f}ms"
+        )
+
+        # Sanitize arguments for logging
+        sanitized_args = self._sanitize_arguments(arguments)
+
+        if success:
+            # Truncate result for log file
+            result_preview = result[:200] + "..." if result and len(result) > 200 else result
+            self._file_logger.debug(f"Result: {result_preview}")
+        else:
+            self._file_logger.warning(f"Error: {error}")
+
+        self._log_event("tool_execution", {
+            "tool_name": tool_name,
+            "arguments": sanitized_args,
+            "success": success,
+            "result": result[:1000] if result and len(result) > 1000 else result,
+            "error": error,
+            "execution_time_ms": execution_time_ms,
+        })
+
     def close(self) -> None:
         """Close the logger and flush all buffers."""
         if not self._file_logger:

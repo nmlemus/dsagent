@@ -135,10 +135,10 @@ class SkillRegistry:
         return True
 
     def get_prompt_context(self, skill_names: Optional[List[str]] = None) -> str:
-        """Generate context for injection into system prompt.
+        """Generate summary context for injection into system prompt.
 
-        This is the main method used by ConversationalAgent to get
-        skill information for the LLM.
+        This returns skill summaries only (progressive disclosure).
+        Full instructions are loaded when a skill is activated.
 
         Args:
             skill_names: Specific skills to include. If None, includes all.
@@ -162,18 +162,61 @@ class SkillRegistry:
         if not skills_to_include:
             return ""
 
-        # Build prompt context
+        # Build prompt context with summaries only
         lines = [
             "## Available Skills",
             "",
-            "You have access to the following skills. Each skill provides "
-            "specialized capabilities through instructions and scripts.",
-            "To use a skill's script, follow its instructions and execute the script using exec().",
+            "You have access to the following skills. Each skill provides specialized capabilities.",
+            "",
+            "**To activate a skill**: Say \"I'll use the [skill-name] skill\" and then read",
+            "the full instructions from the skill's SKILL.md file using:",
+            "```python",
+            "with open('/path/to/skill/SKILL.md') as f:",
+            "    print(f.read())",
+            "```",
             "",
         ]
 
         for skill in skills_to_include:
-            lines.append(skill.get_prompt_context())
+            lines.append(skill.get_summary_context())
+
+        lines.append("")
+        lines.append("---")
+
+        return "\n".join(lines)
+
+    def get_full_prompt_context(self, skill_names: Optional[List[str]] = None) -> str:
+        """Generate full context including all instructions.
+
+        Use this when you need complete skill instructions in the prompt.
+
+        Args:
+            skill_names: Specific skills to include. If None, includes all.
+
+        Returns:
+            Formatted markdown/text with full instructions.
+        """
+        if not self._skills:
+            return ""
+
+        names = skill_names if skill_names else list(self._skills.keys())
+
+        skills_to_include = []
+        for name in names:
+            skill = self.get_skill(name)
+            if skill:
+                skills_to_include.append(skill)
+
+        if not skills_to_include:
+            return ""
+
+        lines = [
+            "## Available Skills (Full Instructions)",
+            "",
+        ]
+
+        for skill in skills_to_include:
+            lines.append(skill.get_full_context())
             lines.append("")
             lines.append("---")
             lines.append("")

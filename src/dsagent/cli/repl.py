@@ -182,7 +182,9 @@ class ConversationalCLI:
                     f"[cyan]Live notebook will be created on first message[/cyan]"
                 )
 
-            # Set up callback for notebook changes (if sync enabled)
+            # Set up callbacks for notebook changes and tool execution
+            callbacks_to_set = {}
+
             if self.enable_notebook_sync:
                 def on_notebook_change(changes):
                     for change in changes:
@@ -203,7 +205,22 @@ class ConversationalCLI:
                             self.console.print(
                                 f"\n[yellow]📝 Jupyter: Cell {change.cell_index} deleted[/yellow]"
                             )
-                self._agent.set_callbacks(on_notebook_change=on_notebook_change)
+                callbacks_to_set["on_notebook_change"] = on_notebook_change
+
+            # Set up tool execution callbacks for MCP tools
+            def on_tool_calling(tool_name, arguments):
+                self.renderer.render_tool_calling(tool_name, arguments)
+
+            def on_tool_result(tool_name, success, result, error, execution_time_ms):
+                self.renderer.render_tool_result(
+                    tool_name, success, result, error, execution_time_ms
+                )
+
+            callbacks_to_set["on_tool_calling"] = on_tool_calling
+            callbacks_to_set["on_tool_result"] = on_tool_result
+
+            if callbacks_to_set:
+                self._agent.set_callbacks(**callbacks_to_set)
         return self._agent
 
     def _shutdown_agent(self) -> None:
@@ -373,6 +390,12 @@ class ConversationalCLI:
                     self.console.print(f"[dim]Live notebook: {notebook_path}[/dim]")
                     notebook_path_shown = True
 
+            # Show thinking and explanation BEFORE plan (so explanation appears first)
+            if first_response.thinking:
+                self.renderer.render_thinking(first_response.thinking)
+            if first_response.explanation:
+                self.renderer.render_explanation(first_response.explanation)
+
             # Show plan if present and ask for HITL approval
             if first_response.plan:
                 self._display_plan(first_response.plan, round_num)
@@ -388,8 +411,9 @@ class ConversationalCLI:
                         return
                     plan_approved = True
 
-            # Display the first response
-            self._display_response(first_response, round_num)
+            # Display the rest of the response (code, output, answer)
+            # Skip thinking/explanation since we showed them above
+            self._display_response(first_response, round_num, skip_preamble=True)
 
             # Continue with remaining responses (autonomous execution)
             while True:
@@ -409,6 +433,12 @@ class ConversationalCLI:
                         self.console.print(f"[dim]Live notebook: {notebook_path}[/dim]")
                         notebook_path_shown = True
 
+                # Show thinking and explanation BEFORE plan
+                if response.thinking:
+                    self.renderer.render_thinking(response.thinking)
+                if response.explanation:
+                    self.renderer.render_explanation(response.explanation)
+
                 # Show plan if present and ask for HITL approval
                 if response.plan:
                     self._display_plan(response.plan, round_num)
@@ -424,8 +454,8 @@ class ConversationalCLI:
                             break
                         plan_approved = True
 
-                # Display the response
-                self._display_response(response, round_num)
+                # Display the rest of the response (code, output, answer)
+                self._display_response(response, round_num, skip_preamble=True)
 
             # Update session in context
             if agent.session:
@@ -456,15 +486,24 @@ class ConversationalCLI:
             )
         )
 
-    def _display_response(self, response, round_num: int = 1) -> None:
-        """Display a chat response with proper formatting."""
+    def _display_response(self, response, round_num: int = 1, skip_preamble: bool = False) -> None:
+        """Display a chat response with proper formatting.
+
+        Args:
+            response: ChatResponse to display
+            round_num: Current round number for multi-step execution
+            skip_preamble: If True, skip thinking and explanation (already shown before plan)
+        """
         # Show round indicator for multi-step execution
         if round_num > 1:
             self.console.print(f"\n[dim]─── Round {round_num} ───[/dim]")
 
-        # Show thinking if present
-        if response.thinking:
-            self.renderer.render_thinking(response.thinking)
+        # Show thinking and explanation unless already shown (skip_preamble=True)
+        if not skip_preamble:
+            if response.thinking:
+                self.renderer.render_thinking(response.thinking)
+            if response.explanation:
+                self.renderer.render_explanation(response.explanation)
 
         # Show code if present
         if response.code:

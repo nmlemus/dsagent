@@ -9,8 +9,8 @@ from dsagent.agents.conversational import (
     ConversationalAgent,
     ConversationalAgentConfig,
     ChatResponse,
-    CONVERSATIONAL_SYSTEM_PROMPT,
 )
+from dsagent.prompts import PromptBuilder
 from dsagent.session import Session, SessionManager, ConversationHistory
 from dsagent.schema.models import ExecutionResult
 
@@ -601,9 +601,16 @@ class TestConversationalAgentWithSessionManager:
 class TestSystemPrompt:
     """Tests for system prompt generation."""
 
-    def test_system_prompt_template(self):
-        """Test that system prompt template has expected placeholders."""
-        assert "{kernel_context}" in CONVERSATIONAL_SYSTEM_PROMPT
+    def test_prompt_builder_creates_valid_prompt(self):
+        """Test that PromptBuilder creates a prompt with expected sections."""
+        prompt = PromptBuilder.build_conversational_prompt(
+            kernel_context="test kernel",
+            tools=None,
+            skills_context=None,
+        )
+        # Check key sections are present
+        assert "test kernel" in prompt
+        assert "execute code" in prompt.lower()
 
     def test_build_system_prompt(self, tmp_path):
         """Test building system prompt with context."""

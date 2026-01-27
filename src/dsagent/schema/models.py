@@ -265,6 +265,11 @@ class EventType(str, Enum):
     CODE_SUCCESS = "code_success"
     CODE_FAILED = "code_failed"
 
+    # Tool execution events (MCP tools)
+    TOOL_CALLING = "tool_calling"
+    TOOL_SUCCESS = "tool_success"
+    TOOL_FAILED = "tool_failed"
+
     # Thinking events
     THINKING = "thinking"
 

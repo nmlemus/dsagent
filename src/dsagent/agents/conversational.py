@@ -24,11 +24,13 @@ from dsagent.core.planner import PlanParser
 from dsagent.core.hitl import HITLGateway
 from dsagent.utils.notebook import NotebookBuilder, LiveNotebookBuilder, LiveNotebookSync, NotebookChange
 from dsagent.memory import ConversationSummarizer, SummaryConfig
+from dsagent.prompts import PromptBuilder
 
 if TYPE_CHECKING:
     from dsagent.utils.logger import AgentLogger
     from dsagent.tools.mcp_manager import MCPManager
     from dsagent.tools.config import MCPConfig
+    from dsagent.observability import ObservabilityManager
 
 
 class ExecutionMode(str, Enum):
@@ -37,142 +39,8 @@ class ExecutionMode(str, Enum):
     AUTONOMOUS = "autonomous"  # Loop until plan complete
 
 
-# Conversational system prompt - supports both modes
-CONVERSATIONAL_SYSTEM_PROMPT = '''You are a Data Science assistant in an interactive conversation session.
-
-## Your Role
-You help users with data analysis, machine learning, visualization, and Python programming.
-You can execute code, remember previous results, and build upon earlier work.
-
-**Current date**: {current_date}
-
-## Current Session Context
-{kernel_context}
-
-## Response Protocol
-
-**FIRST**, classify the user's request (skip this if continuing an existing plan):
-<intent>question|simple|complex</intent>
-
-Classification criteria:
-- **question**: Conceptual questions, explanations, "what is", "how does", "explain" (no data/code needed)
-- **simple**: Single clear operation like "load this file", "show columns", "plot X" (1-2 steps max)
-- **complex**: Requires exploration + analysis + multiple outputs, modeling, reports (3+ steps)
-
-**THEN**, respond according to your classification:
-
-### For `question` intent:
-Respond directly with explanation. No code tags needed.
-
-### For `simple` intent:
-Execute directly with a single <code> block:
-
-<code>
-import pandas as pd
-df = pd.read_csv('data/file.csv')
-print(df.head())
-</code>
-
-### For `complex` intent:
-Create a plan FIRST, then execute step by step:
-
-<plan>
-1. [ ] Load and explore data
-2. [ ] Clean and preprocess
-3. [ ] Build model
-4. [ ] Evaluate results
-5. [ ] Create visualizations
-6. [ ] Summarize findings
-</plan>
-
-<code>
-# Step 1: Load data
-...
-</code>
-
-## Plan Rules (for complex tasks)
-
-When you have an active <plan>, you MUST:
-- Mark steps as [x] when completed
-- Include <plan> in EVERY response showing current progress
-- Execute ONE step at a time with <code>
-- Only provide <answer> when ALL steps show [x]
-
-### For final answers:
-Use <answer> tags when ALL plan steps are complete:
-
-<answer>
-Based on the analysis, the key findings are:
-- Finding 1
-- Finding 2
-</answer>
-
-## Critical Rules
-
-1. **Classify first**: Always start with <intent> for new requests
-2. **Match response to intent**: Don't create plans for simple tasks
-3. **One code block per response**: Execute one step at a time
-4. **Mark progress**: Update [x] in plan after each step
-
-## Important Guidelines
-
-1. **Reference existing variables**: Check the kernel context above
-2. **Be concise**: Simple tasks don't need lengthy explanations
-3. **Explain errors**: If code fails, explain what went wrong
-
-## CRITICAL: Saving Outputs
-
-**ALWAYS save visualizations and outputs to 'artifacts/'**. Never rely on plt.show() alone.
-
-### For plots and charts:
-```python
-import matplotlib.pyplot as plt
-
-# Create your visualization
-plt.figure(figsize=(10, 6))
-plt.plot(data)
-plt.title('My Chart')
-
-# ALWAYS save to artifacts/ with descriptive name
-plt.savefig('artifacts/chart_name.png', dpi=150, bbox_inches='tight')
-plt.close()  # Close to free memory
-print("Chart saved to artifacts/chart_name.png")
-```
-
-### For DataFrames and results:
-```python
-# Save processed data
-df.to_csv('artifacts/processed_data.csv', index=False)
-
-# Save model results
-results_df.to_csv('artifacts/model_results.csv', index=False)
-```
-
-### For models:
-```python
-import joblib
-joblib.dump(model, 'artifacts/trained_model.pkl')
-```
-
-## Workspace Structure
-```
-./
-├── data/        # Input data files (read from here)
-├── artifacts/   # Output files - SAVE ALL OUTPUTS HERE
-└── notebooks/   # Auto-generated notebooks
-```
-
-## Available Libraries
-pandas, numpy, scipy, polars, pyarrow, matplotlib, seaborn, plotly, scikit-learn, xgboost, lightgbm, statsmodels, pycaret, boruta, tqdm
-
-## Bash Commands & LaTeX
-You can execute bash commands using IPython magic:
-- Single command: `!pdflatex report.tex`
-- Multi-line: Use `%%bash` cell magic
-
-LaTeX tools available (Docker only): pdflatex, xelatex, latexmk
-Use this to generate PDF reports or presentations from your analysis.
-'''
+# System prompt is now managed by PromptBuilder
+# See dsagent/prompts/sections.py for prompt content
 
 
 @dataclass
@@ -187,6 +55,7 @@ class ChatResponse:
     answer: Optional[str] = None  # Extracted answer text
     thinking: Optional[str] = None  # Extracted thinking/reasoning
     intent: Optional[str] = None  # Classified intent: question, simple, complex
+    explanation: Optional[str] = None  # Text between </intent> and <plan>/<code>
     is_complete: bool = False  # Whether task is complete (all steps done or no plan)
 
 
@@ -216,6 +85,9 @@ class ConversationalAgentConfig:
 
     # MCP settings
     mcp_config: Optional[Any] = None  # Path to MCP YAML, dict, or MCPConfig object
+
+    # Observability settings
+    observability_config: Optional[Any] = None  # ObservabilityConfig object or None
 
     @classmethod
     def from_agent_config(cls, config: AgentConfig) -> "ConversationalAgentConfig":
@@ -324,6 +196,9 @@ class ConversationalAgent:
         # Skills registry for Agent Skills
         self._skill_registry: Optional["SkillRegistry"] = None
 
+        # Observability manager for LLM tracing
+        self._observability: Optional["ObservabilityManager"] = None
+
         # Callbacks for UI updates
         self._on_plan_update: Optional[Callable[[PlanState], None]] = None
         self._on_code_executing: Optional[Callable[[str], None]] = None
@@ -331,6 +206,9 @@ class ConversationalAgent:
         self._on_thinking: Optional[Callable[[], None]] = None
         self._on_llm_response: Optional[Callable[[str], None]] = None
         self._on_hitl_request: Optional[Callable[[str, Optional[PlanState], Optional[str], Optional[str]], None]] = None
+        # Tool execution callbacks
+        self._on_tool_calling: Optional[Callable[[str, Dict[str, Any]], None]] = None
+        self._on_tool_result: Optional[Callable[[str, bool, Optional[str], Optional[str], float], None]] = None
 
     @property
     def session(self) -> Optional[Session]:
@@ -398,6 +276,8 @@ class ConversationalAgent:
         on_thinking: Optional[Callable[[], None]] = None,
         on_llm_response: Optional[Callable[[str], None]] = None,
         on_hitl_request: Optional[Callable[[str, Optional[PlanState], Optional[str], Optional[str]], None]] = None,
+        on_tool_calling: Optional[Callable[[str, Dict[str, Any]], None]] = None,
+        on_tool_result: Optional[Callable[[str, bool, Optional[str], Optional[str], float], None]] = None,
     ) -> None:
         """Set callbacks for UI updates during autonomous execution.
 
@@ -409,6 +289,8 @@ class ConversationalAgent:
             on_thinking: Called before LLM request (for "thinking" indicator)
             on_llm_response: Called when LLM response is received (before code execution)
             on_hitl_request: Called when HITL approval is needed (request_type, plan, code, error)
+            on_tool_calling: Called before MCP tool execution (tool_name, arguments)
+            on_tool_result: Called after MCP tool execution (tool_name, success, result, error, time_ms)
         """
         self._on_plan_update = on_plan_update
         self._on_code_executing = on_code_executing
@@ -417,6 +299,8 @@ class ConversationalAgent:
         self._on_thinking = on_thinking
         self._on_llm_response = on_llm_response
         self._on_hitl_request = on_hitl_request
+        self._on_tool_calling = on_tool_calling
+        self._on_tool_result = on_tool_result
 
     def start(self, session: Optional[Session] = None) -> None:
         """Start the agent and kernel.
@@ -482,6 +366,9 @@ class ConversationalAgent:
         # Initialize skills registry
         self._init_skills()
 
+        # Initialize observability for LLM tracing
+        self._init_observability()
+
         self._started = True
 
     def shutdown(self, save_notebook: bool = True) -> Optional[Path]:
@@ -494,6 +381,14 @@ class ConversationalAgent:
             Path to saved notebook if save_notebook=True and there was content
         """
         notebook_path = None
+
+        # Teardown observability
+        if self._observability:
+            try:
+                self._observability.teardown()
+            except Exception:
+                pass
+            self._observability = None
 
         # Disconnect MCP servers
         if self._mcp_manager:
@@ -590,6 +485,42 @@ class ConversationalAgent:
             if self._session_logger:
                 self._session_logger.log_error(f"Failed to initialize skills: {e}", error_type="skills_error")
 
+    def _init_observability(self) -> None:
+        """Initialize observability for LLM tracing."""
+        try:
+            from dsagent.observability import ObservabilityManager, ObservabilityConfig
+
+            # Use provided config or load from environment
+            if self.config.observability_config:
+                obs_config = self.config.observability_config
+            else:
+                obs_config = ObservabilityConfig.from_env()
+
+            # Set session ID from current session if available
+            if self._session and not obs_config.session_id:
+                obs_config.session_id = self._session.id
+
+            self._observability = ObservabilityManager(obs_config)
+            if self._observability.setup():
+                if self._session_logger:
+                    status = self._observability.get_status()
+                    providers = ", ".join(status["providers"])
+                    self._session_logger._file_logger.info(
+                        f"Observability: Enabled with providers: {providers}"
+                    )
+            else:
+                self._observability = None
+
+        except ImportError:
+            # Observability module not available
+            pass
+        except Exception as e:
+            if self._session_logger:
+                self._session_logger.log_error(
+                    f"Failed to initialize observability: {e}",
+                    error_type="observability_error"
+                )
+
     def _get_kernel_context(self) -> str:
         """Get kernel context for the system prompt."""
         if not self._introspector or not self.is_running:
@@ -602,39 +533,24 @@ class ConversationalAgent:
 
     def _build_system_prompt(self) -> str:
         """Build the system prompt with current context and available tools."""
-        from datetime import date
-
         kernel_context = self._get_kernel_context()
-        current_date = date.today().strftime("%Y-%m-%d")
-        base_prompt = CONVERSATIONAL_SYSTEM_PROMPT.format(
-            kernel_context=kernel_context,
-            current_date=current_date,
-        )
 
-        additions = []
-
-        # Add MCP tools section if available
+        # Get tools list if MCP manager is available
+        tools = None
         if self._mcp_manager and self._mcp_manager.available_tools:
-            tools_list = "\n".join(f"- {tool}" for tool in self._mcp_manager.available_tools)
-            tools_section = f"""
-## Available External Tools
-You have access to the following external tools via function calling:
-{tools_list}
+            tools = self._mcp_manager.available_tools
 
-Use these tools when you need external information (e.g., web search, file access) before writing code.
-The tools will be called automatically when you request them."""
-            additions.append(tools_section)
-
-        # Add skills section if available
+        # Get skills context if available
+        skills_context = None
         if self._skill_registry and self._skill_registry.skills:
             skills_context = self._skill_registry.get_prompt_context()
-            if skills_context:
-                additions.append(f"\n{skills_context}")
 
-        if additions:
-            return base_prompt + "\n".join(additions)
-
-        return base_prompt
+        # Use PromptBuilder to construct the prompt
+        return PromptBuilder.build_conversational_prompt(
+            kernel_context=kernel_context,
+            tools=tools,
+            skills_context=skills_context,
+        )
 
     def _get_tools_for_llm(self) -> Optional[List[Dict[str, Any]]]:
         """Get tool definitions for LLM if MCP is available."""
@@ -652,6 +568,7 @@ The tools will be called automatically when you request them."""
             List of tool result messages
         """
         import json
+        import time as _time
         results = []
 
         for tool_call in tool_calls:
@@ -661,24 +578,52 @@ The tools will be called automatically when you request them."""
             except json.JSONDecodeError:
                 arguments = {}
 
-            if self._session_logger:
-                self._session_logger._file_logger.info(f"[TOOL CALL] {tool_name}")
+            # Notify callback that tool is being called
+            if self._on_tool_calling:
+                self._on_tool_calling(tool_name, arguments)
+
+            start_time = _time.time()
+            success = False
+            result = None
+            error = None
 
             try:
                 # Use the synchronous API which uses MCPManager's dedicated event loop
                 result = self._mcp_manager.execute_tool_sync(tool_name, arguments)
-                if self._session_logger:
-                    self._session_logger._file_logger.info(f"[TOOL RESULT] {tool_name}: success")
+                result = result if isinstance(result, str) else str(result)
+                success = True
 
             except Exception as e:
-                result = f"Error executing tool {tool_name}: {str(e)}"
-                if self._session_logger:
-                    self._session_logger.log_error(f"Tool error: {result}", error_type="tool_error")
+                error = str(e)
+                result = f"Error executing tool {tool_name}: {error}"
+
+            execution_time_ms = (_time.time() - start_time) * 1000
+
+            # Log tool execution
+            if self._session_logger:
+                self._session_logger.log_tool_execution(
+                    tool_name=tool_name,
+                    arguments=arguments,
+                    success=success,
+                    result=result if success else None,
+                    error=error,
+                    execution_time_ms=execution_time_ms,
+                )
+
+            # Notify callback with tool result
+            if self._on_tool_result:
+                self._on_tool_result(
+                    tool_name,
+                    success,
+                    result if success else None,
+                    error,
+                    execution_time_ms,
+                )
 
             results.append({
                 "role": "tool",
                 "tool_call_id": tool_call.id,
-                "content": result if isinstance(result, str) else str(result),
+                "content": result,
             })
 
         return results
@@ -870,6 +815,36 @@ The tools will be called automatically when you request them."""
             return match.group(1).lower()
         return None
 
+    def _extract_explanation(self, text: str) -> Optional[str]:
+        """Extract explanation text between </intent> and first structural tag.
+
+        This captures the model's reasoning/explanation that appears after
+        intent classification but before the plan or code.
+
+        Returns:
+            Explanation text if found, None otherwise.
+        """
+        # Find the end of </intent> tag
+        intent_end = re.search(r"</intent>\s*", text, re.IGNORECASE)
+        if not intent_end:
+            return None
+
+        # Find the start of next structural tag (<plan> or <code>)
+        after_intent = text[intent_end.end():]
+
+        # Find where plan or code starts
+        next_tag = re.search(r"<(plan|code)>", after_intent, re.IGNORECASE)
+        if not next_tag:
+            return None
+
+        # Extract text between
+        explanation = after_intent[:next_tag.start()].strip()
+
+        # Return only if there's meaningful content
+        if explanation and len(explanation) > 10:
+            return explanation
+        return None
+
     def _extract_thinking_from_response(self, response: Any) -> Optional[str]:
         """Extract thinking/reasoning from LLM response.
 
@@ -924,6 +899,7 @@ The tools will be called automatically when you request them."""
         use_stop: bool = True,
         use_temperature: bool = True,
         use_max_tokens: bool = True,
+        disable_thinking: bool = False,
     ) -> str:
         """Call the LLM and return response text.
 
@@ -935,6 +911,7 @@ The tools will be called automatically when you request them."""
             use_stop: Whether to use stop sequences
             use_temperature: Whether to use temperature parameter
             use_max_tokens: Whether to use max_tokens (vs max_completion_tokens)
+            disable_thinking: Whether to disable thinking mode (for Gemini thought_signature issues)
         """
         # Notify thinking started (for UI updates)
         if self._on_thinking:
@@ -975,6 +952,17 @@ The tools will be called automatically when you request them."""
             # Only use stop sequences when no tools (tools don't work well with stop)
             kwargs["stop"] = self.STOP_SEQUENCES
 
+        # Disable thinking mode for Gemini if requested (fallback for thought_signature issues)
+        if disable_thinking and "gemini" in model_name.lower():
+            kwargs["thinking"] = {"type": "disabled", "budget_tokens": 0}
+
+        # Add observability metadata for tracing
+        if self._observability and self._observability.is_active():
+            kwargs["metadata"] = self._observability.get_call_metadata(
+                session_id=self._session.id if self._session else None,
+                call_type="chat",
+            )
+
         try:
             response = completion(**kwargs)
             message = response.choices[0].message
@@ -989,20 +977,26 @@ The tools will be called automatically when you request them."""
                     )
 
                 # Add assistant message with tool calls to messages
+                # Preserve provider_specific_fields for Gemini thought_signature support
+                tool_calls_list = []
+                for tc in tool_calls:
+                    tc_dict = {
+                        "id": tc.id,
+                        "type": "function",
+                        "function": {
+                            "name": tc.function.name,
+                            "arguments": tc.function.arguments,
+                        },
+                    }
+                    # Preserve provider_specific_fields if present (for Gemini thought_signature)
+                    if hasattr(tc, "provider_specific_fields") and tc.provider_specific_fields:
+                        tc_dict["provider_specific_fields"] = tc.provider_specific_fields
+                    tool_calls_list.append(tc_dict)
+
                 messages.append({
                     "role": "assistant",
                     "content": content,
-                    "tool_calls": [
-                        {
-                            "id": tc.id,
-                            "type": "function",
-                            "function": {
-                                "name": tc.function.name,
-                                "arguments": tc.function.arguments,
-                            },
-                        }
-                        for tc in tool_calls
-                    ],
+                    "tool_calls": tool_calls_list,
                 })
 
                 # Execute tools and add results
@@ -1022,6 +1016,13 @@ The tools will be called automatically when you request them."""
                     kwargs_retry["max_completion_tokens"] = self.config.max_tokens
                 if tools:
                     kwargs_retry["tools"] = tools
+
+                # Add observability metadata for tracing (tool follow-up call)
+                if self._observability and self._observability.is_active():
+                    kwargs_retry["metadata"] = self._observability.get_call_metadata(
+                        session_id=self._session.id if self._session else None,
+                        call_type="tool-followup",
+                    )
 
                 response = completion(**kwargs_retry)
                 content = response.choices[0].message.content or ""
@@ -1055,6 +1056,20 @@ The tools will be called automatically when you request them."""
         except Exception as e:
             error_msg = str(e).lower()
 
+            # Handle Gemini thought_signature error - disable thinking mode as fallback
+            if not disable_thinking and "thought_signature" in error_msg:
+                if self._session_logger:
+                    self._session_logger._file_logger.warning(
+                        "Gemini thought_signature error, retrying with thinking disabled"
+                    )
+                return self._call_llm(
+                    messages,
+                    use_stop=use_stop,
+                    use_temperature=use_temperature,
+                    use_max_tokens=use_max_tokens,
+                    disable_thinking=True,
+                )
+
             # Handle stop parameter not supported
             if use_stop and "stop" in error_msg:
                 if self._session_logger:
@@ -1066,6 +1081,7 @@ The tools will be called automatically when you request them."""
                     use_stop=False,
                     use_temperature=use_temperature,
                     use_max_tokens=use_max_tokens,
+                    disable_thinking=disable_thinking,
                 )
 
             # Handle temperature not supported
@@ -1079,6 +1095,7 @@ The tools will be called automatically when you request them."""
                     use_stop=use_stop,
                     use_temperature=False,
                     use_max_tokens=use_max_tokens,
+                    disable_thinking=disable_thinking,
                 )
 
             # Handle max_tokens vs max_completion_tokens
@@ -1092,6 +1109,7 @@ The tools will be called automatically when you request them."""
                     use_stop=use_stop,
                     use_temperature=use_temperature,
                     use_max_tokens=False,
+                    disable_thinking=disable_thinking,
                 )
 
             # Log error
@@ -1300,6 +1318,7 @@ The tools will be called automatically when you request them."""
         answer = self._extract_answer(response_text)
         thinking = self._extract_thinking(response_text)
         intent = self._extract_intent(response_text)
+        explanation = self._extract_explanation(response_text)
         plan = self._extract_plan(response_text)
         has_answer = self._has_final_answer(response_text)
 
@@ -1333,6 +1352,7 @@ The tools will be called automatically when you request them."""
             answer=answer,
             thinking=thinking,
             intent=intent,
+            explanation=explanation,
             is_complete=is_complete,
         )
 
