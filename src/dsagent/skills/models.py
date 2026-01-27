@@ -40,6 +40,9 @@ class SkillMetadata(BaseModel):
     tags: List[str] = Field(default_factory=list)
     """Tags for categorization."""
 
+    use_cases: List[str] = Field(default_factory=list)
+    """When to use this skill (auto-extracted from instructions)."""
+
 
 class SkillScript(BaseModel):
     """Information about a script in a skill."""
@@ -72,11 +75,40 @@ class Skill(BaseModel):
     class Config:
         arbitrary_types_allowed = True
 
-    def get_prompt_context(self) -> str:
-        """Generate context to inject into system prompt.
+    def get_summary_context(self) -> str:
+        """Generate summary context for system prompt (no full instructions).
+
+        This is the default for progressive disclosure - just enough info
+        for the LLM to know when to use the skill.
 
         Returns:
-            Formatted string with skill info for the LLM.
+            Formatted string with skill summary.
+        """
+        # Build use cases string
+        if self.metadata.use_cases:
+            use_cases_str = "; ".join(self.metadata.use_cases[:3])
+            if len(self.metadata.use_cases) > 3:
+                use_cases_str += "..."
+        else:
+            use_cases_str = "see description"
+
+        skill_md_path = self.path / "SKILL.md"
+
+        lines = [
+            f"- **{self.metadata.name}**: {self.metadata.description}",
+            f"  - Use when: {use_cases_str}",
+            f"  - Location: `{skill_md_path}`",
+        ]
+
+        return "\n".join(lines)
+
+    def get_full_context(self) -> str:
+        """Generate full context including all instructions.
+
+        Use this when the skill is activated and full instructions are needed.
+
+        Returns:
+            Formatted string with complete skill info for the LLM.
         """
         lines = [
             f"### Skill: {self.metadata.name}",
@@ -95,6 +127,17 @@ class Skill(BaseModel):
         lines.append(self.instructions)
 
         return "\n".join(lines)
+
+    def get_prompt_context(self) -> str:
+        """Generate context to inject into system prompt.
+
+        DEPRECATED: Use get_summary_context() for summaries or
+        get_full_context() for complete instructions.
+
+        Returns:
+            Formatted string with skill info for the LLM.
+        """
+        return self.get_full_context()
 
     def get_script(self, name: str) -> Optional[SkillScript]:
         """Get a script by name.

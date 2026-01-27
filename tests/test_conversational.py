@@ -610,7 +610,7 @@ class TestSystemPrompt:
         )
         # Check key sections are present
         assert "test kernel" in prompt
-        assert "code execution" in prompt.lower()
+        assert "execute code" in prompt.lower()
 
     def test_build_system_prompt(self, tmp_path):
         """Test building system prompt with context."""

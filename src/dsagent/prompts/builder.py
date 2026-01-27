@@ -58,7 +58,7 @@ class PromptBuilder:
         # Add tool sections if tools are available
         if tools:
             parts.append(sections.TOOL_PRIORITY_RULES)
-            parts.append(cls._build_tools_section(tools))
+            parts.append(sections.TOOL_GUIDANCE)
 
         parts.extend([
             sections.AVAILABLE_LIBRARIES,
@@ -113,7 +113,7 @@ class PromptBuilder:
         # Add tool sections if tools are available
         if tools:
             parts.append(sections.TOOL_PRIORITY_RULES)
-            parts.append(cls._build_tools_section(tools))
+            parts.append(sections.TOOL_GUIDANCE)
 
         parts.extend([
             sections.FILE_RULES_SHORT,
@@ -126,16 +126,3 @@ class PromptBuilder:
             parts.append(skills_context)
 
         return "\n\n".join(parts)
-
-    @classmethod
-    def _build_tools_section(cls, tools: List[str]) -> str:
-        """Build the tools section with the list of available tools.
-
-        Args:
-            tools: List of tool names
-
-        Returns:
-            Formatted tools section
-        """
-        tools_list = "\n".join(f"- {tool}" for tool in tools)
-        return sections.TOOL_SECTION_TEMPLATE.format(tools_list=tools_list)

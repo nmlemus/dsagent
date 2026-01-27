@@ -233,15 +233,14 @@ CORRECT: Use Python pandas/numpy
 
 
 # =============================================================================
-# TOOL SECTION TEMPLATE
+# TOOL GUIDANCE (no tool list - LLM already has tools in function calling format)
 # =============================================================================
 
-TOOL_SECTION_TEMPLATE = """## Available MCP Tools
+TOOL_GUIDANCE = """## MCP Tools Available
 
-You have access to these external tools via function calling:
-{tools_list}
+You have access to external tools via function calling. The tool definitions are provided separately.
 
-**USE THESE TOOLS** instead of writing equivalent Python code:
+**PREFER MCP TOOLS** over writing equivalent Python code:
 - Tools handle authentication and dependencies automatically
 - Tools are more reliable than equivalent Python library code
 - Call the tool first, then process results with Python if needed

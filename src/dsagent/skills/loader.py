@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 import re
 from pathlib import Path
-from typing import List, Optional
+from typing import List, Optional, Tuple
 
 import yaml
 
@@ -158,7 +158,7 @@ class SkillLoader:
             path=path,
         )
 
-    def _parse_skill_file(self, skill_file: Path) -> tuple[SkillMetadata, str]:
+    def _parse_skill_file(self, skill_file: Path) -> Tuple[SkillMetadata, str]:
         """Parse a SKILL.md file into metadata and instructions.
 
         Args:
@@ -195,7 +195,56 @@ class SkillLoader:
         # Extract metadata
         metadata = self._extract_metadata(frontmatter)
 
+        # Auto-extract use cases from instructions
+        use_cases = self._extract_use_cases(instructions)
+        if use_cases:
+            metadata.use_cases = use_cases
+
         return metadata, instructions
+
+    def _extract_use_cases(self, instructions: str) -> List[str]:
+        """Extract use cases from 'When to Use' section in instructions.
+
+        Looks for sections like:
+        - ## When to Use This Skill
+        - ## When to Use
+        - ## Use Cases
+
+        Args:
+            instructions: Full markdown instructions
+
+        Returns:
+            List of use case strings (max 5)
+        """
+        # Patterns to match "When to Use" type sections
+        patterns = [
+            r"##\s*When to Use This Skill\s*\n(.*?)(?=\n##|\Z)",
+            r"##\s*When to Use\s*\n(.*?)(?=\n##|\Z)",
+            r"##\s*Use Cases\s*\n(.*?)(?=\n##|\Z)",
+            r"##\s*When Should I Use\s*\n(.*?)(?=\n##|\Z)",
+        ]
+
+        for pattern in patterns:
+            match = re.search(pattern, instructions, re.DOTALL | re.IGNORECASE)
+            if match:
+                content = match.group(1).strip()
+
+                # Extract bullet points (lines starting with - or *)
+                bullets = re.findall(r"^[-*]\s*(.+)$", content, re.MULTILINE)
+
+                if bullets:
+                    # Clean up and limit to 5 most relevant
+                    use_cases = []
+                    for bullet in bullets[:5]:
+                        # Clean up the text
+                        cleaned = bullet.strip()
+                        # Truncate very long use cases
+                        if len(cleaned) > 100:
+                            cleaned = cleaned[:97] + "..."
+                        use_cases.append(cleaned)
+                    return use_cases
+
+        return []
 
     def _parse_metadata(self, skill_file: Path) -> SkillMetadata:
         """Parse only metadata from a SKILL.md file.
