@@ -30,6 +30,7 @@ if TYPE_CHECKING:
     from dsagent.utils.logger import AgentLogger
     from dsagent.tools.mcp_manager import MCPManager
     from dsagent.tools.config import MCPConfig
+    from dsagent.observability import ObservabilityManager
 
 
 class ExecutionMode(str, Enum):
@@ -83,6 +84,9 @@ class ConversationalAgentConfig:
 
     # MCP settings
     mcp_config: Optional[Any] = None  # Path to MCP YAML, dict, or MCPConfig object
+
+    # Observability settings
+    observability_config: Optional[Any] = None  # ObservabilityConfig object or None
 
     @classmethod
     def from_agent_config(cls, config: AgentConfig) -> "ConversationalAgentConfig":
@@ -190,6 +194,9 @@ class ConversationalAgent:
 
         # Skills registry for Agent Skills
         self._skill_registry: Optional["SkillRegistry"] = None
+
+        # Observability manager for LLM tracing
+        self._observability: Optional["ObservabilityManager"] = None
 
         # Callbacks for UI updates
         self._on_plan_update: Optional[Callable[[PlanState], None]] = None
@@ -358,6 +365,9 @@ class ConversationalAgent:
         # Initialize skills registry
         self._init_skills()
 
+        # Initialize observability for LLM tracing
+        self._init_observability()
+
         self._started = True
 
     def shutdown(self, save_notebook: bool = True) -> Optional[Path]:
@@ -370,6 +380,14 @@ class ConversationalAgent:
             Path to saved notebook if save_notebook=True and there was content
         """
         notebook_path = None
+
+        # Teardown observability
+        if self._observability:
+            try:
+                self._observability.teardown()
+            except Exception:
+                pass
+            self._observability = None
 
         # Disconnect MCP servers
         if self._mcp_manager:
@@ -465,6 +483,42 @@ class ConversationalAgent:
         except Exception as e:
             if self._session_logger:
                 self._session_logger.log_error(f"Failed to initialize skills: {e}", error_type="skills_error")
+
+    def _init_observability(self) -> None:
+        """Initialize observability for LLM tracing."""
+        try:
+            from dsagent.observability import ObservabilityManager, ObservabilityConfig
+
+            # Use provided config or load from environment
+            if self.config.observability_config:
+                obs_config = self.config.observability_config
+            else:
+                obs_config = ObservabilityConfig.from_env()
+
+            # Set session ID from current session if available
+            if self._session and not obs_config.session_id:
+                obs_config.session_id = self._session.id
+
+            self._observability = ObservabilityManager(obs_config)
+            if self._observability.setup():
+                if self._session_logger:
+                    status = self._observability.get_status()
+                    providers = ", ".join(status["providers"])
+                    self._session_logger._file_logger.info(
+                        f"Observability: Enabled with providers: {providers}"
+                    )
+            else:
+                self._observability = None
+
+        except ImportError:
+            # Observability module not available
+            pass
+        except Exception as e:
+            if self._session_logger:
+                self._session_logger.log_error(
+                    f"Failed to initialize observability: {e}",
+                    error_type="observability_error"
+                )
 
     def _get_kernel_context(self) -> str:
         """Get kernel context for the system prompt."""
@@ -871,6 +925,13 @@ class ConversationalAgent:
         if disable_thinking and "gemini" in model_name.lower():
             kwargs["thinking"] = {"type": "disabled", "budget_tokens": 0}
 
+        # Add observability metadata for tracing
+        if self._observability and self._observability.is_active():
+            kwargs["metadata"] = self._observability.get_call_metadata(
+                session_id=self._session.id if self._session else None,
+                call_type="chat",
+            )
+
         try:
             response = completion(**kwargs)
             message = response.choices[0].message
@@ -924,6 +985,13 @@ class ConversationalAgent:
                     kwargs_retry["max_completion_tokens"] = self.config.max_tokens
                 if tools:
                     kwargs_retry["tools"] = tools
+
+                # Add observability metadata for tracing (tool follow-up call)
+                if self._observability and self._observability.is_active():
+                    kwargs_retry["metadata"] = self._observability.get_call_metadata(
+                        session_id=self._session.id if self._session else None,
+                        call_type="tool-followup",
+                    )
 
                 response = completion(**kwargs_retry)
                 content = response.choices[0].message.content or ""

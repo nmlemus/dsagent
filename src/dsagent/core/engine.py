@@ -29,6 +29,7 @@ if TYPE_CHECKING:
     from dsagent.schema.models import Message
     from dsagent.utils.run_logger import RunLogger
     from dsagent.tools.mcp_manager import MCPManager
+    from dsagent.observability import ObservabilityManager
 
 
 # System prompt is now managed by PromptBuilder
@@ -96,6 +97,10 @@ class AgentEngine:
         self.answer: Optional[str] = None
         self._initial_plan_approved = False  # Track if first plan was approved
 
+        # Initialize observability from environment
+        self._observability: Optional["ObservabilityManager"] = None
+        self._init_observability()
+
     def _emit(
         self,
         event_type: EventType,
@@ -107,6 +112,22 @@ class AgentEngine:
         if self.event_callback:
             self.event_callback(event)
         return event
+
+    def _init_observability(self) -> None:
+        """Initialize observability from environment variables."""
+        try:
+            from dsagent.observability import ObservabilityManager, ObservabilityConfig
+
+            obs_config = ObservabilityConfig.from_env()
+            if obs_config.enabled:
+                self._observability = ObservabilityManager(obs_config)
+                if self._observability.setup():
+                    self.logger.debug("Observability initialized")
+                else:
+                    self._observability = None
+        except Exception as e:
+            self.logger.warning(f"Failed to initialize observability: {e}")
+            self._observability = None
 
     def _get_system_prompt(self) -> str:
         """Get the system prompt with tools section if MCP is available."""
@@ -308,6 +329,12 @@ class AgentEngine:
         # Disable thinking mode for Gemini if requested (fallback for thought_signature issues)
         if disable_thinking and "gemini" in self.config.model.lower():
             kwargs["thinking"] = {"type": "disabled", "budget_tokens": 0}
+
+        # Add observability metadata for tracing
+        if self._observability and self._observability.is_active():
+            kwargs["metadata"] = self._observability.get_call_metadata(
+                call_type="engine",
+            )
 
         try:
             response = completion(**kwargs)
@@ -883,3 +910,15 @@ class AgentEngine:
         if state.get("current_plan"):
             self.current_plan = PlanState(**state["current_plan"])
         self.answer = state.get("answer")
+
+    def shutdown(self) -> None:
+        """Clean up resources.
+
+        Call this when done with the engine to clean up observability and other resources.
+        """
+        if self._observability:
+            try:
+                self._observability.teardown()
+            except Exception:
+                pass
+            self._observability = None
