@@ -55,6 +55,7 @@ class ChatResponse:
     answer: Optional[str] = None  # Extracted answer text
     thinking: Optional[str] = None  # Extracted thinking/reasoning
     intent: Optional[str] = None  # Classified intent: question, simple, complex
+    explanation: Optional[str] = None  # Text between </intent> and <plan>/<code>
     is_complete: bool = False  # Whether task is complete (all steps done or no plan)
 
 
@@ -814,6 +815,36 @@ class ConversationalAgent:
             return match.group(1).lower()
         return None
 
+    def _extract_explanation(self, text: str) -> Optional[str]:
+        """Extract explanation text between </intent> and first structural tag.
+
+        This captures the model's reasoning/explanation that appears after
+        intent classification but before the plan or code.
+
+        Returns:
+            Explanation text if found, None otherwise.
+        """
+        # Find the end of </intent> tag
+        intent_end = re.search(r"</intent>\s*", text, re.IGNORECASE)
+        if not intent_end:
+            return None
+
+        # Find the start of next structural tag (<plan> or <code>)
+        after_intent = text[intent_end.end():]
+
+        # Find where plan or code starts
+        next_tag = re.search(r"<(plan|code)>", after_intent, re.IGNORECASE)
+        if not next_tag:
+            return None
+
+        # Extract text between
+        explanation = after_intent[:next_tag.start()].strip()
+
+        # Return only if there's meaningful content
+        if explanation and len(explanation) > 10:
+            return explanation
+        return None
+
     def _extract_thinking_from_response(self, response: Any) -> Optional[str]:
         """Extract thinking/reasoning from LLM response.
 
@@ -1287,6 +1318,7 @@ class ConversationalAgent:
         answer = self._extract_answer(response_text)
         thinking = self._extract_thinking(response_text)
         intent = self._extract_intent(response_text)
+        explanation = self._extract_explanation(response_text)
         plan = self._extract_plan(response_text)
         has_answer = self._has_final_answer(response_text)
 
@@ -1320,6 +1352,7 @@ class ConversationalAgent:
             answer=answer,
             thinking=thinking,
             intent=intent,
+            explanation=explanation,
             is_complete=is_complete,
         )
 

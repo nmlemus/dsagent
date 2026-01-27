@@ -483,6 +483,10 @@ class ConversationalCLI:
         if response.thinking:
             self.renderer.render_thinking(response.thinking)
 
+        # Show explanation if present (text between </intent> and <plan>/<code>)
+        if response.explanation:
+            self.renderer.render_explanation(response.explanation)
+
         # Show code if present
         if response.code:
             self.renderer.render_code(response.code, title="Code")

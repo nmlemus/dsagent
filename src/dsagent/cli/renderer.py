@@ -234,6 +234,20 @@ class CLIRenderer:
             )
         )
 
+    def render_explanation(self, content: str) -> None:
+        """Render agent explanation between intent and plan/code.
+
+        This shows the model's reasoning for choosing a particular approach
+        before showing the plan or code.
+        """
+        self.console.print(
+            Panel(
+                Markdown(content),
+                title="[cyan]Agent[/cyan]",
+                border_style="cyan",
+            )
+        )
+
     def render_assistant_message(
         self,
         content: str,
