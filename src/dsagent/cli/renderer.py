@@ -350,3 +350,75 @@ class CLIRenderer:
                 border_style="yellow",
             )
         )
+
+    def render_tool_calling(
+        self,
+        tool_name: str,
+        arguments: Dict[str, Any],
+    ) -> None:
+        """Render tool calling indicator.
+
+        Args:
+            tool_name: Name of the tool being called
+            arguments: Tool arguments (should be pre-sanitized)
+        """
+        # Format arguments for display
+        if arguments:
+            args_preview = ", ".join(
+                f"{k}={repr(v)[:50]}" for k, v in list(arguments.items())[:3]
+            )
+            if len(arguments) > 3:
+                args_preview += ", ..."
+        else:
+            args_preview = ""
+
+        content = f"Calling: [bold]{tool_name}[/bold]({args_preview})"
+
+        self.console.print(
+            Panel(
+                Text.from_markup(content),
+                title="[cyan]Tool[/cyan]",
+                border_style="cyan",
+            )
+        )
+
+    def render_tool_result(
+        self,
+        tool_name: str,
+        success: bool,
+        result: Optional[str] = None,
+        error: Optional[str] = None,
+        execution_time: Optional[float] = None,
+    ) -> None:
+        """Render tool execution result.
+
+        Args:
+            tool_name: Name of the tool that was called
+            success: Whether the tool execution succeeded
+            result: Result from the tool (if success)
+            error: Error message (if failed)
+            execution_time: Execution time in milliseconds
+        """
+        if success:
+            style = "green"
+            title = f"[green]Tool Result: {tool_name}[/green]"
+            # Truncate long results
+            content = result or "(no output)"
+            if len(content) > 500:
+                content = content[:500] + f"\n... (truncated, {len(content)} chars)"
+        else:
+            style = "red"
+            title = f"[red]Tool Failed: {tool_name}[/red]"
+            content = error or "Unknown error"
+
+        # Add execution time if available
+        if execution_time is not None:
+            title += f" ({execution_time:.0f}ms)"
+
+        self.console.print(
+            Panel(
+                Text(content, style="white" if success else "red"),
+                title=title,
+                border_style=style,
+            )
+        )

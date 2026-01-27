@@ -387,11 +387,55 @@ class AgentConnectionManager:
         # Send thinking event
         await send_event(WebSocketEvent.thinking(session_id))
 
+        # Set up async queue for tool events
+        import asyncio as _asyncio
+        tool_event_queue: _asyncio.Queue = _asyncio.Queue()
+
+        def on_tool_calling(tool_name: str, arguments: dict) -> None:
+            """Callback when tool is being called."""
+            # Sanitize arguments
+            sanitized = self._sanitize_arguments(arguments)
+            tool_event_queue.put_nowait(("calling", tool_name, sanitized, None, None, 0))
+
+        def on_tool_result(
+            tool_name: str,
+            success: bool,
+            result: str | None,
+            error: str | None,
+            execution_time_ms: float,
+        ) -> None:
+            """Callback when tool execution completes."""
+            tool_event_queue.put_nowait(("result", tool_name, None, success, result, error, execution_time_ms))
+
+        # Register tool callbacks
+        agent.set_callbacks(
+            on_tool_calling=on_tool_calling,
+            on_tool_result=on_tool_result,
+        )
+
         # Run chat in thread pool
         try:
             response_gen = await asyncio.to_thread(agent.chat_stream, message)
 
             for response in response_gen:
+                # Process any pending tool events
+                while not tool_event_queue.empty():
+                    try:
+                        event_data = tool_event_queue.get_nowait()
+                        if event_data[0] == "calling":
+                            _, tool_name, arguments, _, _, _ = event_data
+                            await send_event(
+                                WebSocketEvent.tool_calling(session_id, tool_name, arguments)
+                            )
+                        elif event_data[0] == "result":
+                            _, tool_name, _, success, result, error, exec_time = event_data
+                            await send_event(
+                                WebSocketEvent.tool_result(
+                                    session_id, tool_name, success, result, error, exec_time
+                                )
+                            )
+                    except _asyncio.QueueEmpty:
+                        break
                 # Send plan if present
                 if response.plan:
                     plan_response = self._convert_plan(response.plan)
@@ -465,6 +509,33 @@ class AgentConnectionManager:
             images=result.images,
             success=result.success,
         )
+
+    def _sanitize_arguments(
+        self,
+        arguments: dict,
+        max_length: int = 500,
+    ) -> dict:
+        """Sanitize tool arguments by redacting sensitive keys and truncating."""
+        sensitive_keys = {
+            "api_key", "apikey", "password", "token", "secret",
+            "credential", "private_key", "authorization", "auth",
+        }
+
+        sanitized = {}
+        for key, value in arguments.items():
+            key_lower = key.lower()
+            is_sensitive = any(sens in key_lower for sens in sensitive_keys)
+
+            if is_sensitive:
+                sanitized[key] = "[REDACTED]"
+            elif isinstance(value, str) and len(value) > max_length:
+                sanitized[key] = value[:max_length] + "..."
+            elif isinstance(value, dict):
+                sanitized[key] = self._sanitize_arguments(value, max_length)
+            else:
+                sanitized[key] = value
+
+        return sanitized
 
     def _convert_plan(self, plan: Any) -> PlanResponse:
         """Convert agent PlanState to API PlanResponse.

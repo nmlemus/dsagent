@@ -28,6 +28,9 @@ class WebSocketEventType(str, Enum):
     # HITL events
     HITL_REQUEST = "hitl_request"  # Server requesting human input
     HITL_RESPONSE = "hitl_response"  # Confirmation that feedback was received
+    # Tool execution events (MCP tools)
+    TOOL_CALLING = "tool_calling"
+    TOOL_RESULT = "tool_result"
 
 
 class WebSocketMessageType(str, Enum):
@@ -382,6 +385,55 @@ class WebSocketEvent(BaseModel):
         return cls(
             type=WebSocketEventType.HITL_RESPONSE,
             data={"accepted": accepted, "message": message},
+            session_id=session_id,
+        )
+
+    @classmethod
+    def tool_calling(
+        cls, session_id: str, tool_name: str, arguments: Dict[str, Any]
+    ) -> "WebSocketEvent":
+        """Create a tool calling event.
+
+        Args:
+            session_id: Session ID
+            tool_name: Name of the tool being called
+            arguments: Tool arguments (will be sanitized)
+        """
+        return cls(
+            type=WebSocketEventType.TOOL_CALLING,
+            data={"tool_name": tool_name, "arguments": arguments},
+            session_id=session_id,
+        )
+
+    @classmethod
+    def tool_result(
+        cls,
+        session_id: str,
+        tool_name: str,
+        success: bool,
+        result: Optional[str] = None,
+        error: Optional[str] = None,
+        execution_time_ms: float = 0,
+    ) -> "WebSocketEvent":
+        """Create a tool result event.
+
+        Args:
+            session_id: Session ID
+            tool_name: Name of the tool that was called
+            success: Whether the tool execution succeeded
+            result: Result from the tool (if success)
+            error: Error message (if failed)
+            execution_time_ms: Execution time in milliseconds
+        """
+        return cls(
+            type=WebSocketEventType.TOOL_RESULT,
+            data={
+                "tool_name": tool_name,
+                "success": success,
+                "result": result,
+                "error": error,
+                "execution_time_ms": execution_time_ms,
+            },
             session_id=session_id,
         )
 

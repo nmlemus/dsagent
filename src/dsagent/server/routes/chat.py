@@ -40,6 +40,38 @@ if TYPE_CHECKING:
 router = APIRouter(dependencies=[Depends(verify_api_key)])
 
 
+def _sanitize_arguments(
+    arguments: Dict[str, Any],
+    max_length: int = 500,
+) -> Dict[str, Any]:
+    """Sanitize tool arguments by redacting sensitive keys and truncating long values."""
+    sensitive_keys = {
+        "api_key", "apikey", "api-key",
+        "password", "passwd", "pwd",
+        "token", "access_token", "auth_token", "bearer",
+        "secret", "secret_key", "secretkey",
+        "credential", "credentials",
+        "private_key", "privatekey",
+        "authorization", "auth",
+    }
+
+    sanitized = {}
+    for key, value in arguments.items():
+        key_lower = key.lower()
+        is_sensitive = any(sens in key_lower for sens in sensitive_keys)
+
+        if is_sensitive:
+            sanitized[key] = "[REDACTED]"
+        elif isinstance(value, str) and len(value) > max_length:
+            sanitized[key] = value[:max_length] + "..."
+        elif isinstance(value, dict):
+            sanitized[key] = _sanitize_arguments(value, max_length)
+        else:
+            sanitized[key] = value
+
+    return sanitized
+
+
 def _convert_plan_to_dict(plan: "PlanState") -> Dict[str, Any]:
     """Convert PlanState to dictionary for JSON serialization."""
     steps = []
@@ -509,6 +541,33 @@ async def chat_stream(
             "error": error,
         }))
 
+    def on_tool_calling(tool_name: str, arguments: Dict[str, Any]):
+        """Called when MCP tool is about to be executed."""
+        sanitized = _sanitize_arguments(arguments)
+        event_queue.put(("tool_calling", {
+            "tool_name": tool_name,
+            "arguments": sanitized,
+        }))
+
+    def on_tool_result(
+        tool_name: str,
+        success: bool,
+        result: Optional[str],
+        error: Optional[str],
+        execution_time_ms: float,
+    ):
+        """Called when MCP tool execution completes."""
+        event_type = "tool_success" if success else "tool_failed"
+        # Truncate result for SSE
+        truncated_result = result[:1000] + "..." if result and len(result) > 1000 else result
+        event_queue.put((event_type, {
+            "tool_name": tool_name,
+            "success": success,
+            "result": truncated_result,
+            "error": error,
+            "execution_time_ms": execution_time_ms,
+        }))
+
     # Register callbacks
     agent.set_callbacks(
         on_thinking=on_thinking,
@@ -517,6 +576,8 @@ async def chat_stream(
         on_code_executing=on_code_executing,
         on_code_result=on_code_result,
         on_hitl_request=on_hitl_request,
+        on_tool_calling=on_tool_calling,
+        on_tool_result=on_tool_result,
     )
 
     # Flag to signal completion

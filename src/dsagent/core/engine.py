@@ -280,6 +280,7 @@ Use these tools when you need external information (e.g., web search) before wri
         Returns:
             List of tool result messages
         """
+        import time as _time
         results = []
 
         for tool_call in tool_calls:
@@ -289,16 +290,63 @@ Use these tools when you need external information (e.g., web search) before wri
             except json.JSONDecodeError:
                 arguments = {}
 
+            # Emit tool calling event
+            self._emit(
+                EventType.TOOL_CALLING,
+                f"Calling tool: {tool_name}",
+                data={"tool_name": tool_name, "arguments": arguments},
+            )
             self.logger.print_status("🔧", f"Calling tool: {tool_name}")
+
+            start_time = _time.time()
+            success = False
+            error = None
 
             try:
                 # Use the synchronous API which uses MCPManager's dedicated event loop
                 result = self.mcp.execute_tool_sync(tool_name, arguments)
+                success = True
                 self.logger.print_status("✅", f"Tool {tool_name} completed")
 
             except Exception as e:
-                result = f"Error executing tool {tool_name}: {str(e)}"
+                error = str(e)
+                result = f"Error executing tool {tool_name}: {error}"
                 self.logger.print_error(f"Tool error: {result}")
+
+            execution_time_ms = (_time.time() - start_time) * 1000
+
+            # Emit tool result event
+            if success:
+                self._emit(
+                    EventType.TOOL_SUCCESS,
+                    f"Tool {tool_name} succeeded",
+                    data={
+                        "tool_name": tool_name,
+                        "result": result[:500] if len(result) > 500 else result,
+                        "execution_time_ms": execution_time_ms,
+                    },
+                )
+            else:
+                self._emit(
+                    EventType.TOOL_FAILED,
+                    f"Tool {tool_name} failed: {error}",
+                    data={
+                        "tool_name": tool_name,
+                        "error": error,
+                        "execution_time_ms": execution_time_ms,
+                    },
+                )
+
+            # Log tool execution if run_logger available
+            if self.run_logger:
+                self.run_logger.log_tool_execution(
+                    tool_name=tool_name,
+                    arguments=arguments,
+                    success=success,
+                    result=result if success else None,
+                    error=error,
+                    execution_time_ms=execution_time_ms,
+                )
 
             results.append({
                 "role": "tool",

@@ -331,6 +331,9 @@ class ConversationalAgent:
         self._on_thinking: Optional[Callable[[], None]] = None
         self._on_llm_response: Optional[Callable[[str], None]] = None
         self._on_hitl_request: Optional[Callable[[str, Optional[PlanState], Optional[str], Optional[str]], None]] = None
+        # Tool execution callbacks
+        self._on_tool_calling: Optional[Callable[[str, Dict[str, Any]], None]] = None
+        self._on_tool_result: Optional[Callable[[str, bool, Optional[str], Optional[str], float], None]] = None
 
     @property
     def session(self) -> Optional[Session]:
@@ -398,6 +401,8 @@ class ConversationalAgent:
         on_thinking: Optional[Callable[[], None]] = None,
         on_llm_response: Optional[Callable[[str], None]] = None,
         on_hitl_request: Optional[Callable[[str, Optional[PlanState], Optional[str], Optional[str]], None]] = None,
+        on_tool_calling: Optional[Callable[[str, Dict[str, Any]], None]] = None,
+        on_tool_result: Optional[Callable[[str, bool, Optional[str], Optional[str], float], None]] = None,
     ) -> None:
         """Set callbacks for UI updates during autonomous execution.
 
@@ -409,6 +414,8 @@ class ConversationalAgent:
             on_thinking: Called before LLM request (for "thinking" indicator)
             on_llm_response: Called when LLM response is received (before code execution)
             on_hitl_request: Called when HITL approval is needed (request_type, plan, code, error)
+            on_tool_calling: Called before MCP tool execution (tool_name, arguments)
+            on_tool_result: Called after MCP tool execution (tool_name, success, result, error, time_ms)
         """
         self._on_plan_update = on_plan_update
         self._on_code_executing = on_code_executing
@@ -417,6 +424,8 @@ class ConversationalAgent:
         self._on_thinking = on_thinking
         self._on_llm_response = on_llm_response
         self._on_hitl_request = on_hitl_request
+        self._on_tool_calling = on_tool_calling
+        self._on_tool_result = on_tool_result
 
     def start(self, session: Optional[Session] = None) -> None:
         """Start the agent and kernel.
@@ -652,6 +661,7 @@ The tools will be called automatically when you request them."""
             List of tool result messages
         """
         import json
+        import time as _time
         results = []
 
         for tool_call in tool_calls:
@@ -661,24 +671,52 @@ The tools will be called automatically when you request them."""
             except json.JSONDecodeError:
                 arguments = {}
 
-            if self._session_logger:
-                self._session_logger._file_logger.info(f"[TOOL CALL] {tool_name}")
+            # Notify callback that tool is being called
+            if self._on_tool_calling:
+                self._on_tool_calling(tool_name, arguments)
+
+            start_time = _time.time()
+            success = False
+            result = None
+            error = None
 
             try:
                 # Use the synchronous API which uses MCPManager's dedicated event loop
                 result = self._mcp_manager.execute_tool_sync(tool_name, arguments)
-                if self._session_logger:
-                    self._session_logger._file_logger.info(f"[TOOL RESULT] {tool_name}: success")
+                result = result if isinstance(result, str) else str(result)
+                success = True
 
             except Exception as e:
-                result = f"Error executing tool {tool_name}: {str(e)}"
-                if self._session_logger:
-                    self._session_logger.log_error(f"Tool error: {result}", error_type="tool_error")
+                error = str(e)
+                result = f"Error executing tool {tool_name}: {error}"
+
+            execution_time_ms = (_time.time() - start_time) * 1000
+
+            # Log tool execution
+            if self._session_logger:
+                self._session_logger.log_tool_execution(
+                    tool_name=tool_name,
+                    arguments=arguments,
+                    success=success,
+                    result=result if success else None,
+                    error=error,
+                    execution_time_ms=execution_time_ms,
+                )
+
+            # Notify callback with tool result
+            if self._on_tool_result:
+                self._on_tool_result(
+                    tool_name,
+                    success,
+                    result if success else None,
+                    error,
+                    execution_time_ms,
+                )
 
             results.append({
                 "role": "tool",
                 "tool_call_id": tool_call.id,
-                "content": result if isinstance(result, str) else str(result),
+                "content": result,
             })
 
         return results

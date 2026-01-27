@@ -182,7 +182,9 @@ class ConversationalCLI:
                     f"[cyan]Live notebook will be created on first message[/cyan]"
                 )
 
-            # Set up callback for notebook changes (if sync enabled)
+            # Set up callbacks for notebook changes and tool execution
+            callbacks_to_set = {}
+
             if self.enable_notebook_sync:
                 def on_notebook_change(changes):
                     for change in changes:
@@ -203,7 +205,22 @@ class ConversationalCLI:
                             self.console.print(
                                 f"\n[yellow]📝 Jupyter: Cell {change.cell_index} deleted[/yellow]"
                             )
-                self._agent.set_callbacks(on_notebook_change=on_notebook_change)
+                callbacks_to_set["on_notebook_change"] = on_notebook_change
+
+            # Set up tool execution callbacks for MCP tools
+            def on_tool_calling(tool_name, arguments):
+                self.renderer.render_tool_calling(tool_name, arguments)
+
+            def on_tool_result(tool_name, success, result, error, execution_time_ms):
+                self.renderer.render_tool_result(
+                    tool_name, success, result, error, execution_time_ms
+                )
+
+            callbacks_to_set["on_tool_calling"] = on_tool_calling
+            callbacks_to_set["on_tool_result"] = on_tool_result
+
+            if callbacks_to_set:
+                self._agent.set_callbacks(**callbacks_to_set)
         return self._agent
 
     def _shutdown_agent(self) -> None:
