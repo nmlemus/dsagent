@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "datascience-agent"
-version = "0.8.2"
+version = "0.8.3"
 description = "AI Agent with dynamic planning and persistent Jupyter kernel execution for data analysis"
 readme = "README.md"
 license = "MIT"
