@@ -70,7 +70,17 @@ async def get_kernel_state(
         # Get current kernel state from agent
         state = await asyncio.to_thread(agent.get_kernel_state)
         if state:
-            return _snapshot_to_response(state, is_running=True)
+            # Convert dict to KernelSnapshot if needed
+            from dsagent.session.models import KernelSnapshot
+            if isinstance(state, dict):
+                snapshot = KernelSnapshot(
+                    variables=state.get("variables", {}),
+                    dataframes=state.get("dataframes", {}),
+                    imports=state.get("imports", []),
+                )
+            else:
+                snapshot = state
+            return _snapshot_to_response(snapshot, is_running=True)
         return KernelStateResponse(is_running=True)
     except Exception as e:
         raise HTTPException(

@@ -1,9 +1,0 @@
-ticker,shares,purchase_price,purchase_date,sector
-AAPL,100,150.00,2023-01-15,Technology
-NVDA,50,250.00,2023-03-20,Technology
-MSFT,75,280.00,2023-02-10,Technology
-GOOGL,30,120.00,2023-04-05,Technology
-AMZN,40,105.00,2023-05-12,Consumer Cyclical
-TSLA,25,180.00,2023-06-01,Automotive
-JPM,60,140.00,2023-02-28,Financial Services
-JNJ,45,160.00,2023-03-15,Healthcare

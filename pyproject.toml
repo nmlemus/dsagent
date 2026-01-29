@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "datascience-agent"
-version = "0.8.2"
+version = "0.8.3"
 description = "AI Agent with dynamic planning and persistent Jupyter kernel execution for data analysis"
 readme = "README.md"
 license = "MIT"
@@ -62,7 +62,7 @@ dependencies = [
     "seaborn>=0.12.0",
     "plotly>=5.18.0",
     # Data Science - Machine Learning
-    "scikit-learn>=1.3.0",
+    "scikit-learn>=1.5.0",
     "statsmodels>=0.14.0",
     "pycaret>=3.0.0",
     "xgboost>=2.0.0",

@@ -1,7 +1,0 @@
-,precision,recall,f1-score,support
-Setosa,1.0,1.0,1.0,10.0
-Versicolor,1.0,1.0,1.0,10.0
-Virginica,1.0,1.0,1.0,10.0
-accuracy,1.0,1.0,1.0,1.0
-macro avg,1.0,1.0,1.0,30.0
-weighted avg,1.0,1.0,1.0,30.0
