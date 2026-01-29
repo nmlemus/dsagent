@@ -28,7 +28,7 @@ jobs:
           python-version: "3.11"
 
       - name: Install Bandit
-        run: pip install bandit[toml]
+        run: pip install bandit bandit-sarif-formatter
 
       - name: Run Bandit
         run: |
