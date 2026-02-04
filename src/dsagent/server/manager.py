@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING, Any, Callable, Dict, Optional, Set
 from fastapi import WebSocket
 
 from dsagent.agents import ConversationalAgent, ConversationalAgentConfig
+from dsagent.config import get_default_model
 from dsagent.schema.models import HITLMode
 from dsagent.server.models import (
     ExecutionResultResponse,
@@ -50,6 +51,7 @@ class AgentConnectionManager:
         self._session_manager = session_manager
         self._default_model = default_model
         self._default_hitl_mode = default_hitl_mode
+        logger.info(f"AgentConnectionManager initialized with default_model={default_model!r}")
 
         # session_id -> set of WebSocket connections
         self._connections: Dict[str, Set[WebSocket]] = {}
@@ -260,14 +262,12 @@ class AgentConnectionManager:
         # Get or create session
         session = self._session_manager.get_or_create(session_id)
 
-        # Create agent config - use session config, then params, then defaults
-        import os
-        effective_model = (
-            model
-            or getattr(session, "model", None)
-            or self._default_model
-            or os.getenv("LLM_MODEL", "gpt-4o")
+        # Use centralized config for model resolution
+        effective_model = get_default_model(
+            explicit=model,
+            session_model=getattr(session, "model", None),
         )
+        logger.info(f"Agent model resolved to: {effective_model}")
 
         # Convert hitl_mode string to HITLMode enum
         # Priority: parameter > session > default

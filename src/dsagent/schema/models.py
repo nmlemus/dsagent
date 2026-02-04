@@ -84,8 +84,9 @@ class AgentConfig(BaseSettings):
     )
 
     # Model configuration - checks multiple env var names for compatibility
-    model: str = Field(
-        default="gpt-4o",
+    # Default is None; resolved via get_default_model() at runtime
+    model: Optional[str] = Field(
+        default=None,
         validation_alias="LLM_MODEL",
     )
     api_key: str = Field(

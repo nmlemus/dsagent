@@ -26,6 +26,7 @@ from rich.text import Text
 from dsagent.cli.banner import print_welcome
 from dsagent.cli.commands import CommandRegistry, CommandResult, create_default_registry
 from dsagent.cli.renderer import CLIRenderer
+from dsagent.config import get_default_model
 from dsagent.session import Session, SessionManager
 from dsagent.agents import ConversationalAgent, ConversationalAgentConfig
 from dsagent.schema.models import HITLMode
@@ -51,13 +52,17 @@ class CLIContext:
     registry: CommandRegistry
     console: Console
     session: Optional[Session] = None
-    model: str = "gpt-4o"
+    model: Optional[str] = None  # Resolved via get_default_model() if None
     data_path: Optional[str] = None
     workspace: Path = field(default_factory=lambda: Path("./workspace"))
 
     # Agent components (initialized lazily)
     _agent: Optional[object] = field(default=None, repr=False)
     _kernel_running: bool = False
+
+    def get_effective_model(self) -> str:
+        """Get the effective model, using resolution cascade if not set."""
+        return get_default_model(explicit=self.model)
 
     def set_session(self, session: Session) -> None:
         """Set the active session."""
@@ -619,8 +624,8 @@ Live Notebook:
     parser.add_argument(
         "--model", "-m",
         type=str,
-        default=os.getenv("LLM_MODEL", "gpt-4o"),
-        help="LLM model to use (default: gpt-4o)",
+        default=None,  # Resolved via get_default_model()
+        help="LLM model to use (default: from DSAGENT_DEFAULT_MODEL or LLM_MODEL env var)",
     )
 
     parser.add_argument(

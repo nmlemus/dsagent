@@ -130,8 +130,8 @@ Examples:
     chat_parser.add_argument(
         "--model", "-m",
         type=str,
-        default=os.getenv("LLM_MODEL", "gpt-4o"),
-        help="LLM model to use (default: gpt-4o)",
+        default=None,  # Resolved via get_default_model()
+        help="LLM model to use (default: from DSAGENT_DEFAULT_MODEL or LLM_MODEL env var)",
     )
     chat_parser.add_argument(
         "--workspace", "-w",
@@ -196,8 +196,8 @@ Examples:
     run_parser.add_argument(
         "--model", "-m",
         type=str,
-        default=os.getenv("LLM_MODEL", "gpt-4o"),
-        help="LLM model to use (default: gpt-4o)",
+        default=None,  # Resolved via get_default_model()
+        help="LLM model to use (default: from DSAGENT_DEFAULT_MODEL or LLM_MODEL env var)",
     )
     run_parser.add_argument(
         "--workspace", "-w",

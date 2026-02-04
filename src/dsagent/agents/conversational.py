@@ -16,6 +16,7 @@ from typing import Any, Callable, Dict, Generator, List, Optional, TYPE_CHECKING
 
 from litellm import completion
 
+from dsagent.config import get_default_model
 from dsagent.kernel import LocalExecutor, ExecutorConfig, KernelIntrospector
 from dsagent.session import Session, SessionManager, ConversationMessage, SessionLogger
 from dsagent.utils.validation import validate_configuration, get_proxy_model_name
@@ -63,7 +64,7 @@ class ChatResponse:
 class ConversationalAgentConfig:
     """Configuration for the conversational agent."""
 
-    model: str = "gpt-4o"
+    model: Optional[str] = None  # Resolved via get_default_model() if None
     temperature: float = 0.3
     max_tokens: int = 4096
     code_timeout: int = 300
@@ -88,6 +89,10 @@ class ConversationalAgentConfig:
 
     # Observability settings
     observability_config: Optional[Any] = None  # ObservabilityConfig object or None
+
+    def get_effective_model(self) -> str:
+        """Get the effective model, using resolution cascade if not set."""
+        return get_default_model(explicit=self.model)
 
     @classmethod
     def from_agent_config(cls, config: AgentConfig) -> "ConversationalAgentConfig":
@@ -310,6 +315,10 @@ class ConversationalAgent:
         """
         if self._started:
             return
+
+        # Resolve model if not explicitly set
+        if self.config.model is None:
+            self.config.model = self.config.get_effective_model()
 
         # Validate model configuration and apply API base mapping
         validate_configuration(self.config.model)
