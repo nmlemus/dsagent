@@ -1,5 +1,6 @@
 """Session management endpoints."""
 
+import logging
 from datetime import datetime
 from pathlib import Path
 from typing import Optional
@@ -7,6 +8,7 @@ from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.responses import FileResponse, JSONResponse
 
+from dsagent.config import get_default_model
 from dsagent.server.deps import (
     get_connection_manager,
     get_session_manager,
@@ -21,6 +23,8 @@ from dsagent.server.models import (
     UpdateSessionRequest,
 )
 from dsagent.session import Session, SessionManager, SessionStatus
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(dependencies=[Depends(verify_api_key)])
 
@@ -80,15 +84,19 @@ async def create_session(
     # Create session
     session = session_manager.create_session(name=request.name)
 
+    # Resolve model using centralized config (not None)
+    effective_model = get_default_model(explicit=request.model)
+    logger.info(f"Creating session {session.id} with model={effective_model}")
+
     # Store agent configuration in session for persistence
-    session.model = request.model
+    session.model = effective_model  # Store resolved model, not None
     session.hitl_mode = request.hitl_mode or "none"
     session_manager.save_session(session)
 
     # Create and start agent for this session
     await connection_manager.get_or_create_agent(
         session.id,
-        model=request.model,
+        model=effective_model,
         hitl_mode=request.hitl_mode,
     )
 

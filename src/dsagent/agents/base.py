@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Optional, Callable, Any, Generator, Dict, Union, TYPE_CHECKING
 from datetime import datetime
 
+from dsagent.config import get_default_model
 from dsagent.schema.models import (
     AgentConfig,
     AgentEvent,
@@ -73,7 +74,7 @@ class PlannerAgent:
 
     def __init__(
         self,
-        model: str = "gpt-4o",
+        model: Optional[str] = None,  # Resolved via get_default_model() if None
         workspace: str | Path = "./workspace",
         data: Optional[Union[str, Path]] = None,
         session_id: Optional[str] = None,
@@ -110,8 +111,11 @@ class PlannerAgent:
             ConfigurationError: If the model or API key configuration is invalid
             FileNotFoundError: If data path does not exist
         """
+        # Resolve model if not explicitly set
+        effective_model = get_default_model(explicit=model)
+
         # Validate model and API key before anything else
-        validate_configuration(model)
+        validate_configuration(effective_model)
 
         # Store or create context
         self.context = context
@@ -145,7 +149,7 @@ class PlannerAgent:
 
         # Create configuration
         self.config = AgentConfig(
-            model=model,
+            model=effective_model,
             session_id=session_id,
             max_rounds=max_rounds,
             max_tokens=max_tokens,
