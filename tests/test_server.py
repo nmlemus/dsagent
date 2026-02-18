@@ -304,7 +304,7 @@ class TestServerIntegration:
 
     def test_delete_session_not_found(self, client, mock_session_manager):
         """Test deleting a non-existent session."""
-        mock_session_manager.exists.return_value = False
+        mock_session_manager.load_session.return_value = None
         response = client.delete("/api/sessions/nonexistent")
         assert response.status_code == 404
 
@@ -367,7 +367,8 @@ class TestAPIKeyAuth:
 
             # Set API key
             os.environ["DSAGENT_API_KEY"] = "test-api-key"
-            deps.get_settings.cache_clear()
+            from dsagent.config import clear_settings_cache
+            clear_settings_cache()
 
             # Set up mock managers
             deps._session_manager = mock_session_manager
@@ -379,7 +380,7 @@ class TestAPIKeyAuth:
 
             # Cleanup
             del os.environ["DSAGENT_API_KEY"]
-            deps.get_settings.cache_clear()
+            clear_settings_cache()
         except ImportError:
             pytest.skip("FastAPI not installed")
 

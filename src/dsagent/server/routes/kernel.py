@@ -13,6 +13,7 @@ from dsagent.server.deps import (
     verify_api_key,
 )
 from dsagent.server.manager import AgentConnectionManager
+from dsagent.server.validators import SessionIdPath
 from dsagent.server.models import (
     DataFrameInfoResponse,
     ErrorResponse,
@@ -32,7 +33,7 @@ router = APIRouter(dependencies=[Depends(verify_api_key)])
     responses={404: {"model": ErrorResponse}},
 )
 async def get_kernel_state(
-    session_id: str,
+    session_id: SessionIdPath,
     connection_manager: AgentConnectionManager = Depends(get_connection_manager),
     session_manager: SessionManager = Depends(get_session_manager),
 ) -> KernelStateResponse:
@@ -95,7 +96,7 @@ async def get_kernel_state(
     responses={404: {"model": ErrorResponse}},
 )
 async def get_kernel_variables(
-    session_id: str,
+    session_id: SessionIdPath,
     connection_manager: AgentConnectionManager = Depends(get_connection_manager),
     session_manager: SessionManager = Depends(get_session_manager),
 ) -> list[KernelVariableResponse]:
@@ -122,7 +123,7 @@ async def get_kernel_variables(
     responses={404: {"model": ErrorResponse}},
 )
 async def execute_code(
-    session_id: str,
+    session_id: SessionIdPath,
     request: ExecuteCodeRequest,
     connection_manager: AgentConnectionManager = Depends(get_connection_manager),
     session_manager: SessionManager = Depends(get_session_manager),
@@ -168,7 +169,7 @@ async def execute_code(
     responses={404: {"model": ErrorResponse}},
 )
 async def reset_kernel(
-    session_id: str,
+    session_id: SessionIdPath,
     connection_manager: AgentConnectionManager = Depends(get_connection_manager),
     session_manager: SessionManager = Depends(get_session_manager),
 ) -> KernelStateResponse:

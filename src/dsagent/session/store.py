@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 import sqlite3
 from abc import ABC, abstractmethod
 from datetime import datetime
@@ -45,6 +46,23 @@ class SessionStoreBackend(ABC):
         pass
 
 
+# Session ID must be safe for use in paths (no path traversal).
+# Allow alphanumeric, underscore, hyphen; matches _generate_session_id format.
+SESSION_ID_SAFE_PATTERN = re.compile(r"^[a-zA-Z0-9_-]+$")
+
+
+def _validate_session_id(session_id: str) -> None:
+    """Validate session_id for path safety (JSON backend and API).
+
+    Raises:
+        ValueError: If session_id contains disallowed characters.
+    """
+    if not session_id or not SESSION_ID_SAFE_PATTERN.match(session_id):
+        raise ValueError(
+            "session_id must contain only letters, digits, underscore, and hyphen"
+        )
+
+
 class JSONSessionStore(SessionStoreBackend):
     """JSON file-based session storage.
 
@@ -58,12 +76,16 @@ class JSONSessionStore(SessionStoreBackend):
         Args:
             storage_dir: Directory to store session files
         """
-        self.storage_dir = Path(storage_dir)
+        self.storage_dir = Path(storage_dir).resolve()
         self.storage_dir.mkdir(parents=True, exist_ok=True)
 
     def _session_path(self, session_id: str) -> Path:
-        """Get path to session file."""
-        return self.storage_dir / f"{session_id}.json"
+        """Get path to session file. Validates session_id to prevent path traversal."""
+        _validate_session_id(session_id)
+        path = (self.storage_dir / f"{session_id}.json").resolve()
+        if not path.is_relative_to(self.storage_dir):
+            raise ValueError("session_id would resolve outside storage directory")
+        return path
 
     def save(self, session: Session) -> None:
         """Save session to JSON file."""

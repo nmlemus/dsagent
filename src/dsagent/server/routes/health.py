@@ -1,4 +1,10 @@
-"""Health check endpoints."""
+"""Health check endpoints.
+
+These endpoints are intentionally unauthenticated so load balancers and
+orchestrators can perform health/readiness checks. They expose version
+and component status. If you need to hide version in a given environment,
+consider a minimal health endpoint or optional auth.
+"""
 
 from datetime import datetime
 
@@ -12,10 +18,10 @@ router = APIRouter()
 
 @router.get("/health", response_model=HealthResponse)
 async def health_check() -> HealthResponse:
-    """Basic health check endpoint.
+    """Basic health check endpoint (no authentication).
 
     Returns:
-        Health status with version and timestamp
+        Health status with version and timestamp.
     """
     from dsagent.server.app import API_VERSION
 

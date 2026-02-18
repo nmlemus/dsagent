@@ -8,7 +8,12 @@ DSAgent provides a unified command-line interface with subcommands for different
 dsagent                          # Start interactive chat (default)
 dsagent chat                     # Same as above
 dsagent run "task"               # Execute one-shot task
+dsagent serve [--port 8000]      # Run REST + WebSocket API server
 dsagent init                     # Setup wizard
+dsagent skills list              # List installed skills
+dsagent skills install <source>  # Install a skill
+dsagent skills remove <name>     # Remove a skill
+dsagent skills info <name>       # Show skill details
 dsagent mcp list                 # List MCP servers
 dsagent mcp add <template>       # Add MCP server
 dsagent mcp remove <name>        # Remove MCP server
@@ -31,8 +36,8 @@ dsagent chat [options]
 
 | Option | Short | Description | Default |
 |--------|-------|-------------|---------|
-| `--model` | `-m` | LLM model to use | `gpt-4o` or `$LLM_MODEL` |
-| `--workspace` | `-w` | Workspace directory | `./workspace` |
+| `--model` | `-m` | LLM model to use | `DSAGENT_DEFAULT_MODEL` or `LLM_MODEL` or `gpt-4o` |
+| `--workspace` | `-w` | Workspace directory | `./workspace` or `$DSAGENT_WORKSPACE` |
 | `--session` | `-s` | Session ID to resume | New session |
 | `--hitl` | | Human-in-the-loop mode | `none` |
 | `--live-notebook` | | Save notebook after each execution | Off |
@@ -48,6 +53,8 @@ dsagent chat [options]
 | `full` | Pause for both plan and code approval |
 | `plan_answer` | Pause for plan and final answer approval |
 | `on_error` | Pause only when errors occur |
+
+(For `dsagent run`, valid modes are `none`, `plan_only`, `on_error`, `plan_and_answer`, `full`.)
 
 ### Examples
 
@@ -88,7 +95,95 @@ Once in a chat session, you can use slash commands:
 | `/clear` | Clear the screen |
 | `/model <name>` | Change the model |
 | `/status` | Show current status |
+| `/vars` | Show kernel variables |
+| `/data` | List or copy data files |
+| `/workspace` | Show workspace paths |
 | `/quit` | Exit the session |
+
+---
+
+## `dsagent serve`
+
+Run the REST and WebSocket API server. Uses the same configuration as the CLI (env vars and `.env`). Host and port are set by flags; API key, CORS, and upload limits come from config.
+
+```bash
+dsagent serve [options]
+```
+
+### Options
+
+| Option | Short | Description | Default |
+|--------|-------|-------------|---------|
+| `--host` | | Host to bind to | `0.0.0.0` |
+| `--port` | `-p` | Port to listen on | `8000` |
+| `--reload` | | Enable auto-reload (development) | Off |
+| `--log-level` | | Logging level | `info` |
+
+### Environment variables (server)
+
+| Variable | Description |
+|----------|-------------|
+| `DSAGENT_API_KEY` | If set, API and WebSocket require `X-API-Key` header |
+| `DSAGENT_CORS_ORIGINS` | Comma-separated origins or `*` |
+| `DSAGENT_REQUIRE_API_KEY` | If `true`, server refuses to start without `DSAGENT_API_KEY` |
+| `DSAGENT_MAX_UPLOAD_MB` | Max upload size per file in MB (`0` = no limit) |
+
+### Examples
+
+```bash
+# Default: 0.0.0.0:8000, no API key
+dsagent serve
+
+# Custom port
+dsagent serve --port 3000
+
+# With API key (set in env)
+export DSAGENT_API_KEY=my-secret-key
+dsagent serve
+
+# Development with reload
+dsagent serve --reload --log-level debug
+```
+
+API docs when running: `http://localhost:8000/docs`. Health: `http://localhost:8000/health`.
+
+---
+
+## `dsagent skills`
+
+Manage Agent Skills (extensible capabilities). Skills are stored in `~/.dsagent/skills/`.
+
+### `dsagent skills list`
+
+List installed skills.
+
+### `dsagent skills install <source>`
+
+Install a skill. Source can be:
+
+- `github:owner/repo` — install from GitHub
+- `github:owner/repo/path` — install from a subpath
+- `./path` or `/path` — install from local directory
+
+Options: `--force` / `-f` to overwrite existing.
+
+### `dsagent skills remove <name>`
+
+Remove an installed skill by name.
+
+### `dsagent skills info <name>`
+
+Show details for an installed skill.
+
+### Examples
+
+```bash
+dsagent skills list
+dsagent skills install github:dsagent-skills/eda
+dsagent skills install ./my-skill --force
+dsagent skills remove eda-analysis
+dsagent skills info eda-analysis
+```
 
 ---
 
@@ -269,25 +364,32 @@ dsagent mcp remove brave_search
 
 ## Environment Variables
 
-DSAgent reads configuration from environment variables and `.env` files.
+DSAgent uses a single config source: `dsagent.config`. All settings can be set via environment variables with the `DSAGENT_` prefix or via `.env` files.
 
-### Search Order for `.env`
+### Search Order for `.env` (CLI)
 
-1. Current working directory: `./.env`
-2. Project root: `{project}/.env`
-3. User config: `~/.dsagent/.env`
+1. Global: `~/.dsagent/.env` (loaded first)
+2. Local: `./.env` (overrides global)
+
+So you can set API keys in `~/.dsagent/.env` and override model or workspace per project in `./.env`.
 
 ### Configuration Variables
 
-| Variable | Description | Example |
+| Variable | Description | Default |
 |----------|-------------|---------|
-| `LLM_MODEL` | Default model | `gpt-4o` |
-| `LLM_API_BASE` | Custom API endpoint | `http://localhost:4000/v1` |
-| `OPENAI_API_KEY` | OpenAI API key | `sk-...` |
-| `ANTHROPIC_API_KEY` | Anthropic API key | `sk-ant-...` |
-| `GOOGLE_API_KEY` | Google API key | `...` |
-| `DEEPSEEK_API_KEY` | DeepSeek API key | `...` |
-| `BRAVE_API_KEY` | Brave Search API key | `...` |
+| `DSAGENT_DEFAULT_MODEL` | Default LLM model (recommended) | `gpt-4o` |
+| `LLM_MODEL` | Legacy default model (CLI compatible) | - |
+| `DSAGENT_WORKSPACE` | Workspace directory | `./workspace` |
+| `DSAGENT_SESSIONS_DIR` | Sessions directory under workspace | `workspace` |
+| `DSAGENT_MAX_ROUNDS` | Max agent iterations | `30` |
+| `DSAGENT_TEMPERATURE` | LLM temperature | `0.3` |
+| `LLM_API_BASE` | Custom API endpoint (e.g. LiteLLM proxy) | - |
+| `OPENAI_API_KEY` | OpenAI API key | - |
+| `ANTHROPIC_API_KEY` | Anthropic API key | - |
+| `GOOGLE_API_KEY` | Google API key | - |
+| `GROQ_API_KEY` | Groq API key | - |
+| `DEEPSEEK_API_KEY` | DeepSeek API key | - |
+| `BRAVE_API_KEY` | Brave Search (MCP) | - |
 
 ### Using LiteLLM Proxy
 

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import os
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Optional
@@ -19,10 +20,17 @@ from dsagent.server.deps import (
 from dsagent.server.manager import AgentConnectionManager
 from dsagent.session import SessionManager
 
-logger = logging.getLogger(__name__)
+try:
+    from dsagent import __version__ as API_VERSION
+except ImportError:
+    API_VERSION = "0.0.0"
 
-# API version
-API_VERSION = "0.6.2"
+# Configure logging to show INFO level
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+)
+logger = logging.getLogger(__name__)
 
 
 @asynccontextmanager
@@ -32,6 +40,11 @@ async def lifespan(app: FastAPI):
     Handles startup and shutdown of the server.
     """
     settings = get_settings()
+    if settings.require_api_key and not settings.api_key:
+        raise RuntimeError(
+            "Server is configured to require an API key (require_api_key=True) but "
+            "DSAGENT_API_KEY is not set. Set DSAGENT_API_KEY in production."
+        )
     logger.info(f"Starting DSAgent Server v{API_VERSION}")
 
     # Create sessions directory
@@ -47,6 +60,7 @@ async def lifespan(app: FastAPI):
     logger.info(f"SessionManager initialized with {settings.session_backend} backend")
 
     # Initialize ConnectionManager
+    logger.info(f"Default model from settings: {settings.default_model!r}")
     connection_manager = AgentConnectionManager(
         session_manager=session_manager,
         default_model=settings.default_model,

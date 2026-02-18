@@ -30,6 +30,7 @@ from dsagent.server.models import (
     PlanStepResponse,
     TurnsResponse,
 )
+from dsagent.server.validators import SessionIdPath
 from dsagent.session import SessionManager
 from dsagent.session.models import MessageRole
 
@@ -425,7 +426,7 @@ def _convert_chat_response(response: "ChatResponse") -> ChatResponseModel:
     responses={404: {"model": ErrorResponse}},
 )
 async def chat(
-    session_id: str,
+    session_id: SessionIdPath,
     request: ChatRequest,
     connection_manager: AgentConnectionManager = Depends(get_connection_manager),
     session_manager: SessionManager = Depends(get_session_manager),
@@ -473,7 +474,7 @@ async def chat(
     responses={404: {"model": ErrorResponse}},
 )
 async def chat_stream(
-    session_id: str,
+    session_id: SessionIdPath,
     request: ChatRequest,
     connection_manager: AgentConnectionManager = Depends(get_connection_manager),
     session_manager: SessionManager = Depends(get_session_manager),
@@ -647,7 +648,7 @@ async def chat_stream(
     responses={404: {"model": ErrorResponse}},
 )
 async def get_messages(
-    session_id: str,
+    session_id: SessionIdPath,
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),
     role: Optional[str] = Query(None),
@@ -716,7 +717,7 @@ async def get_messages(
     responses={404: {"model": ErrorResponse}},
 )
 async def get_turns(
-    session_id: str,
+    session_id: SessionIdPath,
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),
     session_manager: SessionManager = Depends(get_session_manager),

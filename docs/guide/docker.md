@@ -35,9 +35,11 @@ DSAgent provides Docker images for easy deployment of both the CLI and API serve
 # Pull the image
 docker pull nmlemus/dsagent:latest
 
-# Run API server
+# Run API server (container listens on PORT, default 8000)
 docker run -d \
-  -p 8000:8000 \
+  -p 8080:8080 \
+  -e PORT=8080 \
+  -e DSAGENT_DEFAULT_MODEL=gpt-4o \
   -e OPENAI_API_KEY=sk-your-key \
   -v $(pwd)/workspace:/workspace \
   nmlemus/dsagent:latest
@@ -48,25 +50,36 @@ docker run -it \
   -v $(pwd)/workspace:/workspace \
   nmlemus/dsagent:latest \
   dsagent chat
+
+# One-shot task
+docker run --rm \
+  -e OPENAI_API_KEY=sk-your-key \
+  -v $(pwd)/workspace:/workspace \
+  nmlemus/dsagent:latest \
+  dsagent run "Analyze this dataset" --data ./data.csv
 ```
 
 ## Configuration
 
 ### Environment Variables
 
-#### LLM Configuration
+The container uses the same configuration as the CLI and server (see [Configuration](../getting-started/configuration.md)). Key variables:
+
+#### LLM and model
 
 | Variable | Description | Default |
 |----------|-------------|---------|
-| `LLM_MODEL` | LLM model to use | `gpt-4o` |
-| `OPENAI_API_KEY` | OpenAI API key (for gpt-* models) | - |
-| `ANTHROPIC_API_KEY` | Anthropic API key (for claude-* models) | - |
-| `GOOGLE_API_KEY` | Google API key (for gemini/* models) | - |
+| `DSAGENT_DEFAULT_MODEL` | Default LLM model (recommended) | `gpt-4o` |
+| `LLM_MODEL` | Legacy default model | - |
+| `OPENAI_API_KEY` | OpenAI API key | - |
+| `ANTHROPIC_API_KEY` | Anthropic API key | - |
+| `GOOGLE_API_KEY` | Google API key | - |
+| `GROQ_API_KEY` | Groq API key | - |
 | `DEEPSEEK_API_KEY` | DeepSeek API key | - |
-| `LLM_API_BASE` | Custom API endpoint (for proxies) | - |
+| `LLM_API_BASE` | Custom API endpoint (e.g. LiteLLM proxy) | - |
 | `OLLAMA_API_BASE` | Ollama API endpoint | `http://host.docker.internal:11434` |
 
-#### Agent Settings
+#### Agent settings
 
 | Variable | Description | Default |
 |----------|-------------|---------|
@@ -75,12 +88,15 @@ docker run -it \
 | `DSAGENT_MAX_TOKENS` | Max tokens per response | `4096` |
 | `DSAGENT_CODE_TIMEOUT` | Code execution timeout (seconds) | `300` |
 
-#### API Server
+#### API server and port
 
 | Variable | Description | Default |
 |----------|-------------|---------|
-| `DSAGENT_API_KEY` | API authentication key | - (disabled) |
+| `PORT` | Port the server listens on (container CMD uses this) | `8000` |
+| `DSAGENT_API_KEY` | If set, API and WebSocket require `X-API-Key` | - (disabled) |
 | `DSAGENT_CORS_ORIGINS` | CORS allowed origins | `*` |
+| `DSAGENT_REQUIRE_API_KEY` | If `true`, server exits when no API key set | `false` |
+| `DSAGENT_MAX_UPLOAD_MB` | Max upload size per file (MB); `0` = no limit | `50` |
 
 #### MCP Tools (Optional)
 

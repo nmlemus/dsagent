@@ -9,6 +9,7 @@ from pydantic import BaseModel, Field
 
 from dsagent.server.deps import get_connection_manager, verify_api_key
 from dsagent.server.manager import AgentConnectionManager
+from dsagent.server.validators import SessionIdPath
 
 
 router = APIRouter(dependencies=[Depends(verify_api_key)])
@@ -60,7 +61,7 @@ class HITLActionResponse(BaseModel):
 
 @router.get("/sessions/{session_id}/hitl/status", response_model=HITLStatusResponse)
 async def get_hitl_status(
-    session_id: str,
+    session_id: SessionIdPath,
     connection_manager: AgentConnectionManager = Depends(get_connection_manager),
 ) -> HITLStatusResponse:
     """Get HITL status for a session.
@@ -108,7 +109,7 @@ async def get_hitl_status(
 
 @router.post("/sessions/{session_id}/hitl/respond", response_model=HITLActionResponse)
 async def respond_to_hitl(
-    session_id: str,
+    session_id: SessionIdPath,
     request: HITLActionRequest,
     connection_manager: AgentConnectionManager = Depends(get_connection_manager),
 ) -> HITLActionResponse:
@@ -182,7 +183,7 @@ async def respond_to_hitl(
 
 @router.post("/sessions/{session_id}/hitl/approve", response_model=HITLActionResponse)
 async def approve_hitl(
-    session_id: str,
+    session_id: SessionIdPath,
     message: Optional[str] = None,
     connection_manager: AgentConnectionManager = Depends(get_connection_manager),
 ) -> HITLActionResponse:
@@ -204,7 +205,7 @@ async def approve_hitl(
 
 @router.post("/sessions/{session_id}/hitl/reject", response_model=HITLActionResponse)
 async def reject_hitl(
-    session_id: str,
+    session_id: SessionIdPath,
     message: Optional[str] = None,
     connection_manager: AgentConnectionManager = Depends(get_connection_manager),
 ) -> HITLActionResponse:

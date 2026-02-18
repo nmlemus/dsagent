@@ -1,90 +1,87 @@
 # Configuration
 
-DSAgent can be configured through environment variables, configuration files, or command-line arguments.
+DSAgent uses a single configuration source: `dsagent.config` (see `src/dsagent/config.py`). All settings support environment variables with the `DSAGENT_` prefix and optional `.env` files.
 
 ## Configuration Methods
 
 Configuration is loaded in this order (later sources override earlier):
 
-1. Default values
-2. `~/.dsagent/.env` - Global configuration (API keys, default model)
-3. `./.env` - Local project configuration (overrides global)
-4. Environment variables (already set in shell)
-5. Command-line arguments (highest priority)
+1. Default values in code
+2. `~/.dsagent/.env` — global (CLI loads this first)
+3. `./.env` — local project (CLI overrides global with this)
+4. Environment variables already set in the shell
+5. Command-line arguments (highest priority for CLI)
+6. API request fields (e.g. `model` in create-session) for the server
 
-This allows you to set API keys globally in `~/.dsagent/.env` and override settings per-project in a local `.env` file.
+This allows API keys in `~/.dsagent/.env` and per-project overrides in `./.env`.
 
 ## Environment Variables
 
-### LLM Configuration
+All `DSAGENT_*` variables are read by both CLI and API server (where applicable).
+
+### LLM and model
 
 | Variable | Description | Default |
 |----------|-------------|---------|
-| `LLM_MODEL` | LLM model to use | `gpt-4o` |
+| `DSAGENT_DEFAULT_MODEL` | Default LLM model (recommended) | `gpt-4o` |
+| `LLM_MODEL` | Legacy default model (CLI compatible) | - |
 | `OPENAI_API_KEY` | OpenAI API key | - |
 | `ANTHROPIC_API_KEY` | Anthropic API key | - |
 | `GOOGLE_API_KEY` | Google API key | - |
 | `GROQ_API_KEY` | Groq API key | - |
-| `TOGETHER_API_KEY` | Together AI API key | - |
-| `OPENROUTER_API_KEY` | OpenRouter API key | - |
-| `MISTRAL_API_KEY` | Mistral API key | - |
 | `DEEPSEEK_API_KEY` | DeepSeek API key | - |
-| `COHERE_API_KEY` | Cohere API key | - |
-| `PERPLEXITYAI_API_KEY` | Perplexity API key | - |
-| `FIREWORKS_API_KEY` | Fireworks API key | - |
-| `HUGGINGFACE_API_KEY` | Hugging Face API key | - |
-| `AZURE_API_KEY` | Azure OpenAI API key | - |
-| `LLM_API_BASE` | Custom API endpoint (LiteLLM proxy) | - |
+| `LLM_API_BASE` | Custom API endpoint (e.g. LiteLLM proxy) | - |
 | `OLLAMA_API_BASE` | Ollama server URL | `http://localhost:11434` |
 
-### Agent Settings
+### Agent settings
 
 | Variable | Description | Default |
 |----------|-------------|---------|
 | `DSAGENT_MAX_ROUNDS` | Maximum agent iterations | `30` |
-| `DSAGENT_TEMPERATURE` | LLM temperature (0.0-1.0) | `0.3` |
+| `DSAGENT_TEMPERATURE` | LLM temperature (0.0–2.0) | `0.3` |
 | `DSAGENT_MAX_TOKENS` | Max tokens per response | `4096` |
 | `DSAGENT_CODE_TIMEOUT` | Code execution timeout (seconds) | `300` |
 | `DSAGENT_WORKSPACE` | Workspace directory | `./workspace` |
+| `DSAGENT_SESSIONS_DIR` | Sessions directory name under workspace | `workspace` |
+| `DSAGENT_SESSION_BACKEND` | Session store: `sqlite` or `json` | `sqlite` |
 
-### API Server
+### API server
 
 | Variable | Description | Default |
 |----------|-------------|---------|
-| `DSAGENT_API_KEY` | API authentication key | - (disabled) |
-| `DSAGENT_CORS_ORIGINS` | CORS allowed origins | `*` |
+| `DSAGENT_API_KEY` | If set, API and WebSocket require `X-API-Key` header | - (disabled) |
+| `DSAGENT_CORS_ORIGINS` | Comma-separated origins or `*` | `*` |
+| `DSAGENT_REQUIRE_API_KEY` | If `true`, server refuses to start without `DSAGENT_API_KEY` | `false` |
+| `DSAGENT_MAX_UPLOAD_MB` | Max upload size per file in MB; `0` = no limit | `50` |
 
 ## Configuration File
 
 Create a `.env` file in `~/.dsagent/` for persistent **global** configuration:
 
 ```bash
-# ~/.dsagent/.env - Global config (all your API keys)
+# ~/.dsagent/.env - Global config (API keys, default model)
 
-# Default model
-LLM_MODEL=gpt-4o
+# Default model (DSAGENT_* preferred; LLM_MODEL still supported)
+DSAGENT_DEFAULT_MODEL=gpt-4o
 
-# API Keys - add all providers you use
+# API keys — add the providers you use
 OPENAI_API_KEY=sk-your-key-here
 ANTHROPIC_API_KEY=sk-ant-your-key-here
 GROQ_API_KEY=gsk_your-key-here
 GOOGLE_API_KEY=your-key-here
 
-# Agent Settings
+# Optional agent settings
 DSAGENT_MAX_ROUNDS=30
 DSAGENT_TEMPERATURE=0.3
 ```
 
-Create a `.env` file in your **project directory** to override settings:
+Create a `.env` file in your **project directory** to override settings for that project:
 
 ```bash
-# ~/my-project/.env - Project-specific config
+# ~/my-project/.env - Project-specific overrides
 
-# Use a different model for this project
-LLM_MODEL=groq/llama-3.3-70b-versatile
-
-# Or use Claude for this project
-# LLM_MODEL=claude-sonnet-4-20250514
+DSAGENT_DEFAULT_MODEL=groq/llama-3.3-70b-versatile
+# or LLM_MODEL=claude-sonnet-4-20250514
 ```
 
 The setup wizard (`dsagent init`) creates the global file automatically.
@@ -147,21 +144,20 @@ See [MCP Tools](../guide/mcp.md) for available tools and configuration.
 
 ## Workspace Structure
 
-DSAgent organizes output in the workspace directory:
+DSAgent organizes output under the workspace directory (`DSAGENT_WORKSPACE`, default `./workspace`). Session storage uses `DSAGENT_SESSIONS_DIR` (default `workspace`) and the backend (`DSAGENT_SESSION_BACKEND`: `sqlite` or `json`).
+
+Typical layout:
 
 ```
-workspace/
-├── sessions/
-│   └── {session_id}/
-│       ├── session.json    # Session metadata
-│       ├── messages.json   # Conversation history
-│       └── kernel_state/   # Jupyter kernel state
+workspace/                    # or DSAGENT_WORKSPACE
+├── .dsagent/
+│   └── sessions.db          # SQLite sessions (when session_backend=sqlite)
 └── runs/
-    └── {run_id}/
-        ├── data/           # Input data (copied)
-        ├── notebooks/      # Generated notebooks
-        ├── artifacts/      # Charts, models, exports
-        └── logs/           # Execution logs
+    └── {session_id}/        # Per-session workspace
+        ├── data/            # Input/uploaded data
+        ├── artifacts/       # Charts, models, exports
+        ├── notebooks/       # Generated Jupyter notebooks
+        └── logs/            # Execution logs, events
 ```
 
 ## Proxy Configuration

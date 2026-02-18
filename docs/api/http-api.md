@@ -1,26 +1,37 @@
 # HTTP API Reference
 
-DSAgent provides a REST API with Server-Sent Events (SSE) for building custom UIs and integrations.
+DSAgent provides a REST API and WebSocket for building custom UIs and integrations. The streaming chat endpoint uses Server-Sent Events (SSE).
 
 ## Base URL
 
+All API routes are under `/api` (no version prefix). Health endpoints are at the root.
+
 ```
-http://localhost:8000/api/v1
+http://localhost:8000
 ```
+
+| Path | Description |
+|------|-------------|
+| `GET /health` | Health check (no auth) |
+| `GET /health/ready` | Readiness check (no auth) |
+| `/api/sessions` | Session CRUD |
+| `/api/sessions/{id}/chat` | Chat (sync and stream) |
+| `/api/sessions/{id}/kernel` | Kernel state, execute, reset |
+| `/api/sessions/{id}/files` | List/upload/download/delete files |
+| `/api/sessions/{id}/artifacts` | List/download/delete artifacts |
+| `/api/sessions/{id}/hitl/*` | Human-in-the-loop |
+| `WS /ws/chat/{session_id}` | WebSocket chat |
 
 ## Authentication
 
-All endpoints require an API key passed in the header:
+If `DSAGENT_API_KEY` is set, all API endpoints (except `/health`, `/health/ready`) require the key.
 
+**Header (recommended):**
 ```bash
 X-API-Key: your-api-key
 ```
 
-Or as a query parameter:
-
-```
-?api_key=your-api-key
-```
+**Query (WebSocket only):** `?api_key=your-api-key` (see security note in server docs)
 
 ---
 
@@ -29,7 +40,7 @@ Or as a query parameter:
 ### Create Session
 
 ```http
-POST /sessions
+POST /api/sessions
 ```
 
 **Request Body:**
@@ -58,27 +69,51 @@ POST /sessions
 ### List Sessions
 
 ```http
-GET /sessions
+GET /api/sessions?status=active&limit=50
 ```
+
+**Query:** `status` (optional), `limit` (default 50, max 100).
 
 ### Get Session
 
 ```http
-GET /sessions/{session_id}
+GET /api/sessions/{session_id}
 ```
 
 ### Delete Session
 
 ```http
-DELETE /sessions/{session_id}
+DELETE /api/sessions/{session_id}
 ```
+
+### Archive Session
+
+```http
+POST /api/sessions/{session_id}/archive
+```
+
+### Export Session as JSON
+
+```http
+GET /api/sessions/{session_id}/export
+```
+
+Returns session data with `Content-Disposition: attachment; filename="...json"`.
+
+### Export Session as Notebook
+
+```http
+GET /api/sessions/{session_id}/notebook
+```
+
+Returns the session's Jupyter notebook (`.ipynb`) if available.
 
 ### Update Session
 
 Update session configuration including model and HITL mode at runtime.
 
 ```http
-PUT /sessions/{session_id}
+PUT /api/sessions/{session_id}
 Content-Type: application/json
 
 {
@@ -136,7 +171,7 @@ HITL allows human approval before the agent executes plans or code. When enabled
 Check if the agent is awaiting human approval.
 
 ```http
-GET /sessions/{session_id}/hitl/status
+GET /api/sessions/{session_id}/hitl/status
 ```
 
 **Response:**
@@ -165,7 +200,7 @@ GET /sessions/{session_id}/hitl/status
 Approve the pending plan/code and continue execution.
 
 ```http
-POST /sessions/{session_id}/hitl/approve
+POST /api/sessions/{session_id}/hitl/approve
 ```
 
 **Response:**
@@ -181,7 +216,7 @@ POST /sessions/{session_id}/hitl/approve
 Reject and abort the current task.
 
 ```http
-POST /sessions/{session_id}/hitl/reject
+POST /api/sessions/{session_id}/hitl/reject
 ```
 
 **Response:**
@@ -197,7 +232,7 @@ POST /sessions/{session_id}/hitl/reject
 Send detailed HITL response with optional modifications.
 
 ```http
-POST /sessions/{session_id}/hitl/respond
+POST /api/sessions/{session_id}/hitl/respond
 Content-Type: application/json
 
 {
@@ -224,28 +259,30 @@ Content-Type: application/json
 ```bash
 curl -X POST "http://localhost:8000/api/sessions" \
   -H "Content-Type: application/json" \
+  -H "X-API-Key: YOUR_KEY" \
   -d '{"name": "HITL Session", "hitl_mode": "plan_only"}'
 ```
 
 **2. Send a message (this will block waiting for approval):**
 ```bash
-# In terminal 1 - this will wait for approval
+# In terminal 1 — waits for approval
 curl -X POST "http://localhost:8000/api/sessions/{session_id}/chat" \
   -H "Content-Type: application/json" \
+  -H "X-API-Key: YOUR_KEY" \
   -d '{"message": "Analyze sales data and create visualizations"}'
 ```
 
 **3. Check status (in another terminal):**
 ```bash
-# In terminal 2
-curl "http://localhost:8000/api/sessions/{session_id}/hitl/status"
+curl "http://localhost:8000/api/sessions/{session_id}/hitl/status" \
+  -H "X-API-Key: YOUR_KEY"
 # Returns: awaiting_feedback: true, awaiting_type: "plan"
 ```
 
 **4. Approve the plan:**
 ```bash
-# In terminal 2
-curl -X POST "http://localhost:8000/api/sessions/{session_id}/hitl/approve"
+curl -X POST "http://localhost:8000/api/sessions/{session_id}/hitl/approve" \
+  -H "X-API-Key: YOUR_KEY"
 ```
 
 **5. The chat request in terminal 1 now continues execution.**
@@ -278,7 +315,7 @@ The stream pauses until you call `/hitl/approve` or `/hitl/reject`.
 For simple integrations that don't need real-time updates:
 
 ```http
-POST /sessions/{session_id}/chat
+POST /api/sessions/{session_id}/chat
 Content-Type: application/json
 
 {
@@ -315,7 +352,7 @@ Content-Type: application/json
 ### Send Message (Streaming) - Recommended for UIs
 
 ```http
-POST /sessions/{session_id}/chat/stream
+POST /api/sessions/{session_id}/chat/stream
 Content-Type: application/json
 
 {
@@ -519,7 +556,7 @@ data: {
 
 ```typescript
 async function streamChat(sessionId: string, message: string) {
-  const response = await fetch(`/api/v1/sessions/${sessionId}/chat/stream`, {
+  const response = await fetch(`/api/sessions/${sessionId}/chat/stream`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -619,7 +656,7 @@ function useChatStream(sessionId: string) {
     setState(s => ({ ...s, isLoading: true, error: null }));
 
     try {
-      const response = await fetch(`/api/v1/sessions/${sessionId}/chat/stream`, {
+      const response = await fetch(`/api/sessions/${sessionId}/chat/stream`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ message }),
@@ -639,7 +676,7 @@ function useChatStream(sessionId: string) {
 ### cURL
 
 ```bash
-curl -X POST "http://localhost:8000/api/v1/sessions/SESSION_ID/chat/stream" \
+curl -X POST "http://localhost:8000/api/sessions/SESSION_ID/chat/stream" \
   -H "Content-Type: application/json" \
   -H "X-API-Key: your-api-key" \
   -d '{"message": "Analyze iris.csv"}' \
@@ -653,7 +690,7 @@ curl -X POST "http://localhost:8000/api/v1/sessions/SESSION_ID/chat/stream" \
 ### Get Messages
 
 ```http
-GET /sessions/{session_id}/messages?limit=50&offset=0&role=assistant
+GET /api/sessions/{session_id}/messages?limit=50&offset=0&role=assistant
 ```
 
 **Query Parameters:**
@@ -703,7 +740,7 @@ Returns conversation history as structured turns, matching the `round_complete` 
     summarization events.
 
 ```http
-GET /sessions/{session_id}/turns?limit=50&offset=0
+GET /api/sessions/{session_id}/turns?limit=50&offset=0
 ```
 
 **Query Parameters:**
@@ -767,7 +804,7 @@ GET /sessions/{session_id}/turns?limit=50&offset=0
 **UI Usage Pattern:**
 ```typescript
 // On session load, fetch historical turns
-const history = await fetch(`/api/v1/sessions/${sessionId}/turns`);
+const history = await fetch(`/api/sessions/${sessionId}/turns`);
 const { turns } = await history.json();
 
 // Render each turn using the same component as round_complete events
@@ -782,29 +819,61 @@ eventSource.on('round_complete', renderRoundComplete);
 
 ## Files & Artifacts
 
-### List Files in Data Directory
+Files are organized by category: `data`, `artifacts`, or `notebooks`. Session ID must match pattern `[a-zA-Z0-9_-]+`.
+
+### List Files
 
 ```http
-GET /sessions/{session_id}/files?path=data
+GET /api/sessions/{session_id}/files?category=data
 ```
 
-### Upload File
+**Query:** `category` — `data`, `artifacts`, or `notebooks` (default: `data`).
+
+### Upload Files
 
 ```http
-POST /sessions/{session_id}/files
+POST /api/sessions/{session_id}/files
 Content-Type: multipart/form-data
 
-file: (binary)
-path: data/
+files: (one or more files)
+category: data   (optional; default: data)
 ```
 
-### Get Artifact
+Upload size per file is limited by `DSAGENT_MAX_UPLOAD_MB` (default 50 MB; `0` = no limit).
+
+### Download File
 
 ```http
-GET /sessions/{session_id}/artifacts/{filename}
+GET /api/sessions/{session_id}/files/{filename}?category=data
 ```
 
-Returns the file content (image, CSV, etc.)
+### Delete File
+
+```http
+DELETE /api/sessions/{session_id}/files/{filename}?category=data
+```
+
+### List Artifacts
+
+```http
+GET /api/sessions/{session_id}/artifacts?type=image
+```
+
+**Query:** `type` — optional filter: `image`, `document`, `data`, `model`, `code`, `notebook`.
+
+### Download Artifact
+
+```http
+GET /api/sessions/{session_id}/artifacts/{filename}
+```
+
+Returns the file content (image, CSV, etc.).
+
+### Delete Artifact
+
+```http
+DELETE /api/sessions/{session_id}/artifacts/{filename}
+```
 
 ---
 
@@ -880,15 +949,20 @@ interface PlanStep {
 ## Running the Server
 
 ```bash
-# Start the API server
+# Start the API server (host/port via flags; config from env)
 dsagent serve --port 8000
 
-# With custom workspace
-dsagent serve --port 8000 --workspace ./my-workspace
+# With API key (from env)
+export DSAGENT_API_KEY=my-secret-key
+dsagent serve
 
-# With API key
-DSAGENT_API_KEY=my-secret-key dsagent serve
+# Production: require API key
+export DSAGENT_REQUIRE_API_KEY=true
+export DSAGENT_API_KEY=my-secret-key
+dsagent serve --port 8000
 ```
+
+OpenAPI docs: `http://localhost:8000/docs`. Health: `http://localhost:8000/health`.
 
 ---
 
