@@ -12,7 +12,7 @@ ARG INSTALL_LATEX=false
 
 # Labels
 LABEL maintainer="DSAgent Contributors"
-LABEL version="0.8.4"
+LABEL version="0.9.0"
 LABEL description="AI-powered autonomous agent for data science"
 
 # Set environment variables
