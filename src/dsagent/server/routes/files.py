@@ -103,10 +103,23 @@ def _get_session_path(
             detail=f"Session {session_id} has no {category} path configured",
         )
 
-    # Ensure path exists
-    path = Path(path)
-    path.mkdir(parents=True, exist_ok=True)
+    # Ensure path is under workspace (path traversal guard for session-derived paths)
+    path = Path(path).resolve()
+    workspace_root = Path(session_manager.workspace_path).resolve()
+    try:
+        if not path.is_relative_to(workspace_root):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Invalid path",
+            )
+    except (ValueError, AttributeError):
+        if path != workspace_root and not str(path).startswith(str(workspace_root) + os.sep):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Invalid path",
+            )
 
+    path.mkdir(parents=True, exist_ok=True)
     return path
 
 

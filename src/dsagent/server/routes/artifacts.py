@@ -118,6 +118,28 @@ def _get_media_type(filename: str) -> str:
     return media_types.get(suffix, "application/octet-stream")
 
 
+def _ensure_artifacts_path_under_workspace(
+    session_manager: SessionManager,
+    artifacts_path_str: str,
+) -> Path:
+    """Resolve artifacts path and ensure it is under session manager workspace."""
+    path = Path(artifacts_path_str).resolve()
+    workspace_root = Path(session_manager.workspace_path).resolve()
+    try:
+        if not path.is_relative_to(workspace_root):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Invalid path",
+            )
+    except (ValueError, AttributeError):
+        if path != workspace_root and not str(path).startswith(str(workspace_root) + os.sep):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Invalid path",
+            )
+    return path
+
+
 def _resolve_artifact_path(base_path: Path, filename: str) -> Path:
     """Resolve artifact path and ensure it stays under base_path (path traversal guard)."""
     safe_name = Path(filename).name
@@ -193,7 +215,9 @@ async def list_artifacts(
             session_id=session_id,
         )
 
-    artifacts_path = Path(session.artifacts_path)
+    artifacts_path = _ensure_artifacts_path_under_workspace(
+        session_manager, session.artifacts_path
+    )
     if not artifacts_path.exists():
         return ArtifactListResponse(
             artifacts=[],
@@ -266,7 +290,9 @@ async def download_artifact(
             detail=f"Session {session_id} has no artifacts path",
         )
 
-    base_path = Path(session.artifacts_path)
+    base_path = _ensure_artifacts_path_under_workspace(
+        session_manager, session.artifacts_path
+    )
     file_path = _resolve_artifact_path(base_path, filename)
     if not file_path.exists():
         raise HTTPException(
@@ -314,7 +340,9 @@ async def delete_artifact(
             detail=f"Session {session_id} has no artifacts path",
         )
 
-    base_path = Path(session.artifacts_path)
+    base_path = _ensure_artifacts_path_under_workspace(
+        session_manager, session.artifacts_path
+    )
     file_path = _resolve_artifact_path(base_path, filename)
     if not file_path.exists():
         raise HTTPException(
