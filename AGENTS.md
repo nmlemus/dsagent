@@ -26,8 +26,9 @@
 - New features and fixes should include or update tests; no explicit coverage target is defined.
 
 ## Commit & Pull Request Guidelines
-- Follow Git Flow: branch from `develop` and PR back to `develop`.
-- Branch names: `feature/*`, `bugfix/*`, `release/vX.Y.Z`, `hotfix/*`.
+- **Do not commit directly to `main`.** For every change: document in a GitHub issue → create a branch → implement → test → push → open a PR. See `.cursor/rules/workflow-branch-pr.mdc`.
+- Follow Git Flow: branch from `develop` (or `main`) and PR back to `develop`/`main`.
+- Branch names: `feature/*`, `bugfix/*`, `fix/*`, `release/vX.Y.Z`, `hotfix/*`.
 - Commit messages use `type: short description` (e.g., `feat: add streaming API endpoint`).
 - PRs should include a clear description, pass tests, and update docs when needed.
 
