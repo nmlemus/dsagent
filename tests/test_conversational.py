@@ -19,10 +19,10 @@ class TestConversationalAgentConfig:
     """Tests for ConversationalAgentConfig."""
 
     def test_default_config(self):
-        """Test default configuration values."""
+        """Test default configuration values. Model is resolved at runtime via get_default_model()."""
         config = ConversationalAgentConfig()
 
-        assert config.model == "gpt-4o"
+        assert config.model is None  # resolved at runtime
         assert config.temperature == 0.3
         assert config.max_tokens == 4096
         assert config.code_timeout == 300
