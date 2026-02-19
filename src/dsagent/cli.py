@@ -154,9 +154,12 @@ Examples:
 
     args = parser.parse_args()
 
-    # Validate model and API key configuration
+    # Resolve model (CLI flag, env, or fallback) before validation
+    from dsagent.config import get_default_model
+    effective_model = get_default_model(explicit=args.model)
+
     try:
-        validate_configuration(args.model)
+        validate_configuration(effective_model)
     except ConfigurationError as e:
         print(f"Configuration Error: {e}", file=sys.stderr)
         sys.exit(1)
@@ -189,7 +192,7 @@ Examples:
     if data_info:
         print(f"Data: {data_info}")
     print(f"Run Path: {context.run_path}")
-    print(f"Model: {args.model}")
+    print(f"Model: {effective_model}")
     if hitl_mode != HITLMode.NONE:
         print(f"HITL Mode: {hitl_mode.value}")
     if mcp_config_path:
@@ -209,7 +212,7 @@ List files in 'data/' first to see what's available.
 
     # Create and run agent with context
     agent = PlannerAgent(
-        model=args.model,
+        model=effective_model,
         workspace=context.run_path,  # Use run-specific path
         max_rounds=args.max_rounds,
         verbose=not args.quiet,

@@ -671,10 +671,13 @@ Live Notebook:
 
     args = parser.parse_args()
 
-    # Validate configuration
+    # Resolve model (CLI flag, env, or fallback) before validation
+    from dsagent.config import get_default_model
+    from dsagent.utils.validation import validate_configuration
+    effective_model = get_default_model(explicit=args.model)
+
     try:
-        from dsagent.utils.validation import validate_configuration
-        validate_configuration(args.model)
+        validate_configuration(effective_model)
     except Exception as e:
         console = Console()
         console.print(f"[red]Configuration Error: {e}[/red]")
@@ -702,7 +705,7 @@ Live Notebook:
     # Run the CLI
     cli = ConversationalCLI(
         workspace=Path(args.workspace),
-        model=args.model,
+        model=effective_model,
         session_id=args.session,
         hitl_mode=hitl_mode,
         enable_live_notebook=args.live_notebook,
@@ -727,13 +730,16 @@ def run_chat(args) -> int:
     Returns:
         Exit code (0 for success)
     """
+    from dsagent.config import get_default_model
     from dsagent.utils.validation import validate_configuration
 
     console = Console()
 
-    # Validate configuration
+    # Resolve model (CLI flag, env, or fallback) before validation
+    effective_model = get_default_model(explicit=args.model)
+
     try:
-        validate_configuration(args.model)
+        validate_configuration(effective_model)
     except Exception as e:
         console.print(f"[red]Configuration Error: {e}[/red]")
         return 1
@@ -759,7 +765,7 @@ def run_chat(args) -> int:
     # Run the CLI
     cli = ConversationalCLI(
         workspace=Path(args.workspace),
-        model=args.model,
+        model=effective_model,
         session_id=getattr(args, 'session', None),
         hitl_mode=hitl_mode,
         enable_live_notebook=getattr(args, 'live_notebook', False),
