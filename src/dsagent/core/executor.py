@@ -1,4 +1,10 @@
-"""Jupyter Kernel Executor for persistent code execution."""
+"""Jupyter Kernel Executor for persistent code execution.
+
+Security note: Generated code runs in the kernel with the same user and no sandbox.
+Malicious or buggy code can access the filesystem, network, and other resources.
+For multi-user or untrusted environments, consider ephemeral containers per session
+or resource limits (CPU/memory) at deployment level.
+"""
 
 from __future__ import annotations
 
@@ -18,7 +24,9 @@ class JupyterExecutor:
     """Executes Python code in a persistent Jupyter kernel.
 
     The kernel maintains state between executions, allowing variables,
-    imports, and objects to persist across multiple code blocks.
+    imports, and objects to persist across multiple code blocks. There is
+    no global kernel lifetime or memory limit; long sessions may accumulate
+    resource use. Consider kernel recycling or time limits in shared deployments.
 
     Example:
         executor = JupyterExecutor(workspace="./workspace")

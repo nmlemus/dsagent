@@ -1,6 +1,7 @@
 """Session management endpoints."""
 
 import logging
+import re
 from datetime import datetime
 from pathlib import Path
 from typing import Optional
@@ -22,6 +23,7 @@ from dsagent.server.models import (
     SessionResponse,
     UpdateSessionRequest,
 )
+from dsagent.server.validators import SessionIdPath
 from dsagent.session import Session, SessionManager, SessionStatus
 
 logger = logging.getLogger(__name__)
@@ -141,7 +143,7 @@ async def list_sessions(
     responses={404: {"model": ErrorResponse}},
 )
 async def get_session(
-    session_id: str,
+    session_id: SessionIdPath,
     session_manager: SessionManager = Depends(get_session_manager),
 ) -> SessionResponse:
     """Get a specific session.
@@ -173,7 +175,7 @@ async def get_session(
     responses={404: {"model": ErrorResponse}},
 )
 async def update_session(
-    session_id: str,
+    session_id: SessionIdPath,
     request: UpdateSessionRequest,
     session_manager: SessionManager = Depends(get_session_manager),
     connection_manager: AgentConnectionManager = Depends(get_connection_manager),
@@ -250,7 +252,7 @@ async def update_session(
     responses={404: {"model": ErrorResponse}},
 )
 async def delete_session(
-    session_id: str,
+    session_id: SessionIdPath,
     session_manager: SessionManager = Depends(get_session_manager),
     connection_manager: AgentConnectionManager = Depends(get_connection_manager),
 ) -> None:
@@ -283,7 +285,7 @@ async def delete_session(
     responses={404: {"model": ErrorResponse}},
 )
 async def archive_session(
-    session_id: str,
+    session_id: SessionIdPath,
     session_manager: SessionManager = Depends(get_session_manager),
     connection_manager: AgentConnectionManager = Depends(get_connection_manager),
 ) -> SessionResponse:
@@ -324,7 +326,7 @@ async def archive_session(
     responses={404: {"model": ErrorResponse}},
 )
 async def export_notebook(
-    session_id: str,
+    session_id: SessionIdPath,
     connection_manager: AgentConnectionManager = Depends(get_connection_manager),
     session_manager: SessionManager = Depends(get_session_manager),
 ):
@@ -388,7 +390,7 @@ async def export_notebook(
     responses={404: {"model": ErrorResponse}},
 )
 async def export_session(
-    session_id: str,
+    session_id: SessionIdPath,
     session_manager: SessionManager = Depends(get_session_manager),
 ) -> JSONResponse:
     """Export full session data as JSON.
@@ -411,10 +413,11 @@ async def export_session(
             detail=f"Session {session_id} not found",
         )
 
-    # Export session as JSON
+    # Safe filename for Content-Disposition (avoid header injection)
+    safe_name = re.sub(r'[\r\n"\\]', "_", session_id)[:200].strip() or "session"
     return JSONResponse(
         content=session.model_dump(mode="json"),
         headers={
-            "Content-Disposition": f'attachment; filename="{session_id}.json"'
+            "Content-Disposition": f'attachment; filename="{safe_name}.json"'
         },
     )

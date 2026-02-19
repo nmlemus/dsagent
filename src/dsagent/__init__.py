@@ -62,7 +62,7 @@ except ImportError:
     MCPServerConfig = None  # type: ignore
     _MCP_AVAILABLE = False
 
-__version__ = "0.8.4"
+__version__ = "0.9.0"
 
 __all__ = [
     # Main classes

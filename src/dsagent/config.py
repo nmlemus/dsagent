@@ -74,9 +74,26 @@ class DSAgentSettings(BaseSettings):
     # ─── Server Settings ──────────────────────────────────────────────────────
     host: str = Field(default="0.0.0.0")
     port: int = Field(default=8000, ge=1, le=65535)
-    api_key: Optional[str] = Field(default=None)
-    cors_origins: str = Field(default="*")
+    api_key: Optional[str] = Field(
+        default=None,
+        description="If set, API and WebSocket require X-API-Key. In production, set DSAGENT_API_KEY.",
+    )
+    cors_origins: str = Field(
+        default="*",
+        description="Comma-separated origins or '*' for all. In production, set to specific origins.",
+    )
+    require_api_key: bool = Field(
+        default=False,
+        description="If True, server refuses to start when api_key is not set (use in production).",
+    )
     default_hitl_mode: str = Field(default="none")
+
+    # ─── Upload limits ─────────────────────────────────────────────────────────
+    max_upload_mb: float = Field(
+        default=50.0,
+        ge=0,
+        description="Max upload size per file in MB (0 = no limit).",
+    )
 
     # ─── Observability ────────────────────────────────────────────────────────
     observability_enabled: bool = Field(default=False)

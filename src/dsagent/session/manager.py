@@ -14,7 +14,7 @@ from dsagent.session.models import (
     Session,
     SessionStatus,
 )
-from dsagent.session.store import SessionStore
+from dsagent.session.store import SessionStore, _validate_session_id
 
 
 class SessionManager:
@@ -87,6 +87,8 @@ class SessionManager:
         """
         if session_id is None:
             session_id = self._generate_session_id()
+        else:
+            _validate_session_id(session_id)
 
         session = Session(
             id=session_id,

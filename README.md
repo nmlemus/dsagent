@@ -50,20 +50,32 @@ uv sync --all-extras
 
 ### Docker
 
+Configuration uses the same environment variables as the CLI and server (see [Configuration](docs/getting-started/configuration.md)). The container listens on `PORT` (default 8000).
+
 ```bash
-# Run API server
-docker run -d -p 8000:8000 \
+# Run API server (default: port 8000)
+docker run -d -p 8080:8080 \
+  -e PORT=8080 \
+  -e DSAGENT_DEFAULT_MODEL=gpt-4o \
   -e OPENAI_API_KEY=sk-your-key \
   nmlemus/dsagent:latest
 
 # Run interactive CLI
 docker run -it \
   -e OPENAI_API_KEY=sk-your-key \
+  -v "$(pwd)/workspace:/workspace" \
   nmlemus/dsagent:latest \
   dsagent chat
+
+# One-shot task
+docker run --rm \
+  -e OPENAI_API_KEY=sk-your-key \
+  -v "$(pwd)/workspace:/workspace" \
+  nmlemus/dsagent:latest \
+  dsagent run "Analyze data/sales.csv" --data ./data/sales.csv
 ```
 
-For Docker deployment details, see [docs/DOCKER.md](docs/DOCKER.md).
+For Docker deployment details, see [docs/DOCKER.md](docs/DOCKER.md) and [docs/guide/docker.md](docs/guide/docker.md).
 
 ## Quick Start
 
@@ -85,7 +97,7 @@ This will:
   - Local → `ollama/llama3`
 - Optionally configure MCP tools (web search, etc.)
 
-To use a different model, edit `~/.dsagent/.env` or use the `--model` flag:
+To use a different model, set `DSAGENT_DEFAULT_MODEL` or `LLM_MODEL` in `~/.dsagent/.env`, or use the `--model` flag:
 ```bash
 dsagent --model gpt-4o-mini
 ```
@@ -118,11 +130,15 @@ dsagent run "Analyze sales trends" --data ./sales.csv
 | `dsagent` | Start interactive chat (default) |
 | `dsagent chat` | Same as above, with explicit options |
 | `dsagent run "task"` | Execute a one-shot task |
+| `dsagent serve` | Run REST + WebSocket API server |
 | `dsagent init` | Setup wizard for configuration |
 | `dsagent skills list` | List installed skills |
-| `dsagent skills install <source>` | Install a skill |
+| `dsagent skills install <source>` | Install a skill from GitHub or path |
+| `dsagent skills remove <name>` | Remove a skill |
+| `dsagent skills info <name>` | Show skill details |
 | `dsagent mcp list` | List configured MCP servers |
-| `dsagent mcp add <template>` | Add an MCP server |
+| `dsagent mcp add <template>` | Add an MCP server from template |
+| `dsagent mcp remove <name>` | Remove an MCP server |
 
 ### Examples
 
@@ -259,8 +275,10 @@ DSAgent comes with essential data science libraries pre-installed:
 
 ## Documentation
 
-- [CLI Reference](docs/CLI.md) - Complete command-line options
-- [Python API](docs/PYTHON_API.md) - Detailed API documentation
+- [CLI Reference](docs/CLI.md) - All commands: chat, run, serve, init, mcp, skills
+- [Configuration](docs/getting-started/configuration.md) - Environment variables and `.env`
+- [HTTP API](docs/api/http-api.md) - REST and WebSocket API reference
+- [Python API](docs/PYTHON_API.md) - ConversationalAgent and PlannerAgent
 - [Model Configuration](docs/MODELS.md) - LLM provider setup
 - [MCP Tools](docs/MCP.md) - External tools integration
 - [Agent Skills](docs/guide/skills.md) - Extensible skill system

@@ -62,6 +62,7 @@ hide:
     ```bash
     docker run -it \
       -e OPENAI_API_KEY=$OPENAI_API_KEY \
+      -v $(pwd)/workspace:/workspace \
       nmlemus/dsagent:latest \
       dsagent chat
     ```
@@ -80,7 +81,7 @@ hide:
 ```
 $ dsagent
 
-DSAgent v0.7.0 | Model: gpt-4o | Session: abc123
+DSAgent | Model: gpt-4o | Session: abc123
 
 You: Load the iris dataset and train a classifier
 

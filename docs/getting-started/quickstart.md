@@ -46,7 +46,7 @@ dsagent
 You'll see the DSAgent prompt:
 
 ```
-DSAgent v0.7.0 | Model: gpt-4o | Session: a1b2c3
+DSAgent | Model: gpt-4o | Session: a1b2c3
 
 Type your message or /help for commands.
 

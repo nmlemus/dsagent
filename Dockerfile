@@ -12,7 +12,7 @@ ARG INSTALL_LATEX=false
 
 # Labels
 LABEL maintainer="DSAgent Contributors"
-LABEL version="0.7.0"
+LABEL version="0.9.0"
 LABEL description="AI-powered autonomous agent for data science"
 
 # Set environment variables
@@ -21,8 +21,7 @@ ENV PYTHONUNBUFFERED=1 \
     PIP_NO_CACHE_DIR=1 \
     PIP_DISABLE_PIP_VERSION_CHECK=1 \
     DSAGENT_WORKSPACE=/workspace \
-    DSAGENT_SESSIONS_DIR=/workspace \
-    LLM_MODEL=gpt-4o
+    DSAGENT_SESSIONS_DIR=/workspace
 
 # Install system dependencies (base)
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -72,4 +71,4 @@ EXPOSE 8000
 
 # Default command: start API server
 # Can be overridden to run CLI: docker run -it dsagent dsagent chat
-CMD ["dsagent", "serve", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["sh", "-c", "dsagent serve --host 0.0.0.0 --port ${PORT:-8000}"]

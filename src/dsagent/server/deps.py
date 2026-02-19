@@ -2,56 +2,24 @@
 
 from __future__ import annotations
 
-import os
-from functools import lru_cache
 from typing import TYPE_CHECKING, Optional
 
 from fastapi import Depends, Header, HTTPException, Query, status
-from pydantic_settings import BaseSettings, SettingsConfigDict
+
+from dsagent.config import DSAgentSettings, get_settings as _get_settings
 
 if TYPE_CHECKING:
     from dsagent.server.manager import AgentConnectionManager
     from dsagent.session import SessionManager
 
-# Global instances (set by app.py on startup)
-_connection_manager: Optional["AgentConnectionManager"] = None
-_session_manager: Optional["SessionManager"] = None
+# Single source of truth: server uses centralized config from dsagent.config
+# Alias for backward compatibility in type hints (e.g. ServerSettings = Depends(get_settings))
+ServerSettings = DSAgentSettings
 
 
-class ServerSettings(BaseSettings):
-    """Server configuration settings."""
-
-    model_config = SettingsConfigDict(
-        env_file=".env",
-        env_file_encoding="utf-8",
-        extra="ignore",
-        env_prefix="DSAGENT_",
-    )
-
-    # Server settings
-    host: str = "0.0.0.0"
-    port: int = 8000
-    reload: bool = False
-
-    # Authentication
-    api_key: Optional[str] = None  # If set, API key auth is enabled
-
-    # CORS settings
-    cors_origins: str = "*"  # Comma-separated origins or "*" for all
-
-    # Agent defaults
-    default_model: Optional[str] = None
-    default_hitl_mode: str = "none"
-
-    # Session storage
-    session_backend: str = "sqlite"  # "sqlite" or "json"
-    sessions_dir: str = "workspace"  # Same as CLI default
-
-
-@lru_cache
-def get_settings() -> ServerSettings:
-    """Get cached server settings."""
-    return ServerSettings()
+def get_settings() -> DSAgentSettings:
+    """Get cached server settings (delegates to config.get_settings)."""
+    return _get_settings()
 
 
 def set_connection_manager(manager: "AgentConnectionManager") -> None:
@@ -96,7 +64,7 @@ def get_session_manager() -> "SessionManager":
 
 async def verify_api_key(
     x_api_key: Optional[str] = Header(None, alias="X-API-Key"),
-    settings: ServerSettings = Depends(get_settings),
+    settings: DSAgentSettings = Depends(get_settings),
 ) -> Optional[str]:
     """Verify API key if authentication is enabled.
 
@@ -135,7 +103,7 @@ async def verify_api_key(
 
 async def verify_websocket_api_key(
     api_key: Optional[str] = Query(None),
-    settings: ServerSettings = Depends(get_settings),
+    settings: DSAgentSettings = Depends(get_settings),
 ) -> Optional[str]:
     """Verify API key for WebSocket connections (via query param).
 

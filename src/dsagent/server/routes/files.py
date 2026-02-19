@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import shutil
 from datetime import datetime
 from pathlib import Path
@@ -11,11 +12,13 @@ from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, 
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
+from dsagent.config import get_settings
 from dsagent.server.deps import (
     get_session_manager,
     verify_api_key,
 )
 from dsagent.server.models import ErrorResponse
+from dsagent.server.validators import SessionIdPath
 from dsagent.session import SessionManager
 
 router = APIRouter(dependencies=[Depends(verify_api_key)])
@@ -100,10 +103,23 @@ def _get_session_path(
             detail=f"Session {session_id} has no {category} path configured",
         )
 
-    # Ensure path exists
-    path = Path(path)
-    path.mkdir(parents=True, exist_ok=True)
+    # Ensure path is under workspace (path traversal guard for session-derived paths)
+    path = Path(path).resolve()
+    workspace_root = Path(session_manager.workspace_path).resolve()
+    try:
+        if not path.is_relative_to(workspace_root):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Invalid path",
+            )
+    except (ValueError, AttributeError):
+        if path != workspace_root and not str(path).startswith(str(workspace_root) + os.sep):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Invalid path",
+            )
 
+    path.mkdir(parents=True, exist_ok=True)
     return path
 
 
@@ -118,6 +134,43 @@ def _get_file_info(file_path: Path, category: str) -> FileInfo:
     )
 
 
+def _resolve_file_path(base_path: Path, filename: str) -> Path:
+    """Resolve file path and ensure it stays under base_path (path traversal guard).
+
+    Args:
+        base_path: Base directory (e.g. session data/artifacts path).
+        filename: Requested filename (may contain path components; only basename is used).
+
+    Returns:
+        Resolved Path under base_path.
+
+    Raises:
+        HTTPException: 400 if the resolved path would be outside base_path.
+    """
+    safe_name = Path(filename).name
+    if not safe_name:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid filename",
+        )
+    file_path = (base_path / safe_name).resolve()
+    base_resolved = base_path.resolve()
+    try:
+        if not file_path.is_relative_to(base_resolved):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Invalid path",
+            )
+    except (ValueError, AttributeError):
+        base_str = str(base_resolved) + os.sep
+        if file_path != base_resolved and not str(file_path).startswith(base_str):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Invalid path",
+            )
+    return file_path
+
+
 # =============================================================================
 # Endpoints
 # =============================================================================
@@ -130,7 +183,7 @@ def _get_file_info(file_path: Path, category: str) -> FileInfo:
     responses={404: {"model": ErrorResponse}},
 )
 async def upload_files(
-    session_id: str,
+    session_id: SessionIdPath,
     files: List[UploadFile] = File(..., description="Files to upload"),
     category: str = Query("data", description="File category (data, artifacts)"),
     session_manager: SessionManager = Depends(get_session_manager),
@@ -153,6 +206,8 @@ async def upload_files(
         HTTPException: If session not found or upload fails
     """
     base_path = _get_session_path(session_manager, session_id, category)
+    settings = get_settings()
+    max_bytes = int(settings.max_upload_mb * 1024 * 1024) if settings.max_upload_mb > 0 else 0
 
     results = []
     for upload_file in files:
@@ -162,11 +217,27 @@ async def upload_files(
         # Sanitize filename (remove path components)
         filename = Path(upload_file.filename).name
 
+        # Enforce upload size limit
+        content = b""
+        if max_bytes > 0:
+            chunk_size = 65536
+            while True:
+                chunk = await upload_file.read(chunk_size)
+                if not chunk:
+                    break
+                content += chunk
+                if len(content) > max_bytes:
+                    raise HTTPException(
+                        status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+                        detail=f"File {filename} exceeds max size ({settings.max_upload_mb} MB)",
+                    )
+        else:
+            content = await upload_file.read()
+
         # Save file
         file_path = base_path / filename
         try:
             with open(file_path, "wb") as f:
-                content = await upload_file.read()
                 f.write(content)
 
             results.append(FileUploadResponse(
@@ -189,7 +260,7 @@ async def upload_files(
     responses={404: {"model": ErrorResponse}},
 )
 async def list_files(
-    session_id: str,
+    session_id: SessionIdPath,
     category: str = Query("data", description="File category (data, artifacts, notebooks)"),
     session_manager: SessionManager = Depends(get_session_manager),
 ) -> FileListResponse:
@@ -229,7 +300,7 @@ async def list_files(
     responses={404: {"model": ErrorResponse}},
 )
 async def download_file(
-    session_id: str,
+    session_id: SessionIdPath,
     filename: str,
     category: str = Query("data", description="File category (data, artifacts, notebooks)"),
     session_manager: SessionManager = Depends(get_session_manager),
@@ -249,12 +320,12 @@ async def download_file(
         HTTPException: If session or file not found
     """
     base_path = _get_session_path(session_manager, session_id, category)
-    file_path = base_path / filename
+    file_path = _resolve_file_path(base_path, filename)
 
     if not file_path.exists():
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"File {filename} not found in {category}",
+            detail=f"File {Path(filename).name} not found in {category}",
         )
 
     # Determine media type
@@ -279,7 +350,7 @@ async def download_file(
 
     return FileResponse(
         path=file_path,
-        filename=filename,
+        filename=file_path.name,
         media_type=media_type,
     )
 
@@ -290,7 +361,7 @@ async def download_file(
     responses={404: {"model": ErrorResponse}},
 )
 async def delete_file(
-    session_id: str,
+    session_id: SessionIdPath,
     filename: str,
     category: str = Query("data", description="File category (data, artifacts, notebooks)"),
     session_manager: SessionManager = Depends(get_session_manager),
@@ -307,12 +378,12 @@ async def delete_file(
         HTTPException: If session or file not found
     """
     base_path = _get_session_path(session_manager, session_id, category)
-    file_path = base_path / filename
+    file_path = _resolve_file_path(base_path, filename)
 
     if not file_path.exists():
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"File {filename} not found in {category}",
+            detail=f"File {Path(filename).name} not found in {category}",
         )
 
     try:

@@ -1,4 +1,10 @@
-"""WebSocket endpoint for real-time chat."""
+"""WebSocket endpoint for real-time chat.
+
+Security note: When API key auth is enabled, the key is passed via query parameter
+(?api_key=xxx). Query strings may appear in server logs and proxy access logs.
+For sensitive deployments, consider an auth flow that does not expose the key in
+the URL (e.g. token in the first WebSocket message).
+"""
 
 from __future__ import annotations
 
@@ -15,6 +21,7 @@ from dsagent.server.deps import (
     ServerSettings,
 )
 from dsagent.server.manager import AgentConnectionManager
+from dsagent.server.validators import SessionIdPath
 from dsagent.server.models import (
     WebSocketEvent,
     WebSocketMessage,
@@ -55,7 +62,7 @@ async def verify_websocket_auth(
 @router.websocket("/ws/chat/{session_id}")
 async def chat_websocket(
     websocket: WebSocket,
-    session_id: str,
+    session_id: SessionIdPath,
     api_key: Optional[str] = Query(None),
     model: Optional[str] = Query(None),
     hitl_mode: Optional[str] = Query(None),
