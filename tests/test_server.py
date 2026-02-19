@@ -182,13 +182,14 @@ class TestAPIModels:
         assert event.data["code"] == "print('error')"
 
     def test_health_response(self):
-        """Test HealthResponse model."""
+        """Test HealthResponse model (version matches package)."""
+        from dsagent import __version__
         response = HealthResponse(
             status="ok",
-            version="0.6.1",
+            version=__version__,
         )
         assert response.status == "ok"
-        assert response.version == "0.6.1"
+        assert response.version == __version__
 
     def test_readiness_response(self):
         """Test ReadinessResponse model."""
