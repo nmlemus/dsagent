@@ -238,15 +238,21 @@ def validate_model_name(model: str) -> None:
             )
 
 
-def validate_configuration(model: str) -> None:
+def validate_configuration(model: Optional[str]) -> None:
     """Validate all configuration for running with the given model.
 
     Args:
-        model: The model name/identifier
+        model: The model name/identifier (must be non-empty; use get_default_model()
+               before calling if the value can be None)
 
     Raises:
         ConfigurationError: If any configuration is invalid
     """
+    if not model or not isinstance(model, str):
+        raise ConfigurationError(
+            "Model name must be set. Use DSAGENT_DEFAULT_MODEL or LLM_MODEL, "
+            "or pass --model. Run 'dsagent init' to configure."
+        )
     apply_llm_api_base(model)
     # validate_model_name(model)
     validate_api_key(model)

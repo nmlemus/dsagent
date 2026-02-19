@@ -1,0 +1,29 @@
+---
+description: Never commit directly to main; use issues, branch, fix, test, PR
+alwaysApply: true
+---
+
+# Workflow: Issues, Branch, PR
+
+**Never make changes or commits directly on `main`.**
+
+For every bug or feature:
+
+1. **Document in GitHub**  
+   Create or reference an issue in the project’s GitHub repo (bug report or feature request).
+
+2. **Create a branch**  
+   From `main` (or `develop` if the project uses Git Flow):  
+   `feature/*`, `bugfix/*`, `fix/*`, or `release/vX.Y.Z` as appropriate.
+
+3. **Implement and test**  
+   Do all edits and commits on that branch. Run the test suite (`uv run pytest`) and fix any failures.
+
+4. **Push and open a PR**  
+   Push the branch and open a Pull Request targeting `main` (or `develop`).  
+   Link the PR to the issue (e.g. “Fixes #123”).
+
+5. **Merge after review**  
+   Do not merge yourself unless the project allows it; wait for review/approval if required.
+
+For hotfixes or release bumps, use a dedicated branch (e.g. `fix/description` or `release/0.9.1`) and follow the same flow.

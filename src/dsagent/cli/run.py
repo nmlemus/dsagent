@@ -55,9 +55,12 @@ def run_task(args) -> int:
     """
     console = Console()
 
-    # Validate model configuration
+    # Resolve model (CLI flag, env, or fallback) before validation
+    from dsagent.config import get_default_model
+    effective_model = get_default_model(explicit=args.model)
+
     try:
-        validate_configuration(args.model)
+        validate_configuration(effective_model)
     except ConfigurationError as e:
         console.print(f"[red]Configuration Error: {e}[/red]")
         return 1
@@ -91,7 +94,7 @@ def run_task(args) -> int:
     if data_info:
         console.print(f"[cyan]Data:[/cyan] {data_info}")
     console.print(f"[cyan]Run Path:[/cyan] {context.run_path}")
-    console.print(f"[cyan]Model:[/cyan] {args.model}")
+    console.print(f"[cyan]Model:[/cyan] {effective_model}")
     if hitl_mode != HITLMode.NONE:
         console.print(f"[cyan]HITL Mode:[/cyan] {hitl_mode.value}")
     if mcp_config_path:
@@ -111,7 +114,7 @@ List files in 'data/' first to see what's available.
 
     # Create and run agent
     agent = PlannerAgent(
-        model=args.model,
+        model=effective_model,
         workspace=context.run_path,
         max_rounds=args.max_rounds,
         verbose=not args.quiet,
