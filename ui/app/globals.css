@@ -60,3 +60,124 @@ body {
   color: var(--muted);
   font-size: 0.875rem;
 }
+
+.canvas-body {
+  flex: 1;
+  overflow: auto;
+  padding: 1rem;
+}
+
+/* --- gate card --- */
+
+.gate {
+  border: 1px solid var(--line);
+  border-left: 3px solid #b45309;
+  border-radius: 8px;
+  background: #fff;
+  padding: 1rem;
+  max-width: 44rem;
+}
+
+.gate-head {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-bottom: 0.625rem;
+}
+
+.gate-badge {
+  background: #fef3c7;
+  color: #92400e;
+  font-size: 0.6875rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  padding: 0.125rem 0.4rem;
+  border-radius: 4px;
+}
+
+.gate-step {
+  font-family: ui-monospace, SFMono-Regular, monospace;
+  font-size: 0.875rem;
+  font-weight: 600;
+}
+
+.gate-persona {
+  color: var(--muted);
+  font-size: 0.8125rem;
+}
+
+.gate-message {
+  margin: 0 0 0.875rem;
+  font-size: 0.9375rem;
+  line-height: 1.5;
+}
+
+.gate-label {
+  font-size: 0.6875rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--muted);
+  margin-bottom: 0.25rem;
+}
+
+.gate-files {
+  margin: 0 0 0.875rem;
+  padding-left: 1.1rem;
+  font-family: ui-monospace, SFMono-Regular, monospace;
+  font-size: 0.8125rem;
+}
+
+.gate-files a {
+  color: #1d4ed8;
+}
+
+.gate-note {
+  width: 100%;
+  font: inherit;
+  font-size: 0.875rem;
+  padding: 0.5rem;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  resize: vertical;
+}
+
+.gate-actions {
+  display: flex;
+  gap: 0.5rem;
+  margin-top: 0.625rem;
+}
+
+.gate-actions button {
+  font: inherit;
+  font-size: 0.875rem;
+  font-weight: 600;
+  padding: 0.4rem 1rem;
+  border-radius: 6px;
+  border: 1px solid var(--line);
+  cursor: pointer;
+}
+
+.gate-actions button:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+.gate-approve {
+  background: #111827;
+  color: #fff;
+  border-color: #111827;
+}
+
+.gate-reject {
+  background: #fff;
+  color: #991b1b;
+}
+
+.gate-run {
+  margin-top: 0.75rem;
+  font-size: 0.6875rem;
+  color: var(--muted);
+  font-family: ui-monospace, SFMono-Regular, monospace;
+}

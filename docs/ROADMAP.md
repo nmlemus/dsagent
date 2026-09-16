@@ -32,7 +32,7 @@ Status legend: `[ ]` todo · `[~]` in progress · `[x]` done. One task per PR.
 - [x] Human gates become LangGraph `interrupt()`s answered from the UI (`ask_human` → `interrupt`), on the resume rules already built. `GateRequest` gives the hook the step context a gate card needs
 - [x] `ui/` Next.js + CopilotKit shell: chat left, empty canvas right, `/api/copilotkit` relaying to `dsagent serve` via `HttpAgent`. Verified from the browser against a real model (`docs/runs/ui-shell-001.png`)
 - [ ] Canvas contents: workspace files from `dsagent.file` (iframe for `.html`, markdown, PNG, table for `.csv/.parquet`)
-- [ ] Gate card (`request_approval` render) → approve/reject → runner resumes
+- [x] Gate card: `useInterrupt` in the right pane — step, persona, message, `produces` links to `/runs/{id}/files/{path}`, approve/reject with a note. Verified end to end from the browser (`docs/runs/ui-gate-001.png`)
 - [ ] Workflow progress render: DAG with step status from `dsagent.step` events
 - [ ] Run `eda-to-report` end to end from the browser; screenshot in `docs/runs/`
 - [ ] Then: A2UI panels for agent-composed views; MCP Apps later if needed
@@ -119,3 +119,17 @@ Status legend: `[ ]` todo · `[~]` in progress · `[x]` done. One task per PR.
   and appears nowhere in the chat, not even collapsed. So the unattributed persona `TOOL_CALL_*` are invisible
   by default rather than noisy, and PR 6/8 must *opt in* to rendering them (`useRenderTool` /
   `useDefaultRenderTool`) rather than suppress them. `dsagent.tool` stays the attributed source for the DAG panel.
+- 2026-09-16 — `emit_interrupt_outcome=True` is **not** needed: on the defaults the bridge already emits the
+  legacy `CUSTOM name=on_interrupt`, and CopilotKit's `useInterrupt` handles it. Setting it True adds the
+  standard `RUN_FINISHED` outcome *alongside* the legacy event rather than replacing it, so it is available
+  if the frontend later wants the typed AG-UI `Interrupt`. The catch that actually matters: **the legacy
+  event's `value` is a JSON string, not an object**, so the obvious predicate
+  `event.value?.reason === "dsagent.gate"` never matches and the card silently never renders while the run
+  waits at the gate forever. `ui/app/gate-card.tsx` parses it.
+- 2026-09-16 — Persona agents are compiled with `checkpointer=False`. A graph without its own checkpointer
+  *inherits the caller's* when it runs inside one, under a namespace derived from the call's position in the
+  task. `dsagent serve` re-executes `run_workflow` on resume and the runner skips finished steps, so step N+1's
+  persona lands in step N's slot and replays its finished conversation — returning in milliseconds with the
+  wrong persona's messages. Caught in the first real browser run: `analyze` failed its `produces` carrying
+  `profile`'s telemetry and marie's `skills_read`. Same positional-identity trap as the gate-sequence bug, one
+  level down; only reachable under `serve`, because the CLI has no checkpointer.

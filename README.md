@@ -74,7 +74,21 @@ cd ui && npm install && npm run dev     # http://localhost:3000
 ```
 
 `npm run build` is the UI's check for now; there are no frontend tests yet.
-`DSAGENT_URL` points the UI at a different agent.
+`DSAGENT_URL` points the UI at a different agent, and `NEXT_PUBLIC_DSAGENT_ORIGIN`
+is where the *browser* reaches it for artifact links.
+
+A run's workspace starts empty, and its directory is named after the tool call, so
+nothing can put a dataset in it beforehand. `--seed DIR` copies a directory into
+each new run's workspace:
+
+```bash
+mkdir -p /tmp/seed/data && cp tests/data/seattle-weather.csv /tmp/seed/data/
+dsagent serve --seed /tmp/seed     # data_path is then `data/seattle-weather.csv`
+```
+
+When a workflow reaches a human gate, the run pauses and a gate card appears in the
+right pane with the step, its persona, and links to what it produced. Approving
+resumes the run.
 
 Each browser tab is one `thread_id`, which is what a gate resumes into. The slice
 checkpoints in memory, so a `serve` restart loses in-flight gates; `run.json` still

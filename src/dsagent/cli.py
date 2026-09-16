@@ -285,6 +285,7 @@ def serve(
     model: str | None = typer.Option(None, "--model"),
     host: str = typer.Option("127.0.0.1", "--host"),
     port: int = typer.Option(8000, "--port"),
+    seed: Path | None = typer.Option(None, "--seed", help="directory copied into each new run's workspace"),
 ):
     """Serve the orchestrator over AG-UI for the web UI. Needs the `ui` extra."""
     try:
@@ -300,7 +301,7 @@ def serve(
 
     carts = load_cartridges(cartridge)
     env = make_env(carts[0].envs["default"], workspace)
-    application = build_app(carts, env, workspace, RUNS_DIR, model=model)
+    application = build_app(carts, env, workspace, RUNS_DIR, model=model, seed=seed)
     console.print(
         f"[bold]dsagent serve[/bold] {__version__} · cartridges: "
         f"{', '.join(c.name for c in carts)}\n"
