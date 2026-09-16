@@ -1,11 +1,11 @@
 """Runner tests with a fake agent: no model, no kernel, no Docker."""
 
 from pathlib import Path
+from typing import ClassVar
 
 import pytest
 
 from dsagent.cartridge import load_cartridge
-from dsagent.cartridge.models import EnvSpec
 from dsagent.envs.base import Env
 from dsagent.runner import GateDecision, RunState, WorkflowRunner
 
@@ -15,7 +15,7 @@ DS = Path(__file__).resolve().parents[1] / "cartridges" / "ds"
 class FakeAgent:
     """Writes every `produces` file it is asked for and records the prompt."""
 
-    calls: list[tuple[str, str]] = []
+    calls: ClassVar[list[tuple[str, str]]] = []
 
     def __init__(self, persona: str, workspace: Path, skip: set[str] | None = None):
         self.persona, self.workspace, self.skip = persona, workspace, skip or set()

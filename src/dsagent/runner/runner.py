@@ -17,10 +17,11 @@ from __future__ import annotations
 import json
 import subprocess
 import time
+from collections.abc import Callable
 from dataclasses import asdict, dataclass, field
 from enum import Enum
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
 from dsagent.cartridge.models import Cartridge, Step, Workflow
 from dsagent.envs.base import Env, make_env
@@ -50,7 +51,7 @@ class RunState:
     steps: dict[str, StepRecord] = field(default_factory=dict)
 
     @classmethod
-    def load(cls, run_dir: Path) -> "RunState":
+    def load(cls, run_dir: Path) -> RunState:
         d = json.loads((run_dir / "run.json").read_text())
         d["steps"] = {k: StepRecord(**v) for k, v in d["steps"].items()}
         return cls(**d)
@@ -202,7 +203,9 @@ class WorkflowRunner:
                 return True
             env = self.env_for(step.env or wf.env)
             script = wf.path / gate.check
-            r = subprocess.run(["python3", str(script)], cwd=self.workspace, capture_output=True, text=True)
+            r = subprocess.run(
+                ["python3", str(script)], cwd=self.workspace, capture_output=True, text=True, check=False
+            )
             if r.returncode != 0:
                 rec.status, rec.error = "failed", f"auto gate failed:\n{r.stdout}{r.stderr}"
                 state.status = "failed"
@@ -239,5 +242,6 @@ def _last_text(result: Any) -> str:
         if isinstance(content, list):
             return "".join(c.get("text", "") for c in content if isinstance(c, dict))
         return str(content)
-    except Exception:  # pragma: no cover
+    # Any message shape we do not recognise degrades to str().
+    except Exception:  # noqa: BLE001  # pragma: no cover
         return str(result)

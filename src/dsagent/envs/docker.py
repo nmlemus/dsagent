@@ -42,6 +42,7 @@ class DockerBackend(BaseSandbox):
                 capture_output=True,
                 text=True,
                 timeout=timeout or self.timeout,
+                check=False,
             )
             return ExecuteResponse(output=r.stdout + r.stderr, exit_code=r.returncode, truncated=False)
         except subprocess.TimeoutExpired:
@@ -66,7 +67,7 @@ class DockerBackend(BaseSandbox):
         return out
 
     def close(self) -> None:
-        subprocess.run(["docker", "rm", "-f", self._id], capture_output=True)
+        subprocess.run(["docker", "rm", "-f", self._id], capture_output=True, check=False)
 
 
 def ensure_image(spec: EnvSpec, cartridge_name: str) -> str:

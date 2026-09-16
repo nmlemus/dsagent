@@ -38,3 +38,8 @@ testpaths = ["tests"]
 
 [tool.ruff]
 line-length = 100
+
+[tool.ruff.lint.per-file-ignores]
+# typer declares CLI arguments as function calls in parameter defaults; that is
+# the framework's API, not a mutable-default bug.
+"src/dsagent/cli.py" = ["B008"]
