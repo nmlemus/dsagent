@@ -107,6 +107,13 @@ class EnvSpec(BaseModel):
     image: str | None = None
     """Docker: prebuilt image (alternative to `build`)."""
     gpu: Literal["required", "optional", "none"] = "none"
+    requirements: list[str] = Field(default_factory=list)
+    """Pip requirement strings this env must provide.
+
+    Kernel envs verify them when provisioned; docker envs install them in their
+    Dockerfile and the harness only validates the field. The harness never
+    interprets the strings — see `dsagent.requirements`.
+    """
 
 
 class Cartridge(BaseModel):

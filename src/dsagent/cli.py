@@ -9,6 +9,8 @@
 from __future__ import annotations
 
 import json
+import subprocess
+import sys
 import time
 from pathlib import Path
 
@@ -16,8 +18,9 @@ import typer
 from rich.console import Console
 from rich.table import Table
 
-from dsagent import __version__
+from dsagent import __version__, requirements
 from dsagent.cartridge import CartridgeError, load_cartridge, load_cartridges
+from dsagent.cartridge.models import Cartridge, EnvSpec
 from dsagent.runner import GateDecision, WorkflowRunner
 
 app = typer.Typer(help="DSAgent v2 — cartridge-driven Deep Agents harness.", no_args_is_help=True)
@@ -61,6 +64,61 @@ def cartridge_validate(path: Path = typer.Argument(DEFAULT_CARTRIDGE)):
     console.print(f"[green]✓[/green] cartridge [bold]{c.name}[/bold] v{c.version} is consistent")
     console.print(f"  personas: {len(c.personas)} · skills: {len(c.skills)} · workflows: {len(c.workflows)} · envs: {len(c.envs)}")
     console.print(f"  command skills regenerated: {', '.join(f'/{c.name}-{w}' for w in c.workflows)}")
+    for env, missing in _unsatisfied_envs(c).items():
+        console.print(f"  [yellow]![/yellow] env '{env}' missing: {', '.join(missing)}")
+    if _unsatisfied_envs(c):
+        console.print(f"  run [bold]dsagent cartridge install {path}[/bold] to install them")
+
+
+def _kernel_envs(c: Cartridge) -> list[EnvSpec]:
+    """Docker envs install their requirements in the Dockerfile, not here."""
+    return [e for e in c.envs.values() if e.kind == "kernel" and e.requirements]
+
+
+def _unsatisfied_envs(c: Cartridge) -> dict[str, list[str]]:
+    found = {e.name: requirements.missing(e.requirements) for e in _kernel_envs(c)}
+    return {name: missing for name, missing in found.items() if missing}
+
+
+@cartridge_app.command("install")
+def cartridge_install(
+    path: Path = typer.Argument(DEFAULT_CARTRIDGE),
+    dry_run: bool = typer.Option(False, "--dry-run", help="print the command, install nothing"),
+):
+    """Pip-install the requirements this cartridge's kernel envs declare.
+
+    Installs into the interpreter running dsagent, which is the one the kernel
+    env uses. Docker envs are skipped: their dependencies belong in the image.
+    """
+    c = load_cartridge(path)
+    kernel_envs = _kernel_envs(c)
+    skipped = [e.name for e in c.envs.values() if e.kind != "kernel" and e.requirements]
+    if skipped:
+        console.print(f"[dim]skipping docker env(s) {', '.join(skipped)} — deps live in the Dockerfile[/dim]")
+    if not kernel_envs:
+        console.print(f"cartridge [bold]{c.name}[/bold] declares no kernel-env requirements")
+        return
+
+    wanted: list[str] = []
+    for e in kernel_envs:
+        console.print(f"  env '{e.name}': {', '.join(e.requirements)}")
+        wanted.extend(r for r in e.requirements if r not in wanted)
+
+    argv = [sys.executable, "-m", "pip", "install", *wanted]
+    console.print(f"[dim]{' '.join(argv)}[/dim]")
+    if dry_run:
+        console.print("[dim]dry run — nothing installed[/dim]")
+        return
+    if subprocess.run(argv, check=False).returncode != 0:
+        console.print("[red]pip install failed[/red]")
+        raise typer.Exit(1)
+
+    still_missing = _unsatisfied_envs(c)
+    if still_missing:
+        for env, missing in still_missing.items():
+            console.print(f"[red]✗[/red] env '{env}' still missing: {', '.join(missing)}")
+        raise typer.Exit(1)
+    console.print(f"[green]✓[/green] {len(wanted)} requirement(s) satisfied for {c.name}")
 
 
 @cartridge_app.command("list")

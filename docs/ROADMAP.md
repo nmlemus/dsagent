@@ -17,6 +17,7 @@ Status legend: `[ ]` todo · `[~]` in progress · `[x]` done. One task per PR.
 ### M2.1 First real run of `eda-to-report`
 - [x] First commit and push as branch `v2` of `nmlemus/dsagent` (decided 2026-09-16; `main` stays v1 until 2.0 ships)
 - [x] Add `tests/integration/test_eda_to_report.py` (skipped unless `DSAGENT_INTEGRATION=1`) using a small public CSV
+- [x] Env requirements: `EnvSpec.requirements` declared in `cartridge.yaml`; kernel envs verify them when provisioned and fail fast with the exact `pip install`; `dsagent cartridge install <path>` installs them into the current interpreter; Docker envs keep theirs in the Dockerfile (harness validates the field only)
 - [ ] Run it with a real model; capture what the personas actually do in `docs/runs/eda-to-report-001.md` (prompt gaps, tool misuse, cost, wall time)
 - [ ] Fix step instructions / skills based on that run (expect 2–3 iterations)
 - [ ] Runner: stream step events (start/tool/end) instead of only `log()`, so `chat` and a future API can show progress
@@ -60,4 +61,5 @@ Status legend: `[ ]` todo · `[~]` in progress · `[x]` done. One task per PR.
 - 2026-09-16 — Cartridge = Claude Code plugin + `cartridge.yaml`. Workflows exposed three ways (persona request, `/ds-<wf>` command skill, orchestrator intent), all ending in `run_workflow`; a persona can only start workflows listed on it.
 - 2026-09-16 — Gates are runner-level (not LangGraph interrupts) so runs pause/resume from `run.json` without a checkpointer. Revisit when the API needs tool-level approvals.
 - 2026-09-16 — UI is part of the product, not M4. Transport = AG-UI via `ag-ui-langgraph` + CopilotKit middleware (no custom WebSocket protocol). Frontend = Next.js + CopilotKit, chat + canvas; canvas = workspace artifacts (iframe/markdown/table) + typed tool renders + A2UI declarative panels. open-canvas and deep-agents-ui are archived — do not fork. Details in `docs/ui.md`.
+- 2026-09-16 — Env dependencies are declared per env as `EnvSpec.requirements` (opaque pip strings the harness never interprets, so invariant 1 holds). Kernel envs verify at provisioning and fail fast with the exact `pip install`; `dsagent cartridge install <path>` installs them into the current interpreter; Docker envs keep theirs in the Dockerfile and the harness only validates the field. Verification is distribution metadata rather than importability, because import name ≠ distribution name and a mapping would put package knowledge in the harness.
 - 2026-09-16 — Skill scoping materialised on disk per persona (copy, not symlink) and mounted via `CompositeBackend` at `/skills/<persona>/`.

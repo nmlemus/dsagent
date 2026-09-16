@@ -17,6 +17,10 @@ from deepagents.backends.protocol import BackendProtocol
 from dsagent.cartridge.models import EnvSpec
 
 
+class EnvRequirementsError(RuntimeError):
+    """An env was provisioned without the packages its cartridge declared."""
+
+
 @dataclass
 class Env:
     spec: EnvSpec
