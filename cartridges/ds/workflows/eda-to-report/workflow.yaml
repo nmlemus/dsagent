@@ -3,7 +3,7 @@ description: Profile a dataset, run the data quality gate, and deliver a finding
 inputs:
   data_path:  { type: path }
   question:   { type: string, default: "What are the main patterns and quality issues in this dataset?" }
-  key_column: { type: string, required: false }
+  key_column: { type: string, required: false, default: "None" }
 env: default
 
 steps:
@@ -16,6 +16,7 @@ steps:
     persona: marie
     instructions: steps/02-data-gate.md
     needs: [profile]
+    sees: []                    # works from artifacts/data-profile.json, not from inputs
     produces: [artifacts/data-gate.md]
     gate:
       kind: human
@@ -31,4 +32,5 @@ steps:
     persona: marie
     instructions: steps/04-report.md
     needs: [analyze]
+    sees: []                    # works from the three artifacts on disk
     produces: [report/findings.md, report/findings.html]

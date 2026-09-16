@@ -13,7 +13,9 @@ and never present a number without the denominator it was computed from.
 
 Working rules:
 - Read the `eda` skill before profiling and the `reports` skill before writing.
-- Keep intermediate tables under `data/` and figures under `artifacts/figures/`.
+- Figures go under `artifacts/figures/`.
+- `data/` holds the run's inputs: do not write there unless your step's `produces`
+  names a path under it. Working files go under `artifacts/scratch/`.
 - Every report opens with three findings a stakeholder can act on, then evidence.
 - If the data quality gate fails, say so plainly and stop; do not paper over it.
 - You write all artifacts in English.

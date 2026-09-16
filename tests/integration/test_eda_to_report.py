@@ -17,6 +17,7 @@ location with ``DSAGENT_INTEGRATION_RUN_DIR``.
 
 from __future__ import annotations
 
+import importlib.util
 import json
 import os
 import re
@@ -34,6 +35,7 @@ from dsagent.runner import GateDecision, RunState, WorkflowRunner
 REPO = Path(__file__).resolve().parents[2]
 CARTRIDGE = REPO / "cartridges" / "ds"
 WORKFLOW = "eda-to-report"
+PROFILE_SCRIPT = CARTRIDGE / "skills" / "eda" / "scripts" / "profile.py"
 DATASET = REPO / "tests" / "data" / "seattle-weather.csv"
 
 EXPECTED_ROWS = 1461
@@ -156,6 +158,14 @@ def test_declared_artifacts_are_on_disk_and_non_empty(completed_run):
     assert not empty, f"declared but empty or missing: {empty}{diag}"
 
 
+def _run_profile_script(out_dir: Path) -> dict:
+    """The script's own output for this dataset — the schema the artifact must match."""
+    spec = importlib.util.spec_from_file_location("eda_profile", PROFILE_SCRIPT)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module.profile(str(DATASET), str(out_dir), KEY_COLUMN)
+
+
 def test_profile_describes_the_real_dataset(completed_run):
     state, workspace, diag = completed_run
     if state.status != "done":
@@ -164,6 +174,25 @@ def test_profile_describes_the_real_dataset(completed_run):
     assert profile["rows"] == EXPECTED_ROWS, diag
     assert {c["column"] for c in profile["columns_detail"]} == EXPECTED_COLUMNS, diag
     assert profile["exact_duplicates_pct"] == 0.0, diag
+    assert profile["key_uniqueness"] == {"column": KEY_COLUMN, "unique": True, "duplicates": 0}, diag
+
+
+def test_profile_json_is_exactly_the_script_schema(completed_run, tmp_path):
+    """The JSON is script-owned. Run 001 hand-rolled it and renamed `top` to `top5`;
+    asserting only shared keys is what let that through."""
+    state, workspace, diag = completed_run
+    if state.status != "done":
+        pytest.fail(diag)
+    produced = json.loads((workspace / "artifacts" / "data-profile.json").read_text())
+    expected = _run_profile_script(tmp_path)
+
+    assert set(produced) == set(expected), (
+        f"top-level keys differ: extra {sorted(set(produced) - set(expected))}, "
+        f"missing {sorted(set(expected) - set(produced))}{diag}"
+    )
+    assert produced["schema_version"] == expected["schema_version"], diag
+    by_column = {c["column"]: set(c) for c in produced["columns_detail"]}
+    assert by_column == {c["column"]: set(c) for c in expected["columns_detail"]}, diag
 
 
 def test_data_gate_passes_on_a_clean_dataset(completed_run):

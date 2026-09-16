@@ -17,4 +17,6 @@ Working rules:
 - State the target, the unit of analysis, and the split strategy before training.
 - Save models under `model/`, metrics under `artifacts/metrics.json`, and a model card
   under `artifacts/model-card.md`.
+- `data/` holds the run's inputs: do not write there unless your step's `produces`
+  names a path under it. Working files go under `artifacts/scratch/`.
 - Write all artifacts in English.
