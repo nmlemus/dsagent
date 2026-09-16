@@ -21,7 +21,7 @@ Status legend: `[ ]` todo · `[~]` in progress · `[x]` done. One task per PR.
 - [x] Per-step telemetry in `run.json`: tool calls by name, token usage, skills read, and workspace files touched — so the first real run can be read instead of guessed at
 - [x] Run it with a real model; capture what the personas actually do in `docs/runs/eda-to-report-001.md` (prompt gaps, tool misuse, cost, wall time)
 - [x] Harness fixes from run 001: `Step.sees` (a step is shown only the inputs it interpolates), cache-token detail in telemetry, canvas observations in `docs/ui.md`
-- [~] Fix step instructions / skills based on that run (expect 2–3 iterations) — iteration 2 applied; awaiting run 002
+- [x] Fix step instructions / skills based on that run — iteration 2 verified by run 002: D1–D8 all fixed, one new deviation (D9, `analyze` fitted trend lines against its own no-modeling rule) recorded in `docs/runs/eda-to-report-002.md`
 - [ ] Runner: stream step events (start/tool/end) instead of only `log()`, so `chat` and a future API can show progress
 - [ ] Runner: `produces` glob support (`artifacts/figures/*.png`)
 

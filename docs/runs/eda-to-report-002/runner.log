@@ -1,0 +1,6 @@
+[step] profile → marie (env=default)
+[env] provisioning 'default' (kernel)
+[step] data-gate → marie (env=default)
+[gate] human: Data gate report is in artifacts/data-gate.md. Proceed to analysis?
+[step] analyze → noel (env=default)
+[step] report → marie (env=default)
