@@ -1,0 +1,57 @@
+name: mmm-meridian
+description: End-to-end marketing mix model with Google Meridian, from raw media/sales data to a budget-optimization report.
+inputs:
+  data_source: { type: connector, options: [csv, parquet, bigquery] }
+  data_path:   { type: string }
+  kpi:         { type: string }
+  date_range:  { type: daterange, required: false }
+env: meridian
+
+steps:
+  - id: ingest
+    persona: pablo
+    env: default
+    instructions: steps/01-ingest.md
+    produces: [data/mmm_input.parquet, artifacts/data-profile.md]
+
+  - id: data-gate
+    persona: pablo
+    env: default
+    instructions: steps/02-data-gate.md
+    needs: [ingest]
+    produces: [artifacts/data-gate.md]
+    gate:
+      kind: human
+      prompt: "Data gate report ready (artifacts/data-gate.md). Approve to build the model spec?"
+
+  - id: model-spec
+    persona: ana
+    instructions: steps/03-model-spec.md
+    needs: [data-gate]
+    produces: [artifacts/model-spec.md, model/spec.py]
+    gate:
+      kind: human
+      prompt: "Review priors, adstock and saturation choices in artifacts/model-spec.md. Start the fit?"
+
+  - id: fit
+    persona: ana
+    instructions: steps/04-fit.md
+    needs: [model-spec]
+    produces: [model/posterior.pkl, artifacts/diagnostics.md, artifacts/diagnostics.json]
+    timeout: 4h
+    gate:
+      kind: auto
+      check: scripts/check_rhat.py
+
+  - id: optimize
+    persona: ana
+    instructions: steps/05-optimize.md
+    needs: [fit]
+    produces: [artifacts/budget-optimization.md]
+
+  - id: report
+    persona: marie
+    env: default
+    instructions: steps/06-report.md
+    needs: [optimize]
+    produces: [report/mmm-report.md, report/mmm-report.html]

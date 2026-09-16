@@ -1,0 +1,9 @@
+{
+  "name": "ds",
+  "displayName": "DSAgent — Data Science Team",
+  "version": "0.1.0",
+  "description": "Data science team cartridge: analysts, scientists and MMM specialists with gated workflows.",
+  "author": { "name": "Noel Moreno Lemus", "url": "https://github.com/nmlemus" },
+  "license": "MIT",
+  "keywords": ["data-science", "mmm", "meridian", "eda", "dsagent"]
+}

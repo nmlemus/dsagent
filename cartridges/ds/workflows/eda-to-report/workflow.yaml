@@ -1,0 +1,34 @@
+name: eda-to-report
+description: Profile a dataset, run the data quality gate, and deliver a findings report. Two personas, kernel env only — the harness smoke test.
+inputs:
+  data_path:  { type: path }
+  question:   { type: string, default: "What are the main patterns and quality issues in this dataset?" }
+  key_column: { type: string, required: false }
+env: default
+
+steps:
+  - id: profile
+    persona: marie
+    instructions: steps/01-profile.md
+    produces: [artifacts/data-profile.md, artifacts/data-profile.json]
+
+  - id: data-gate
+    persona: marie
+    instructions: steps/02-data-gate.md
+    needs: [profile]
+    produces: [artifacts/data-gate.md]
+    gate:
+      kind: human
+      prompt: "Data gate report is in artifacts/data-gate.md. Proceed to analysis?"
+
+  - id: analyze
+    persona: noel
+    instructions: steps/03-analyze.md
+    needs: [data-gate]
+    produces: [artifacts/findings.md]
+
+  - id: report
+    persona: marie
+    instructions: steps/04-report.md
+    needs: [analyze]
+    produces: [report/findings.md, report/findings.html]

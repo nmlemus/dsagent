@@ -1,0 +1,25 @@
+# DSAgent extension to the Claude Code plugin in this directory.
+# Claude Code ignores this file; DSAgent uses it for scoping, workflows and envs.
+name: ds
+version: 0.1.0
+description: Data science team — analysts, scientists and MMM specialists.
+
+personas:
+  marie: { role: "Data Analyst",      workflows: [eda-to-report] }
+  noel:  { role: "Data Scientist",    workflows: [eda-to-report] }
+  ana:   { role: "MMM Lead",          workflows: [mmm-meridian] }
+  pablo: { role: "MMM Data Engineer", workflows: [] }
+
+skills:
+  reports: { scope: all }                    # traversal — every persona
+  eda:     { scope: [marie, noel, pablo] }
+  mmm:     { scope: [ana, pablo] }
+  ml:      { scope: [noel] }
+
+workflows:
+  - workflows/eda-to-report
+  - workflows/mmm-meridian
+
+envs:
+  default:  { kind: kernel }
+  meridian: { kind: docker, build: envs/meridian, gpu: optional }
