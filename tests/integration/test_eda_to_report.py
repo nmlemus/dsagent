@@ -28,6 +28,7 @@ from pathlib import Path
 import pytest
 
 from dsagent.cartridge import load_cartridge
+from dsagent.host.build import DEFAULT_MODEL
 from dsagent.runner import GateDecision, RunState, WorkflowRunner
 
 REPO = Path(__file__).resolve().parents[2]
@@ -49,6 +50,16 @@ QUESTION = (
 # asks for. markdown: the `reports` skill's scripts/render_html.py.
 KERNEL_REQUIREMENTS = ("pandas", "matplotlib", "markdown")
 
+# Credential per model provider, so a missing key skips up front instead of
+# failing once the kernel is up and the first step is already running. Only the
+# providers this project ships extras for; an unknown provider is left alone
+# because we cannot know what it needs.
+PROVIDER_CREDENTIALS = {
+    "anthropic": "ANTHROPIC_API_KEY",
+    "openai": "OPENAI_API_KEY",
+    "google_genai": "GOOGLE_API_KEY",
+}
+
 GATE_LINE = re.compile(r"^GATE: (PASS|FAIL — .+)$")
 
 pytestmark = pytest.mark.skipif(
@@ -59,6 +70,15 @@ pytestmark = pytest.mark.skipif(
 
 def _missing_requirements() -> list[str]:
     return [m for m in KERNEL_REQUIREMENTS if importlib.util.find_spec(m) is None]
+
+
+def _missing_credential() -> tuple[str, str] | None:
+    """(provider, env var) when DSAGENT_MODEL's provider needs a key we lack."""
+    provider = DEFAULT_MODEL.split(":", 1)[0] if ":" in DEFAULT_MODEL else ""
+    var = PROVIDER_CREDENTIALS.get(provider)
+    if not var or os.environ.get(var):
+        return None
+    return provider, var
 
 
 def _run_dir() -> Path:
@@ -73,7 +93,7 @@ def _diagnostics(state: RunState, run_dir: Path, log: list[str]) -> str:
     )
     return (
         f"\nrun status: {state.status}\nrun dir: {run_dir}\n"
-        f"model: {os.environ.get('DSAGENT_MODEL', 'anthropic:claude-sonnet-4-6 (default)')}\n"
+        f"model: {DEFAULT_MODEL}\n"
         f"steps:\n{steps}\n"
         f"last log lines:\n" + "\n".join(f"  {line}" for line in log[-15:])
     )
@@ -88,6 +108,11 @@ def completed_run() -> tuple[RunState, Path, str]:
             f"kernel env lacks {', '.join(missing)}; the `eda` and `reports` skill "
             f"scripts need them: pip install {' '.join(missing)}"
         )
+
+    credential = _missing_credential()
+    if credential:
+        provider, var = credential
+        pytest.skip(f"DSAGENT_MODEL is {DEFAULT_MODEL!r}: set {var} for the {provider} provider")
 
     run_dir = _run_dir()
     log: list[str] = []
@@ -120,7 +145,9 @@ def test_run_completes_and_every_step_is_done(completed_run):
 
 
 def test_declared_artifacts_are_on_disk_and_non_empty(completed_run):
-    _, workspace, diag = completed_run
+    state, workspace, diag = completed_run
+    if state.status != "done":
+        pytest.fail(diag)
     workflow = load_cartridge(CARTRIDGE).workflows["eda-to-report"]
     declared = [p for step in workflow.steps for p in step.produces]
     empty = [p for p in declared if not (workspace / p).exists() or (workspace / p).stat().st_size == 0]
@@ -129,7 +156,9 @@ def test_declared_artifacts_are_on_disk_and_non_empty(completed_run):
 
 
 def test_profile_describes_the_real_dataset(completed_run):
-    _, workspace, diag = completed_run
+    state, workspace, diag = completed_run
+    if state.status != "done":
+        pytest.fail(diag)
     profile = json.loads((workspace / "artifacts" / "data-profile.json").read_text())
     assert profile["rows"] == EXPECTED_ROWS, diag
     assert {c["column"] for c in profile["columns_detail"]} == EXPECTED_COLUMNS, diag
@@ -137,7 +166,9 @@ def test_profile_describes_the_real_dataset(completed_run):
 
 
 def test_data_gate_passes_on_a_clean_dataset(completed_run):
-    _, workspace, diag = completed_run
+    state, workspace, diag = completed_run
+    if state.status != "done":
+        pytest.fail(diag)
     report = (workspace / "artifacts" / "data-gate.md").read_text(encoding="utf-8")
     last = [line.strip() for line in report.splitlines() if line.strip()][-1]
     assert GATE_LINE.match(last), f"gate report must end with the verdict line, got {last!r}{diag}"
@@ -146,7 +177,9 @@ def test_data_gate_passes_on_a_clean_dataset(completed_run):
 
 
 def test_analysis_produced_figures_for_the_report(completed_run):
-    _, workspace, diag = completed_run
+    state, workspace, diag = completed_run
+    if state.status != "done":
+        pytest.fail(diag)
     figures = sorted((workspace / "artifacts" / "figures").glob("*.png"))
     # Step 03 says "up to five figures"; a findings report with none defeats
     # the point of the `reports` skill's chart rules.
@@ -154,7 +187,9 @@ def test_analysis_produced_figures_for_the_report(completed_run):
 
 
 def test_report_is_self_contained_html(completed_run):
-    _, workspace, diag = completed_run
+    state, workspace, diag = completed_run
+    if state.status != "done":
+        pytest.fail(diag)
     html = (workspace / "report" / "findings.html").read_text(encoding="utf-8")
     assert html.lstrip().startswith("<!doctype html>"), diag
     # render_html.py inlines every referenced figure as a data URI.
