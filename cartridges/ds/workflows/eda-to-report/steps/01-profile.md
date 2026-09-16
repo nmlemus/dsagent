@@ -1,15 +1,15 @@
 Profile the dataset at `{data_path}` (path is workspace-relative; if it is absolute, copy it
 to `data/raw.<ext>` first). The declared key column is `{key_column}`.
 
-**Run the `eda` skill's `scripts/profile.py` — do not write your own profiler.** Use
-`execute`:
+**Run the `eda` skill's `scripts/profile.py` — do not write your own profiler.** Use the
+`run_skill_script` tool, never a path: skill files are not reachable from the shell.
 
 ```
-python /skills/marie/eda/scripts/profile.py {data_path} artifacts/
+run_skill_script(skill="eda", script="profile.py", argv=["{data_path}", "artifacts/"])
 ```
 
-When the key column named above is not `None`, append `--key-column {key_column}` to that
-command so the script records key uniqueness. When it is `None`, omit the flag.
+When the key column named above is not `None`, append `"--key-column", "{key_column}"` to
+`argv` so the script records key uniqueness. When it is `None`, leave them out.
 
 `artifacts/data-profile.json` belongs to the script. Its schema is the contract the next
 step reads and evaluates thresholds from, so do not hand-write it, do not add keys to it,

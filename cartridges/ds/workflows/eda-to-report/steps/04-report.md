@@ -11,10 +11,11 @@ steps". The three headline findings come from `findings.md` unchanged unless the
 contradict the gate.
 
 Write `report/findings.md`, then render it to `report/findings.html` with the `reports`
-skill script:
+skill's script, through the `run_skill_script` tool:
 
 ```
-python /skills/marie/reports/scripts/render_html.py report/findings.md report/findings.html
+run_skill_script(skill="reports", script="render_html.py",
+                 argv=["report/findings.md", "report/findings.html"])
 ```
 
 Check the HTML opens (file exists, non-empty, contains the three headline findings and the
