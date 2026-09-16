@@ -1,3 +1,4 @@
+from dsagent.runner.dispatch import dispatch_runner_event
 from dsagent.runner.runner import (
     FILE_EVENT,
     STEP_EVENT,
@@ -21,5 +22,6 @@ __all__ = [
     "RunnerEvent",
     "StepRecord",
     "WorkflowRunner",
+    "dispatch_runner_event",
     "visible_input_names",
 ]
