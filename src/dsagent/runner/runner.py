@@ -13,6 +13,15 @@ State lives in ``<run_dir>/run.json`` so a run survives restarts. Each step
 also records what it actually did — tool calls by name, token usage, skills
 read and workspace files touched — read back from the agent result and from the
 workspace itself, never from anything provider-specific.
+
+While a step runs, the runner also *streams* what it sees to an optional
+``on_event`` callback as `RunnerEvent`s: ``dsagent.step`` at each status change,
+``dsagent.tool`` as the persona calls tools, and ``dsagent.file`` as workspace
+files appear. Personas are executed with ``.stream()`` rather than ``.invoke()``
+precisely so those land while the step is still working — a step can run for
+minutes, and a consumer that only hears from it at the end is useless. Nothing
+here knows about AG-UI or HTTP; `docs/ui-slice.md` describes the adapter that
+turns these into `CUSTOM` events.
 """
 
 from __future__ import annotations
@@ -34,6 +43,29 @@ from dsagent.envs.base import Env, make_env
 class GateDecision(str, Enum):
     APPROVE = "approve"
     REJECT = "reject"
+
+
+STEP_EVENT = "dsagent.step"
+TOOL_EVENT = "dsagent.tool"
+FILE_EVENT = "dsagent.file"
+
+ARG_PREVIEW_CHARS = 120
+"""Per-argument cap in a `dsagent.tool` preview. A `write_file` call carries the
+whole file in its args; the event stream is for watching a run, not for shipping
+its contents."""
+
+
+@dataclass
+class RunnerEvent:
+    """Something a consumer can render while the run is still going.
+
+    `name` is one of the three `dsagent.*` names; `value` is a JSON-safe dict.
+    The schemas are in `docs/ui-slice.md` §3 and are the contract `dsagent serve`
+    will hand to AG-UI unchanged.
+    """
+
+    name: str
+    value: dict[str, Any]
 
 
 @dataclass
@@ -79,7 +111,15 @@ class RunState:
 
 
 AgentFactory = Callable[[Cartridge, str, Env, Path], Any]
-"""(cartridge, persona, env, workspace) -> object with .invoke({"messages": [...]})"""
+"""(cartridge, persona, env, workspace) -> a compiled agent.
+
+It must have ``.invoke({"messages": [...]})``. If it also has ``.stream()`` the
+runner uses that instead, with ``stream_mode=["updates", "values"]``: the
+``updates`` chunks are what make `dsagent.tool` and `dsagent.file` arrive while
+the step is still running, and the last ``values`` chunk is the same final state
+``.invoke()`` would have returned. An agent without ``.stream()`` still runs and
+still reports its files — just all at once, when the step ends.
+"""
 
 
 class WorkflowRunner:
@@ -91,6 +131,7 @@ class WorkflowRunner:
         agent_factory: AgentFactory | None = None,
         ask_human: Callable[[str], GateDecision] | None = None,
         log: Callable[[str], None] = print,
+        on_event: Callable[[RunnerEvent], None] | None = None,
     ) -> None:
         self.cartridge = cartridge
         self.run_dir = run_dir
@@ -99,7 +140,67 @@ class WorkflowRunner:
         self.agent_factory = agent_factory or self._default_factory
         self.ask_human = ask_human or (lambda prompt: GateDecision.APPROVE)
         self.log = log
+        self.on_event = on_event
+        self.run_id = run_dir.name
         self._envs: dict[str, Env] = {}
+        self._reported: dict[str, float] = {}
+        """Workspace mtimes already announced via `dsagent.file` for the running step."""
+
+    # ---- events -------------------------------------------------------------
+
+    def emit(self, name: str, value: dict[str, Any]) -> None:
+        """Hand one event to the consumer, if there is one.
+
+        A consumer that raises must not take the run down with it: a browser
+        disconnecting mid-run is not a reason to lose four minutes of work.
+        """
+        if self.on_event is None:
+            return
+        try:
+            self.on_event(RunnerEvent(name=name, value={"run_id": self.run_id, **value, "ts": time.time()}))
+        except Exception as e:  # noqa: BLE001 — a broken consumer is not a broken run
+            self.log(f"[event] consumer raised on {name}: {e}")
+
+    def _emit_step(self, wf: Workflow, step: Step, status: str, error: str = "") -> None:
+        order = [s.id for s in wf.ordered_steps()]
+        self.emit(
+            STEP_EVENT,
+            {
+                "workflow": wf.name,
+                "step": step.id,
+                "persona": step.persona,
+                "env": step.env or wf.env,
+                "index": order.index(step.id),
+                "total": len(order),
+                "status": status,
+                "needs": list(step.needs),
+                "produces": list(step.produces),
+                "error": error or None,
+            },
+        )
+
+    def _emit_files(self, step: Step, before: dict[str, float], after: dict[str, float]) -> None:
+        deliverables = set(step.produces)
+        for f in _changed_files(before, after):
+            path = f["path"]
+            try:
+                size = (self.workspace / path).stat().st_size
+            except OSError:
+                # Written and removed again between two snapshots. Report it —
+                # the step did touch it — but do not let a vanished scratch file
+                # raise inside the `finally` that is reporting a real failure.
+                size = 0
+            self.emit(
+                FILE_EVENT,
+                {
+                    "step": step.id,
+                    "path": path,
+                    "kind": "deliverable" if path in deliverables else "working",
+                    "change": "modified" if path in before else "created",
+                    "size": size,
+                    "mtime": f["mtime"],
+                },
+            )
 
     # ---- envs ---------------------------------------------------------------
 
@@ -190,17 +291,25 @@ class WorkflowRunner:
         env_name = step.env or wf.env
         rec.status, rec.started_at = "running", time.time()
         state.save(self.run_dir)
-        self.log(f"[step] {step.id} → {step.persona} (env={env_name})")
+        # The step event carries this and more; `log` keeps the lines it owns
+        # alone (env provisioning, gates, failures).
+        self._emit_step(wf, step, "started")
         if dry_run:
             rec.status, rec.finished_at, rec.output = "done", time.time(), "(dry run)"
             state.save(self.run_dir)
+            self._emit_step(wf, step, "done")
             return
         before: dict[str, float] | None = None
         try:
             env = self.env_for(env_name)
             agent = self.agent_factory(self.cartridge, step.persona, env, self.workspace)
             before = _snapshot(self.workspace)
-            result = agent.invoke({"messages": [{"role": "user", "content": self._task_message(wf, step, inputs)}]})
+            # Set here, not in `_drive`: everything between this line and the
+            # stream is a chance to raise, and the `finally` below diffs against
+            # `_reported`. A stale baseline would blame this step for the last
+            # step's files.
+            self._reported = dict(before)
+            result = self._drive(agent, self._task_message(wf, step, inputs), step)
             rec.output = _last_text(result)
             # Before the produces check: a step that failed is the one worth reading.
             _record_telemetry(rec, result)
@@ -213,9 +322,61 @@ class WorkflowRunner:
             self.log(f"[step] {step.id} FAILED: {e}")
         finally:
             if before is not None:
-                rec.files = _changed_files(before, _snapshot(self.workspace))
+                after = _snapshot(self.workspace)
+                rec.files = _changed_files(before, after)
+                # Anything the stream did not already report — everything, for an
+                # agent that cannot stream; usually nothing for one that can.
+                self._emit_files(step, self._reported, after)
             rec.finished_at = time.time()
             state.save(self.run_dir)
+            self._emit_step(wf, step, rec.status, rec.error)
+
+    def _drive(self, agent: Any, message: str, step: Step) -> Any:
+        """Run the persona, forwarding what it does as it does it.
+
+        Returns the same final state `.invoke()` would have: the last `values`
+        chunk. `self._reported` tracks the workspace as already-announced, so the
+        `finally` in `_run_step` can emit whatever the stream missed without
+        repeating what it did not.
+        """
+        payload = {"messages": [{"role": "user", "content": message}]}
+        if not hasattr(agent, "stream"):
+            return agent.invoke(payload)
+
+        result: Any = None
+        seen_calls: set[str] = set()
+        for mode, chunk in agent.stream(payload, stream_mode=["updates", "values"]):
+            if mode == "values":
+                result = chunk
+                continue
+            for node_update in (chunk or {}).values():
+                messages = node_update.get("messages") or [] if isinstance(node_update, dict) else []
+                self._emit_tools(step, messages, seen_calls)
+            after = _snapshot(self.workspace)
+            self._emit_files(step, self._reported, after)
+            self._reported = after
+        return result if result is not None else {"messages": []}
+
+    def _emit_tools(self, step: Step, messages: list[Any], seen_calls: set[str]) -> None:
+        """One `dsagent.tool` per call as it is requested, one more as it returns."""
+        for msg in messages:
+            for call in _attr(msg, "tool_calls") or []:
+                name, call_id = _attr(call, "name"), _attr(call, "id")
+                if not name or call_id in seen_calls:
+                    continue
+                seen_calls.add(call_id)
+                self.emit(TOOL_EVENT, {
+                    "step": step.id, "persona": step.persona, "tool": name,
+                    "tool_call_id": call_id, "phase": "started",
+                    "args_preview": _preview(_attr(call, "args") or {}),
+                })
+            call_id = _attr(msg, "tool_call_id")
+            if call_id:
+                self.emit(TOOL_EVENT, {
+                    "step": step.id, "persona": step.persona,
+                    "tool": _attr(msg, "name") or "", "tool_call_id": call_id,
+                    "phase": "finished", "args_preview": None,
+                })
 
     def _gate(self, wf: Workflow, step: Step, rec: StepRecord, state: RunState, dry_run: bool) -> bool:
         gate = step.gate
@@ -233,6 +394,7 @@ class WorkflowRunner:
                 rec.status, rec.error = "failed", f"auto gate failed:\n{r.stdout}{r.stderr}"
                 state.status = "failed"
                 state.save(self.run_dir)
+                self._emit_step(wf, step, "failed", rec.error)
                 return False
             return True
         prompt = gate.prompt or f"Step '{step.id}' finished. Continue?"
@@ -244,6 +406,7 @@ class WorkflowRunner:
             return True
         rec.status = state.status = "awaiting_gate"
         state.save(self.run_dir)
+        self._emit_step(wf, step, "awaiting_gate")
         self.log(f"[gate] run paused at '{step.id}'. Resume with --resume once approved.")
         return False
 
@@ -293,6 +456,24 @@ def _record_skill_reads(rec: StepRecord, tool: str, args: dict[str, Any]) -> Non
     for value in args.values():
         if isinstance(value, str) and SKILL_MANIFEST in value and value not in rec.skills_read:
             rec.skills_read.append(value)
+
+
+def _preview(args: dict[str, Any]) -> dict[str, Any]:
+    """A tool call's arguments, minus the payload.
+
+    `write_file` carries the whole file in `content`; a `dsagent.tool` event is
+    for telling a reader *that* a file is being written, not for shipping it.
+    Long strings are cut to `ARG_PREVIEW_CHARS` with the full length noted.
+    """
+    out: dict[str, Any] = {}
+    for k, v in args.items():
+        if isinstance(v, str) and len(v) > ARG_PREVIEW_CHARS:
+            out[k] = f"{v[:ARG_PREVIEW_CHARS]}… ({len(v)} chars)"
+        elif isinstance(v, str | int | float | bool | type(None)):
+            out[k] = v
+        else:
+            out[k] = f"<{type(v).__name__}>"
+    return out
 
 
 def _snapshot(workspace: Path) -> dict[str, float]:
