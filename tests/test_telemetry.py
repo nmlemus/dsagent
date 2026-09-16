@@ -21,11 +21,13 @@ WORKFLOW = "eda-to-report"
 FIRST_STEP = "profile"
 
 
-def ai(tool_calls=(), usage=None, as_object=False):
+def ai(tool_calls=(), usage=None, as_object=False, details=None):
     """One assistant message in the shape LangChain hands back."""
     msg = {"role": "assistant", "content": "ok", "tool_calls": list(tool_calls)}
     if usage is not None:
-        msg["usage_metadata"] = usage
+        msg["usage_metadata"] = dict(usage)
+        if details is not None:
+            msg["usage_metadata"]["input_token_details"] = details
     return SimpleNamespace(**msg) if as_object else msg
 
 
@@ -100,6 +102,35 @@ def test_usage_is_summed_over_messages_that_report_it(run_step):
         ai(),  # a message with no usage_metadata contributes nothing
     ]})
     assert rec.usage == {"input_tokens": 350, "output_tokens": 55}
+
+
+def test_input_token_details_are_summed_alongside_the_totals(run_step):
+    """Cache counts are sub-counts of input_tokens; without them cost is a ceiling."""
+    _, rec = run_step({"messages": [
+        ai(usage={"input_tokens": 1000, "output_tokens": 50},
+           details={"cache_read": 900, "cache_creation": 100}),
+        ai(usage={"input_tokens": 2000, "output_tokens": 80},
+           details={"cache_read": 1950, "cache_creation": 0}),
+    ]})
+    assert rec.usage == {
+        "input_tokens": 3000,
+        "output_tokens": 130,
+        "cache_read": 2850,
+        "cache_creation": 100,
+    }
+
+
+def test_unknown_detail_keys_are_carried_through(run_step):
+    """Whatever the provider reports is summed; the harness knows no key names."""
+    _, rec = run_step({"messages": [
+        ai(usage={"input_tokens": 10, "output_tokens": 1}, details={"ephemeral_1h_input": 7}),
+    ]})
+    assert rec.usage["ephemeral_1h_input"] == 7
+
+
+def test_usage_carries_no_detail_keys_when_none_are_reported(run_step):
+    _, rec = run_step({"messages": [ai(usage={"input_tokens": 5, "output_tokens": 2})]})
+    assert rec.usage == {"input_tokens": 5, "output_tokens": 2}
 
 
 def test_usage_is_zero_when_nothing_reports_it(run_step):

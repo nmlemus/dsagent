@@ -73,6 +73,32 @@ hooks exist today and remove months of glue; the cost is a heavier dependency an
 CopilotKit's opinionated runtime proxy. If that becomes a problem the AG-UI event
 stream is the stable seam — assistant-ui can consume the same backend.
 
+## Canvas observations from run 001
+
+The first real `eda-to-report` run (`docs/runs/eda-to-report-001.md`, 8 m 53 s, 13 files)
+is the only empirical evidence we have about what the canvas has to render. Four things
+it settled:
+
+1. **Nothing appears for the first 87 seconds** — 16 % of the run. A canvas fed only by
+   workspace files shows an empty panel for a minute and a half while the first persona
+   profiles the data. Step and tool events have to carry the UI until the first artifact
+   lands; files alone are not a progress indicator.
+2. **Figures arrive as a burst** — five PNGs in 41 seconds, one roughly every 10 s. This
+   is the one moment in the run where the canvas visibly streams, so images should be
+   appended as they appear rather than re-rendering a list on every event.
+3. **The last two files are 8 seconds apart and one supersedes the other**
+   (`report/findings.md`, then `report/findings.html`). A canvas that auto-focuses the
+   newest file would flash the markdown and then replace it. Focus on step completion,
+   not on every file event.
+4. **Two of the thirteen files were working files** the persona never meant to deliver.
+   The canvas needs a deliverable/working distinction or it will show a scratch CSV with
+   the same weight as the final report.
+
+For (4), **`produces` is the deliverable signal and the runner already has it** — it is
+the declared contract the runner verifies on disk at the end of every step. The
+`dsagent.step` `CUSTOM` event should carry the step's `produces` list, so the frontend can
+mark those paths as deliverables without a heuristic on file extensions or directories.
+
 ## Slice for M2.2 (thin vertical slice, before Docker/Meridian)
 
 1. `dsagent serve`: FastAPI app with `add_langgraph_fastapi_endpoint` for the

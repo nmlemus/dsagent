@@ -18,6 +18,7 @@ workspace itself, never from anything provider-specific.
 from __future__ import annotations
 
 import json
+import re
 import subprocess
 import time
 from collections.abc import Callable
@@ -46,7 +47,12 @@ class StepRecord:
     tool_calls: dict[str, int] = field(default_factory=dict)
     """How many times the step called each tool, by tool name."""
     usage: dict[str, int] = field(default_factory=dict)
-    """`input_tokens` / `output_tokens`, summed over the step's AI messages."""
+    """`input_tokens` / `output_tokens`, summed over the step's AI messages.
+
+    Whatever `input_token_details` the provider reports (`cache_read`,
+    `cache_creation`, ...) is summed alongside them, flattened, and present only
+    when reported. Those are sub-counts of `input_tokens`, not additions to it.
+    """
     skills_read: list[str] = field(default_factory=list)
     """Paths of SKILL.md files the step read, in first-read order."""
     files: list[dict[str, Any]] = field(default_factory=list)
@@ -167,11 +173,11 @@ class WorkflowRunner:
         return out
 
     def _task_message(self, wf: Workflow, step: Step, inputs: dict[str, Any]) -> str:
-        instructions = _fill(
-            (wf.path / step.instructions).read_text(encoding="utf-8"), inputs
-        )
+        raw = (wf.path / step.instructions).read_text(encoding="utf-8")
+        visible = _visible_inputs(step, raw, inputs)
+        instructions = _fill(raw, visible)
         produces = "\n".join(f"- `{p}`" for p in step.produces) or "- (nothing mandatory)"
-        inputs_md = "\n".join(f"- {k}: {v}" for k, v in inputs.items()) or "- (none)"
+        inputs_md = "\n".join(f"- {k}: {v}" for k, v in visible.items()) or "- (none)"
         return (
             f"# Workflow `{wf.name}` — step `{step.id}`\n\n"
             f"## Inputs\n{inputs_md}\n\n"
@@ -265,6 +271,7 @@ def _record_telemetry(rec: StepRecord, result: Any) -> None:
     carries neither simply contributes nothing.
     """
     usage = {"input_tokens": 0, "output_tokens": 0}
+    details: dict[str, int] = {}
     for msg in _messages(result):
         for call in _attr(msg, "tool_calls") or []:
             name = _attr(call, "name")
@@ -272,9 +279,12 @@ def _record_telemetry(rec: StepRecord, result: Any) -> None:
                 continue
             rec.tool_calls[name] = rec.tool_calls.get(name, 0) + 1
             _record_skill_reads(rec, name, _attr(call, "args") or {})
-        for field_name in usage:
-            usage[field_name] += int((_attr(msg, "usage_metadata") or {}).get(field_name, 0) or 0)
-    rec.usage = usage
+        meta = _attr(msg, "usage_metadata") or {}
+        for field_name in ("input_tokens", "output_tokens"):
+            usage[field_name] += int(meta.get(field_name, 0) or 0)
+        for name, count in (meta.get("input_token_details") or {}).items():
+            details[name] = details.get(name, 0) + int(count or 0)
+    rec.usage = {**usage, **details}
 
 
 def _record_skill_reads(rec: StepRecord, tool: str, args: dict[str, Any]) -> None:
@@ -299,6 +309,31 @@ def _snapshot(workspace: Path) -> dict[str, float]:
 def _changed_files(before: dict[str, float], after: dict[str, float]) -> list[dict[str, Any]]:
     changed = [{"path": p, "mtime": m} for p, m in after.items() if before.get(p) != m]
     return sorted(changed, key=lambda f: (f["mtime"], f["path"]))
+
+
+_PLACEHOLDER = re.compile(r"\{([A-Za-z_][A-Za-z0-9_]*)\}")
+
+
+def visible_input_names(step: Step, instructions: str) -> list[str]:
+    """Input names this step is allowed to see, without needing their values.
+
+    A step sees the inputs its own instruction text interpolates, unless it
+    declares `sees` explicitly. Showing every step every input is how a persona
+    learns the finish line and runs ahead of its own job.
+    """
+    if step.sees is not None:
+        return list(step.sees)
+    seen: list[str] = []
+    for name in _PLACEHOLDER.findall(instructions):
+        if name not in seen:
+            seen.append(name)
+    return seen
+
+
+def _visible_inputs(step: Step, instructions: str, inputs: dict[str, Any]) -> dict[str, Any]:
+    """The inputs this step is shown, in workflow declaration order."""
+    names = visible_input_names(step, instructions)
+    return {k: v for k, v in inputs.items() if k in names}
 
 
 class _Defaults(dict):
