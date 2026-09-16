@@ -15,6 +15,10 @@ Write `artifacts/findings.md` with exactly three sections, in this order:
 Nothing else. **"What the data cannot answer" and "Next steps" belong to the report
 step** — if you write them here, the report step has to merge two versions of them.
 
-No modeling in this step: descriptive and comparative analysis only.
+Descriptive and comparative analysis, with one exception: **if a finding claims a
+direction over time, fit the trend and report its slope with an interval.** The chart
+rules in the `reports` skill do not let you assert a trend you have not tested, and a
+trend you cannot test is not a headline finding — say "no clear trend" instead. Nothing
+beyond that: no predictive models, no causal claims, no train/test work.
 
 `data/` is read-only. Working files go under `artifacts/scratch/`.

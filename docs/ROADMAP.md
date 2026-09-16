@@ -14,7 +14,7 @@ Status legend: `[ ]` todo · `[~]` in progress · `[x]` done. One task per PR.
 
 ## M2 — Real runs + Docker + Meridian
 
-### M2.1 First real run of `eda-to-report`
+### M2.1 First real run of `eda-to-report` — DONE 2026-09-16
 - [x] First commit and push as branch `v2` of `nmlemus/dsagent` (decided 2026-09-16; `main` stays v1 until 2.0 ships)
 - [x] Add `tests/integration/test_eda_to_report.py` (skipped unless `DSAGENT_INTEGRATION=1`) using a small public CSV
 - [x] Env requirements: `EnvSpec.requirements` declared in `cartridge.yaml`; kernel envs verify them when provisioned and fail fast with the exact `pip install`; `dsagent cartridge install <path>` installs them into the current interpreter; Docker envs keep theirs in the Dockerfile (harness validates the field only)
@@ -22,12 +22,11 @@ Status legend: `[ ]` todo · `[~]` in progress · `[x]` done. One task per PR.
 - [x] Run it with a real model; capture what the personas actually do in `docs/runs/eda-to-report-001.md` (prompt gaps, tool misuse, cost, wall time)
 - [x] Harness fixes from run 001: `Step.sees` (a step is shown only the inputs it interpolates), cache-token detail in telemetry, canvas observations in `docs/ui.md`
 - [x] Fix step instructions / skills based on that run — iteration 2 verified by run 002: D1–D8 all fixed, one new deviation (D9, `analyze` fitted trend lines against its own no-modeling rule) recorded in `docs/runs/eda-to-report-002.md`
-- [ ] Runner: stream step events (start/tool/end) instead of only `log()`, so `chat` and a future API can show progress
-- [ ] Runner: `produces` glob support (`artifacts/figures/*.png`)
 
 ### M2.2 UI vertical slice (see docs/ui.md) — moved up: the product is the UI
+- [ ] **Runner: stream step events (start/tool/end) instead of only `log()`** — the foundation for both `chat` progress and the AG-UI bridge. Each event carries the step's `produces`, so a consumer can tell a deliverable from a working file (runs 001/002)
 - [ ] `dsagent serve`: FastAPI + `ag-ui-langgraph` (`LangGraphAGUIAgent`, `add_langgraph_fastapi_endpoint`) exposing the orchestrator; `CopilotKitMiddleware()` in the graph
-- [ ] Runner emits AG-UI `CUSTOM` events `dsagent.step` (start/end/status) and `dsagent.gate`; human gates become HITL interrupts answered from the UI
+- [ ] Map that event stream onto AG-UI `CUSTOM` events `dsagent.step` and `dsagent.gate`; human gates become HITL interrupts answered from the UI
 - [ ] `ui/` Next.js + CopilotKit: chat left, canvas right; canvas lists workspace files as the filesystem middleware streams them (iframe for `.html`, markdown, PNG, table for `.csv/.parquet`)
 - [ ] Gate card (`request_approval` render) → approve/reject → runner resumes
 - [ ] Workflow progress render: DAG with step status from `dsagent.step` events
@@ -55,6 +54,7 @@ Status legend: `[ ]` todo · `[~]` in progress · `[x]` done. One task per PR.
 - [ ] Multi-run management in the UI (list runs, open past run, resume paused run)
 - [ ] BigQuery connector via cartridge `.mcp.json` + LangChain MCP adapters
 - [ ] Run resumability across process restarts (already in `run.json`; needs API surface)
+- [ ] Runner: `produces` glob support (`artifacts/figures/*.png`)
 - [ ] chore: `dsagent --version` prints "Missing command" (eager callback vs `no_args_is_help`)
 
 ## Decisions log
@@ -65,6 +65,7 @@ Status legend: `[ ]` todo · `[~]` in progress · `[x]` done. One task per PR.
 - 2026-09-16 — Gates are runner-level (not LangGraph interrupts) so runs pause/resume from `run.json` without a checkpointer. Revisit when the API needs tool-level approvals.
 - 2026-09-16 — UI is part of the product, not M4. Transport = AG-UI via `ag-ui-langgraph` + CopilotKit middleware (no custom WebSocket protocol). Frontend = Next.js + CopilotKit, chat + canvas; canvas = workspace artifacts (iframe/markdown/table) + typed tool renders + A2UI declarative panels. open-canvas and deep-agents-ui are archived — do not fork. Details in `docs/ui.md`.
 - 2026-09-16 — `artifacts/data-profile.json` is owned by `eda/scripts/profile.py` and carries `schema_version`. The profiling persona must run the script and may only extend the markdown; the gate step evaluates thresholds from the JSON and never recomputes. Run 001 had the persona hand-roll the profiler and silently rename `top` to `top5`, which made the skill's script dead code with no contract. The integration test now compares the artifact's keys against the script's own output rather than against the keys both happen to share.
+- 2026-09-16 — Step 03 of `eda-to-report` may fit a trend when a finding depends on one, and must report the slope with an interval. Run 002 showed the previous "no modeling" line contradicting the chart rule added in the same iteration — a title may not assert an untested trend, which cannot be satisfied without testing it. Resolved in favour of testing: a trend that cannot be tested is not a headline finding. Predictive and causal modelling stay out of the step.
 - 2026-09-16 — A skill's scripts are run with the `run_skill_script(skill, script, argv)` tool, never by path. `/skills/<persona>/` is a virtual mount for the file tools only; `execute` runs in the env, where it does not resolve, so a hardcoded path fails. The tool resolves inside the persona's materialized skill directory (enforcing the matrix) and runs with `Env.python`, which for the kernel env is DSAgent's interpreter rather than PATH's `python3` — that is where the cartridge's requirements are installed.
 - 2026-09-16 — A step is shown only the workflow inputs its own instructions interpolate (`Step.sees` overrides). Run 001 showed the opposite default teaches a persona the finish line: the profiling step read `question` and answered it, and the gate step then re-derived a verdict already on disk. Naming an input in prose does not make it visible — `dsagent cartridge validate` reports steps that end up seeing nothing.
 - 2026-09-16 — Default model is `anthropic:claude-sonnet-5` (was `claude-sonnet-4-6`). Newer generation and cheaper ($2/$10 vs $3/$15 per MTok — run 001 would have cost $1.72 instead of $2.57). Opus 4.8 was rejected for the default: 2.5× the cost, and it runs *without* thinking unless the caller passes `thinking={"type": "adaptive"}`, which the harness deliberately does not do (invariant 6 — Deep Agents owns the loop). Sonnet 5 runs adaptive thinking when the parameter is omitted. **A stronger model is opted into per persona via frontmatter `model:` (or per session with `dsagent chat --model`), never made the harness default** — the default carries every step of every workflow, so it is chosen for cost and for behaving well unconfigured.
