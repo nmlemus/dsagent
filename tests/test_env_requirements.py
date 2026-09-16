@@ -116,13 +116,14 @@ def test_kernel_env_provisions_when_requirements_are_satisfied(tmp_path):
 # --- install command ---------------------------------------------------------
 
 
-def test_cartridge_install_dry_run_prints_the_command_without_installing():
+def test_cartridge_install_dry_run_prints_a_pasteable_command():
     result = CliRunner().invoke(app, ["cartridge", "install", str(DS), "--dry-run"])
     assert result.exit_code == 0, result.output
-    assert "-m pip install" in result.output
-    assert "pandas>=2" in result.output
+    printed = result.output.replace("\n", " ")  # rich soft-wraps the line
+    assert "-m pip install" in printed
+    assert "'pandas>=2'" in printed  # unquoted, a paste would redirect into a file named 2
     # meridian declares no requirements of its own, so there is nothing to skip
-    assert "meridian" not in result.output
+    assert "meridian" not in printed
 
 
 def _cartridge(**envs: EnvSpec) -> Cartridge:

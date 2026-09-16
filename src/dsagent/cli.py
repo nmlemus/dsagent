@@ -105,7 +105,8 @@ def cartridge_install(
         wanted.extend(r for r in e.requirements if r not in wanted)
 
     argv = [sys.executable, "-m", "pip", "install", *wanted]
-    console.print(f"[dim]{' '.join(argv)}[/dim]")
+    # printed quoted so it survives a copy-paste: a bare >= is a shell redirect
+    console.print(f"[dim]{requirements.pip_install_command(wanted)}[/dim]")
     if dry_run:
         console.print("[dim]dry run — nothing installed[/dim]")
         return
