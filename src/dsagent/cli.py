@@ -28,6 +28,7 @@ from dsagent.runner import (
     GateDecision,
     RunnerEvent,
     WorkflowRunner,
+    dispatch_runner_event,
     visible_input_names,
 )
 
@@ -291,9 +292,15 @@ def chat(
             return f"unknown workflow {name}; use list_workflows"
         run_dir = RUNS_DIR / workflow_run_id(name, tool_call_id)
         resume = (run_dir / "run.json").exists()
+        def on_event(e: RunnerEvent) -> None:
+            # Two consumers: the terminal running `dsagent chat`, and whatever is
+            # attached to the graph's event stream — a browser, once PR 4 lands.
+            _print_event(e)
+            dispatch_runner_event(e)
+
         state = WorkflowRunner(by_wf[name], run_dir, ask_human=_ask,
                                log=lambda m: console.print(m, style="dim", markup=False),
-                               on_event=_print_event).run(name, inputs or {}, resume=resume)
+                               on_event=on_event).run(name, inputs or {}, resume=resume)
         # `status` is the work and no longer says "paused", so report the gate
         # decisions alongside it — otherwise a paused run reads as all-done.
         return json.dumps({
