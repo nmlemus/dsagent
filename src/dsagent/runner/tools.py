@@ -10,6 +10,7 @@ it already did.
 from __future__ import annotations
 
 import json
+import shutil
 import time
 from collections.abc import Callable
 from pathlib import Path
@@ -50,8 +51,18 @@ def workflow_tools(
     ask_human: Callable[[GateRequest], GateDecision],
     on_event: Callable[[RunnerEvent], None] | None = None,
     log: Callable[[str], None] = lambda m: None,
+    seed: Path | None = None,
 ) -> list[Any]:
-    """`[list_workflows, run_workflow]`, bound to one front end's gate and events."""
+    """`[list_workflows, run_workflow]`, bound to one front end's gate and events.
+
+    `seed` is a directory copied into a *new* run's workspace before the first
+    step. It exists because a run directory is named after the tool call, so
+    nothing can put a dataset in it beforehand — the CLI can seed by hand
+    (`--run-id`), a browser cannot. The copy is structural: the harness knows
+    nothing about what is in there, so `<seed>/data/x.csv` lands at
+    `<workspace>/data/x.csv` and the workflow's `data_path` reads `data/x.csv`.
+    A resumed run is never re-seeded; its workspace is already the run's.
+    """
     by_wf = {w: c for c in cartridges for w in c.workflows}
 
     @tool
@@ -73,9 +84,16 @@ def workflow_tools(
         if name not in by_wf:
             return f"unknown workflow {name}; use list_workflows"
         run_dir = runs_dir / workflow_run_id(name, tool_call_id)
-        state = WorkflowRunner(
+        resume = (run_dir / "run.json").exists()
+        runner = WorkflowRunner(
             by_wf[name], run_dir, ask_human=ask_human, log=log, on_event=on_event,
-        ).run(name, inputs or {}, resume=(run_dir / "run.json").exists())
+        )
+        if seed is not None and not resume:
+            if not seed.is_dir():
+                return f"seed directory {seed} does not exist"
+            shutil.copytree(seed, runner.workspace, dirs_exist_ok=True)
+            log(f"[seed] copied {seed} into {runner.workspace}")
+        state = runner.run(name, inputs or {}, resume=resume)
         # `status` is the work and no longer says "paused", so report the gate
         # decisions alongside it — otherwise a paused run reads as all-done.
         return json.dumps({

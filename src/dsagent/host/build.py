@@ -147,6 +147,17 @@ def build_persona_agent(
         skills=[f"{SKILLS_MOUNT}{persona}/"],
         backend=_backend(env, skills_root),
         name=persona,
+        # A persona is a step's worker, not a durable conversation: `run.json`
+        # is what a run resumes from. `False` — not `None` — because a graph
+        # without its own checkpointer *inherits the caller's* when it runs
+        # inside one, and the inherited namespace is derived from the call's
+        # position in the task. Under `dsagent serve` the tool re-executes on
+        # resume and the runner skips finished steps, so the next persona lands
+        # in the slot the previous one occupied and silently replays its
+        # finished conversation — returning in milliseconds with the wrong
+        # persona's messages. Observed as `analyze` failing its `produces` with
+        # `profile`'s telemetry and marie's `skills_read`.
+        checkpointer=False,
     )
 
 

@@ -107,6 +107,7 @@ def build_app(
     *,
     model: str | None = None,
     path: str = "/agent",
+    seed: Path | None = None,
 ):
     """The FastAPI app: the orchestrator at `path`, the run files under `/runs`."""
     from ag_ui_langgraph import add_langgraph_fastapi_endpoint
@@ -120,7 +121,7 @@ def build_app(
         cartridges, env, workspace, model=model,
         workflow_tools=workflow_tools(
             cartridges, runs_dir,
-            ask_human=interrupt_gate, on_event=dispatch_runner_event,
+            ask_human=interrupt_gate, on_event=dispatch_runner_event, seed=seed,
         ),
         middleware=[CopilotKitMiddleware()],
         # Interrupts need a checkpointer to resume from. In-memory for the slice:

@@ -301,3 +301,81 @@ def test_the_gate_request_carries_what_a_gate_card_has_to_show(mmm):
     assert req.persona == "pablo"
     assert req.produces == ["artifacts/data-gate.md"]
     assert "Data gate report ready" in req.prompt
+
+
+def test_a_persona_never_inherits_the_callers_checkpointer(tmp_path):
+    """A persona graph must not resume another persona's conversation.
+
+    A graph compiled without its own checkpointer inherits the caller's when it
+    runs inside one, under a namespace derived from the call's *position* in the
+    task. `dsagent serve` re-executes `run_workflow` on resume and the runner
+    skips finished steps, so step N+1's persona lands in step N's slot — and
+    replays step N's finished conversation instead of running.
+
+    Reproduced live: `analyze` failed its `produces` in milliseconds carrying
+    `profile`'s telemetry and marie's `skills_read`. This pins the fix at the
+    only place that can hold it.
+    """
+    from typing import TypedDict
+
+    from langchain_core.language_models.fake_chat_models import GenericFakeChatModel
+    from langchain_core.messages import AIMessage
+    from langchain_core.tools import tool
+    from langgraph.checkpoint.memory import InMemorySaver
+    from langgraph.graph import END, START, StateGraph
+    from langgraph.prebuilt import ToolNode
+    from langgraph.types import Command, interrupt
+
+    from dsagent.envs.base import Env as _Env
+    from dsagent.host.build import build_persona_agent
+
+    class ToolCapableFake(GenericFakeChatModel):
+        def bind_tools(self, tools, **kwargs):
+            return self
+
+    cart = load_cartridge(DS)
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    env = _Env(spec=cart.envs["default"], workspace=workspace, backend=FakeBackend())
+
+    def agent_for(persona: str):
+        replies = iter([AIMessage(content=f"I am {persona}")])
+        return build_persona_agent(
+            cart, persona, env, workspace, model=ToolCapableFake(messages=replies)
+        )
+
+    class S(TypedDict):
+        messages: list
+
+    done = {"marie": False}
+    said: list[tuple[str, str]] = []
+
+    @tool
+    def run_workflow() -> str:
+        """Two persona steps with a gate between them."""
+        if not done["marie"]:
+            out = agent_for("marie").invoke({"messages": [{"role": "user", "content": "1"}]})
+            said.append(("marie", out["messages"][-1].content))
+            done["marie"] = True
+        interrupt({"reason": "dsagent.gate"})
+        out = agent_for("noel").invoke({"messages": [{"role": "user", "content": "2"}]})
+        said.append(("noel", out["messages"][-1].content))
+        return "done"
+
+    def plan(state: S):
+        return {"messages": [AIMessage(content="", tool_calls=[
+            {"name": "run_workflow", "args": {}, "id": "c1"}])]}
+
+    g = StateGraph(S)
+    g.add_node("plan", plan)
+    g.add_node("tools", ToolNode([run_workflow]))
+    g.add_edge(START, "plan")
+    g.add_edge("plan", "tools")
+    g.add_edge("tools", END)
+    graph = g.compile(checkpointer=InMemorySaver())
+    cfg = {"configurable": {"thread_id": "t1"}}
+
+    graph.invoke({"messages": []}, config=cfg)
+    graph.invoke(Command(resume={"decision": "approve"}), config=cfg)
+
+    assert said == [("marie", "I am marie"), ("noel", "I am noel")], said
