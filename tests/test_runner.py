@@ -87,13 +87,16 @@ def test_human_gate_pauses_and_resumes(runner_factory, tmp_path):
     r = runner_factory(ask=lambda p: next(decisions))
     state = r.run("eda-to-report", {"data_path": "x.csv"})
     assert state.status == "awaiting_gate"
-    assert state.steps["data-gate"].status == "awaiting_gate"
+    # The step's *work* finished; it is the run that is waiting on the decision.
+    assert state.steps["data-gate"].status == "done"
+    assert state.steps["data-gate"].gate.decision == "reject"
     assert [c[0] for c in FakeAgent.calls] == ["marie", "marie"]
 
     state = r.run("eda-to-report", {"data_path": "x.csv"}, resume=True)
     assert state.status == "done"
     # profile and data-gate were not re-run
     assert [c[0] for c in FakeAgent.calls] == ["marie", "marie", "noel", "marie"]
+    assert state.steps["data-gate"].gate.decision == "approve"
 
 
 def test_dry_run_touches_no_agent(runner_factory):

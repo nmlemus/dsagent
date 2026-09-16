@@ -40,6 +40,28 @@ DEFAULT_CARTRIDGE = Path("cartridges/ds")
 RUNS_DIR = Path(".dsagent/runs")
 
 
+def workflow_run_id(workflow: str, tool_call_id: str = "") -> str:
+    """The run directory name for one `run_workflow` invocation.
+
+    Derived from the tool call, never from the clock. Under `dsagent serve` the
+    gate is a LangGraph `interrupt()`, and resuming re-executes `run_workflow`
+    from the top: a timestamped id would mint a fresh, empty run directory on
+    every re-entry, so `resume` would find no `run.json`, every step would read
+    as `pending`, and the run would redo — and re-pay for — work it had already
+    done. `tool_call_id` is stable across the original call and the re-entry,
+    because it belongs to the `AIMessage` the checkpoint replays (verified
+    against a `create_deep_agent` graph).
+
+    The timestamp remains the fallback for a caller that reaches this without a
+    tool call — a direct programmatic call, where there is nothing to re-enter.
+    `docs/ui-slice.md` §2 names `thread_id` plus a counter in graph state as the
+    other option; it is strictly more machinery for the same guarantee, so it
+    stays unbuilt until something needs it.
+    """
+    suffix = tool_call_id or time.strftime("%Y%m%d-%H%M%S")
+    return f"{workflow}-{suffix}"
+
+
 def _parse_inputs(pairs: list[str]) -> dict[str, str]:
     out = {}
     for p in pairs:
@@ -242,7 +264,9 @@ def chat(
     model: str | None = typer.Option(None, "--model"),
 ):
     """Interactive session with the orchestrator (personas as subagents)."""
-    from langchain_core.tools import tool
+    from typing import Annotated
+
+    from langchain_core.tools import InjectedToolCallId, tool
 
     from dsagent.envs import make_env
     from dsagent.host import build_orchestrator
@@ -257,16 +281,26 @@ def chat(
         return json.dumps({w: c.workflows[w].description for w, c in by_wf.items()}, indent=2)
 
     @tool
-    def run_workflow(name: str, inputs: dict | None = None) -> str:
+    def run_workflow(
+        name: str,
+        inputs: dict | None = None,
+        tool_call_id: Annotated[str, InjectedToolCallId] = "",
+    ) -> str:
         """Run a cartridge workflow end to end. `inputs` is a dict matching the workflow's declared inputs."""
         if name not in by_wf:
             return f"unknown workflow {name}; use list_workflows"
-        run_dir = RUNS_DIR / f"{name}-{time.strftime('%Y%m%d-%H%M%S')}"
+        run_dir = RUNS_DIR / workflow_run_id(name, tool_call_id)
+        resume = (run_dir / "run.json").exists()
         state = WorkflowRunner(by_wf[name], run_dir, ask_human=_ask,
                                log=lambda m: console.print(m, style="dim", markup=False),
-                               on_event=_print_event).run(name, inputs or {})
-        return json.dumps({"run_dir": str(run_dir), "status": state.status,
-                           "steps": {k: v.status for k, v in state.steps.items()}})
+                               on_event=_print_event).run(name, inputs or {}, resume=resume)
+        # `status` is the work and no longer says "paused", so report the gate
+        # decisions alongside it — otherwise a paused run reads as all-done.
+        return json.dumps({
+            "run_dir": str(run_dir), "status": state.status,
+            "steps": {k: v.status for k, v in state.steps.items()},
+            "gates": {k: v.gate.decision for k, v in state.steps.items() if v.gate},
+        })
 
     agent = build_orchestrator(carts, env, workspace, model=model, workflow_tools=[list_workflows, run_workflow])
     console.print(f"[bold]dsagent[/bold] {__version__} · cartridges: {', '.join(c.name for c in carts)} · Ctrl-C to quit")

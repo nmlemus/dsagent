@@ -1,0 +1,279 @@
+"""Gate decisions survive re-entry, and re-entry lands in the same run.
+
+Both properties exist for `dsagent serve`, where `run_workflow` is a tool inside
+a LangGraph graph: on resume LangGraph re-executes the whole tool from the top
+and matches resume values *positionally*. Two consequences, and this file pins
+both (`docs/ui-slice.md` §2):
+
+* the sequence of gate calls must not change between entries, or gate *n+1*
+  receives gate *n*'s answer;
+* the run id must not change between entries, or the re-entry opens an empty run
+  and re-pays for every completed step.
+
+`mmm-meridian` is the fixture because it is the cartridge's only workflow with
+two human gates — `data-gate` after step 2 and `model-spec` after step 3.
+"""
+
+import json
+from pathlib import Path
+from typing import ClassVar
+
+import pytest
+
+from dsagent.cartridge import load_cartridge
+from dsagent.envs.base import Env
+from dsagent.runner import GateDecision, RunState, StepRecord, WorkflowRunner
+
+DS = Path(__file__).resolve().parents[1] / "cartridges" / "ds"
+MMM_INPUTS = {"data_source": "csv", "data_path": "d.csv", "kpi": "units"}
+
+
+class FakeAgent:
+    """Writes every `produces` file it is asked for and records the call."""
+
+    calls: ClassVar[list[str]] = []
+
+    def __init__(self, persona: str, workspace: Path):
+        self.persona, self.workspace = persona, workspace
+
+    def invoke(self, payload):
+        prompt = payload["messages"][0]["content"]
+        FakeAgent.calls.append(prompt.split("step `")[1].split("`")[0])
+        for line in prompt.splitlines():
+            if line.startswith("- `") and line.endswith("`"):
+                rel = line[3:-1]
+                p = self.workspace / rel
+                p.parent.mkdir(parents=True, exist_ok=True)
+                # `fit`'s auto gate reads this file for real, so write something
+                # it accepts rather than a placeholder it would reject.
+                p.write_text(
+                    json.dumps({"rhat_max": 1.01, "divergences": 0, "params": {"roi_m[0]": 1.0}})
+                    if rel.endswith("diagnostics.json")
+                    else f"written by {self.persona}"
+                )
+        return {"messages": [{"role": "assistant", "content": "done"}]}
+
+
+class FakeBackend:
+    def close(self):
+        pass
+
+
+class Answers:
+    """A scripted human, recording which prompt got which answer."""
+
+    def __init__(self, *decisions: GateDecision):
+        self.left = list(decisions)
+        self.asked: list[str] = []
+
+    def __call__(self, prompt: str) -> GateDecision:
+        self.asked.append(prompt)
+        return self.left.pop(0) if self.left else GateDecision.APPROVE
+
+
+@pytest.fixture
+def mmm(tmp_path, monkeypatch):
+    FakeAgent.calls = []
+    monkeypatch.setattr(
+        "dsagent.runner.runner.make_env",
+        lambda spec, ws: Env(spec=spec, workspace=ws, backend=FakeBackend()),
+    )
+
+    def make(answers):
+        return WorkflowRunner(
+            load_cartridge(DS), tmp_path / "run",
+            agent_factory=lambda cart, persona, env, ws: FakeAgent(persona, ws),
+            ask_human=answers, log=lambda m: None,
+        )
+
+    return make
+
+
+def _gate_of(state: RunState, step: str):
+    return state.steps[step].gate
+
+
+def test_a_rejected_gate_pauses_the_run_and_is_recorded(mmm):
+    a = Answers(GateDecision.REJECT)
+    state = mmm(a).run("mmm-meridian", MMM_INPUTS)
+    assert state.status == "awaiting_gate"
+    assert _gate_of(state, "data-gate").decision == "reject"
+    assert _gate_of(state, "model-spec") is None
+    assert FakeAgent.calls == ["ingest", "data-gate"]
+
+
+def test_re_entry_skips_done_work_but_still_asks_the_decided_gate(mmm):
+    """The whole point: the gate call happens again, the step's work does not."""
+    mmm(Answers(GateDecision.REJECT)).run("mmm-meridian", MMM_INPUTS)
+    assert FakeAgent.calls == ["ingest", "data-gate"]
+
+    a = Answers(GateDecision.APPROVE, GateDecision.REJECT)
+    state = mmm(a).run("mmm-meridian", MMM_INPUTS, resume=True)
+
+    # `ingest` and `data-gate` did their work once, in the first entry.
+    assert FakeAgent.calls == ["ingest", "data-gate", "model-spec"]
+    # Gate 1 was asked again — that is what keeps the interrupt sequence stable.
+    assert len(a.asked) == 2
+    assert "Data gate report ready" in a.asked[0]
+    assert "Review priors" in a.asked[1]
+    assert state.status == "awaiting_gate"
+
+
+def test_the_second_gate_records_its_own_answer_not_the_first_gates(mmm):
+    """The bug this PR exists for: positional resume feeding gate 2 gate 1's answer."""
+    mmm(Answers(GateDecision.REJECT)).run("mmm-meridian", MMM_INPUTS)
+    state = mmm(Answers(GateDecision.APPROVE, GateDecision.REJECT)).run(
+        "mmm-meridian", MMM_INPUTS, resume=True
+    )
+    assert _gate_of(state, "data-gate").decision == "approve"
+    assert _gate_of(state, "model-spec").decision == "reject"
+
+
+def test_an_approved_gate_is_asked_again_but_its_answer_is_discarded(mmm):
+    """A decided gate keeps its decision no matter what the re-entry answers."""
+    mmm(Answers(GateDecision.REJECT)).run("mmm-meridian", MMM_INPUTS)
+    mmm(Answers(GateDecision.APPROVE, GateDecision.REJECT)).run(
+        "mmm-meridian", MMM_INPUTS, resume=True
+    )
+    # Gate 1 is approved. Answer REJECT to everything; gate 1 must not flip back.
+    a = Answers(GateDecision.REJECT, GateDecision.REJECT)
+    state = mmm(a).run("mmm-meridian", MMM_INPUTS, resume=True)
+    assert _gate_of(state, "data-gate").decision == "approve"
+    assert len(a.asked) == 2, "the approved gate is still asked, for sequence stability"
+    assert _gate_of(state, "model-spec").decision == "reject"
+
+
+def test_step_status_no_longer_carries_gate_state(mmm):
+    """`status` is the work; `gate` is the decision. They are different questions."""
+    state = mmm(Answers(GateDecision.REJECT)).run("mmm-meridian", MMM_INPUTS)
+    assert state.steps["data-gate"].status == "done"      # the work finished
+    assert state.steps["data-gate"].gate.decision == "reject"
+    assert state.status == "awaiting_gate"                 # the run is what is paused
+
+
+def test_a_gate_record_survives_a_round_trip_through_run_json(mmm, tmp_path):
+    mmm(Answers(GateDecision.REJECT)).run("mmm-meridian", MMM_INPUTS)
+    reloaded = RunState.load(tmp_path / "run")
+    gate = reloaded.steps["data-gate"].gate
+    assert gate.decision == "reject"
+    assert gate.ts > 0
+    assert gate.note == ""
+
+
+def test_a_completed_run_records_approve_on_its_gate(tmp_path, monkeypatch):
+    """`eda-to-report` has one human gate and no auto gate — a clean finish."""
+    monkeypatch.setattr(
+        "dsagent.runner.runner.make_env",
+        lambda spec, ws: Env(spec=spec, workspace=ws, backend=FakeBackend()),
+    )
+    runner = WorkflowRunner(
+        load_cartridge(DS), tmp_path / "eda",
+        agent_factory=lambda cart, persona, env, ws: FakeAgent(persona, ws),
+        ask_human=Answers(), log=lambda m: None,
+    )
+    state = runner.run("eda-to-report", {"data_path": "x.csv"})
+    assert state.status == "done"
+    assert state.steps["data-gate"].gate.decision == "approve"
+    assert state.steps["profile"].gate is None  # no gate on that step
+
+
+# --- auto gates ------------------------------------------------------------
+#
+# `fit` is the cartridge's only auto gate, and a full `mmm-meridian` run cannot
+# reach it today: its step instructions contain a JSON example, and `_fill` uses
+# `str.format_map`, which reads `{name: rhat}` as a format spec and raises
+# (pre-existing on `v2`, recorded in the ROADMAP). So these drive `_gate`
+# directly on that step rather than waiting for the DAG to arrive there.
+
+
+def _fit_gate(tmp_path, monkeypatch, diagnostics: dict | None):
+    monkeypatch.setattr(
+        "dsagent.runner.runner.make_env",
+        lambda spec, ws: Env(spec=spec, workspace=ws, backend=FakeBackend()),
+    )
+    cart = load_cartridge(DS)
+    runner = WorkflowRunner(cart, tmp_path / "auto", log=lambda m: None)
+    wf = cart.workflows["mmm-meridian"]
+    step = next(s for s in wf.steps if s.id == "fit")
+    if diagnostics is not None:
+        art = runner.workspace / "artifacts"
+        art.mkdir(parents=True, exist_ok=True)
+        (art / "diagnostics.json").write_text(json.dumps(diagnostics))
+    rec = StepRecord(id=step.id, status="done")
+    state = RunState(workflow=wf.name, cartridge=cart.name, inputs={}, steps={step.id: rec})
+    return runner, wf, step, rec, state
+
+
+def test_a_passing_auto_gate_records_approve_and_the_scripts_output(tmp_path, monkeypatch):
+    runner, wf, step, rec, state = _fit_gate(
+        tmp_path, monkeypatch, {"rhat_max": 1.01, "divergences": 0, "params": {"roi_m[0]": 1.0}}
+    )
+    assert runner._gate(wf, step, rec, state, dry_run=False) is True
+    assert rec.gate.decision == "approve"
+    assert "GATE PASS" in rec.gate.note
+
+
+def test_a_failing_auto_gate_records_reject_and_fails_the_step(tmp_path, monkeypatch):
+    runner, wf, step, rec, state = _fit_gate(
+        tmp_path, monkeypatch, {"rhat_max": 1.4, "divergences": 12, "params": {"roi_m[0]": 1.4}}
+    )
+    assert runner._gate(wf, step, rec, state, dry_run=False) is False
+    assert rec.gate.decision == "reject"
+    assert "GATE FAIL" in rec.gate.note
+    assert rec.status == "failed"
+    assert state.status == "failed"
+
+
+def test_a_passed_auto_gate_is_not_re_run(tmp_path, monkeypatch):
+    """Unlike a human gate, a check script that already passed is skipped.
+
+    Nothing in an auto gate calls `interrupt()`, so re-running it buys no
+    sequence stability, and re-running a convergence check costs minutes. Proven
+    by deleting the file the script needs: a second run would fail on it.
+    """
+    runner, wf, step, rec, state = _fit_gate(
+        tmp_path, monkeypatch, {"rhat_max": 1.01, "divergences": 0, "params": {}}
+    )
+    assert runner._gate(wf, step, rec, state, dry_run=False) is True
+    (runner.workspace / "artifacts" / "diagnostics.json").unlink()
+    assert runner._gate(wf, step, rec, state, dry_run=False) is True
+    assert rec.gate.decision == "approve"
+
+
+# --- the run id -------------------------------------------------------------
+
+
+def test_run_id_is_derived_from_the_tool_call_not_the_clock():
+    """Re-entry must land in the same run directory, or it re-pays for the run."""
+    from dsagent.cli import workflow_run_id
+
+    first = workflow_run_id("eda-to-report", "toolu_01ABC")
+    second = workflow_run_id("eda-to-report", "toolu_01ABC")
+    assert first == second == "eda-to-report-toolu_01ABC"
+    assert workflow_run_id("eda-to-report", "toolu_01XYZ") != first
+
+
+def test_run_id_falls_back_to_a_timestamp_without_a_tool_call():
+    from dsagent.cli import workflow_run_id
+
+    generated = workflow_run_id("eda-to-report")
+    assert generated.startswith("eda-to-report-")
+    assert generated != "eda-to-report-"
+
+
+def test_re_entry_reopens_the_same_run_and_keeps_the_finished_work(mmm, tmp_path):
+    """The two rules together: same directory, and the decided gate still asked."""
+    mmm(Answers(GateDecision.REJECT)).run("mmm-meridian", MMM_INPUTS)
+    run_json = tmp_path / "run" / "run.json"
+    assert run_json.exists()
+    first = json.loads(run_json.read_text())
+    assert first["steps"]["ingest"]["status"] == "done"
+
+    a = Answers(GateDecision.APPROVE, GateDecision.REJECT)
+    mmm(a).run("mmm-meridian", MMM_INPUTS, resume=True)
+
+    # Same file, not a second run directory beside it.
+    assert [d.name for d in tmp_path.iterdir() if d.is_dir()] == ["run"]
+    second = json.loads(run_json.read_text())
+    assert second["steps"]["ingest"]["started_at"] == first["steps"]["ingest"]["started_at"]
+    assert FakeAgent.calls == ["ingest", "data-gate", "model-spec"]

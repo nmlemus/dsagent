@@ -26,7 +26,7 @@ Status legend: `[ ]` todo · `[~]` in progress · `[x]` done. One task per PR.
 ### M2.2 UI vertical slice (see docs/ui.md) — moved up: the product is the UI
 - [x] **Runner: stream step events instead of only `log()`** — `RunnerEvent` + `on_event` on `WorkflowRunner`, emitting `dsagent.step` / `dsagent.tool` / `dsagent.file`; personas run with `.stream()` so tool and file events arrive while the step is still working. Each step event carries `produces`, so a consumer can tell a deliverable from a working file (runs 001/002). No AG-UI dependency
 - [x] Design PR: `docs/ui-slice.md` — verified package APIs, run-inside-a-tool design, event schemas, frontend plan, PR breakdown
-- [ ] Runner: stable gate-`interrupt()` sequence on re-entry (`StepRecord.gate` split from `status`) and a deterministic `run_id` derived from `tool_call_id`, with the two-gate resume test and a re-entry test asserting the same `run_dir` is reopened
+- [x] Runner: stable gate-`interrupt()` sequence on re-entry (`StepRecord.gate` split from `status`) and a deterministic `run_id` derived from `tool_call_id`, with the two-gate resume test and a re-entry test asserting the same `run_dir` is reopened
 - [ ] `dsagent serve`: FastAPI + `ag-ui-langgraph` (`add_langgraph_fastapi_endpoint`) + `copilotkit` (`LangGraphAGUIAgent`, `CopilotKitMiddleware()`) exposing the orchestrator, plus `/runs/{id}/files/{path}`
 - [ ] Map that event stream onto AG-UI `CUSTOM` events `dsagent.step` / `dsagent.tool` / `dsagent.file` via `dispatch_custom_event`; human gates become LangGraph interrupts answered from the UI
 - [ ] `ui/` Next.js + CopilotKit: chat left, canvas right; canvas lists workspace files as the filesystem middleware streams them (iframe for `.html`, markdown, PNG, table for `.csv/.parquet`)
@@ -53,6 +53,9 @@ Status legend: `[ ]` todo · `[~]` in progress · `[x]` done. One task per PR.
 - [ ] `dsagent cartridge add <git-url>` (port v1 installer)
 
 ## M4 — Connectors + hardening
+
+- [ ] Runner: stream personas with `updates` only and reconstruct the final state, instead of `["updates", "values"]`. `values` mode copies the whole transcript on every node, which is wasted allocation on a long step; the runner only needs the last one
+- [ ] `_fill` uses `str.format_map`, so step instructions containing JSON break templating: `mmm-meridian`'s `fit` step has `{"rhat_max": float, ..., "params": {name: rhat}}` in its markdown and raises `ValueError: Space not allowed in string format specifier` before any model is called. `visible_input_names` already defines a placeholder with the `_PLACEHOLDER` regex; `_fill` should substitute with the same regex so the two agree. Found while testing gates (2026-09-16); blocks M2.4
 - [ ] Multi-run management in the UI (list runs, open past run, resume paused run)
 - [ ] BigQuery connector via cartridge `.mcp.json` + LangChain MCP adapters
 - [ ] Run resumability across process restarts (already in `run.json`; needs API surface)
@@ -90,3 +93,9 @@ Status legend: `[ ]` todo · `[~]` in progress · `[x]` done. One task per PR.
   resume, and the current timestamped `run_dir` would mint a fresh empty run on every re-entry — losing
   `run.json` and re-paying for every completed step. The tool call id is stable across the original call and
   the re-entry (verified). `thread_id` + a state counter stays the fallback for a caller without a tool call.
+- 2026-09-16 — `StepRecord.gate` (decision, note, ts) is split from `StepRecord.status`. `status` is the step's
+  work (pending/running/done/failed); `gate` is whether anyone agreed to go on; the run is what reads
+  `awaiting_gate`. A **human** gate is asked on every entry, decided or not, and its answer discarded when the
+  record already reads `approve` — that is what keeps the `interrupt()` sequence stable under `dsagent serve`.
+  An **auto** gate is skipped once approved instead: it calls no `interrupt()`, so re-running it buys no
+  stability and a convergence check costs minutes.
