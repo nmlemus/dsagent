@@ -17,11 +17,13 @@ pytest.importorskip("fastapi", reason="needs the 'ui' extra")
 pytest.importorskip("ag_ui_langgraph", reason="needs the 'ui' extra")
 pytest.importorskip("copilotkit", reason="needs the 'ui' extra")
 
-# E402: these have to come after the skips — importing them without the extra is
-# the ImportError the skips exist to avoid.
-from fastapi.testclient import TestClient  # noqa: E402
+# These have to come after the skips: importing them without the `ui` extra is the
+# ImportError the skips exist to avoid. Ruff allows it because the skips above are
+# bare expression statements, which E402 counts as preamble — binding one to a name
+# would end the preamble and make this E402.
+from fastapi.testclient import TestClient
 
-from dsagent import serve  # noqa: E402
+from dsagent import serve
 
 DS = Path(__file__).resolve().parents[1] / "cartridges" / "ds"
 
