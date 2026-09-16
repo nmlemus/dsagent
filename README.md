@@ -18,7 +18,8 @@ src/dsagent/
   host/        cartridge → Deep Agents (persona agents, orchestrator with subagents)
   runner/      declared-DAG workflow runner: envs per step, produces checks, gates, resume
   envs/        kernel (local shell + persistent Jupyter) and docker (BaseSandbox) backends
-  cli.py       dsagent cartridge validate|list · run · chat
+  cli.py       dsagent cartridge validate|list · run · chat · serve
+  serve.py     FastAPI: the orchestrator over AG-UI, plus a run's files over HTTP
 cartridges/ds/ the data science cartridge — also a valid Claude Code plugin
 ```
 
@@ -44,6 +45,28 @@ dsagent run eda-to-report --run-id demo -i data_path=data/sales.csv --resume
 # chat with the orchestrator ("Ana, hazme un MMM" → run_workflow; "/ds-mmm-meridian" works too)
 dsagent chat -c cartridges/ds
 ```
+
+## Serving the UI
+
+`dsagent serve` puts the same orchestrator behind [AG-UI](https://docs.ag-ui.com),
+which is what the web UI in `ui/` will talk to. It needs the `ui` extra:
+
+```bash
+pip install -e ".[ui,anthropic]"
+dsagent serve                            # 127.0.0.1:8000, --host/--port to change
+```
+
+Two routes:
+
+| Route | What it is |
+|---|---|
+| `POST /agent` | The orchestrator as an AG-UI SSE stream. A workflow's progress arrives as `CUSTOM` events named `dsagent.step`, `dsagent.tool` and `dsagent.file`; a human gate arrives as an interrupt the client answers with `{"decision": "approve"}`. `GET /agent/health` reports liveness. |
+| `GET /runs/{run_id}/files/{path}` | One file from a run's workspace, so the canvas can render the artifacts those events announce. Resolved inside `<run_dir>/workspace` — anything escaping it, and anything under `.dsagent/`, is a 404. |
+
+Each browser tab is one `thread_id`, which is what a gate resumes into. The slice
+checkpoints in memory, so a `serve` restart loses in-flight gates; `run.json` still
+has every finished step, and the run resumes from there. Event schemas and the
+frontend plan are in [`docs/ui-slice.md`](docs/ui-slice.md).
 
 ## Cartridge contract
 

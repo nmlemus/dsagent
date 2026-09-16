@@ -19,7 +19,7 @@ from __future__ import annotations
 import os
 import shlex
 import shutil
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from pathlib import Path
 from typing import Any
 
@@ -185,7 +185,16 @@ def build_orchestrator(
     *,
     model: str | None = None,
     workflow_tools: list[Callable[..., Any]] | None = None,
+    middleware: Sequence[Any] = (),
+    checkpointer: Any = None,
 ):
+    """The chat-mode agent.
+
+    `middleware` and `checkpointer` are passed straight to Deep Agents and are
+    how `dsagent serve` adds CopilotKit's middleware and the saver an
+    `interrupt()` resumes from. Both default to off, so `dsagent chat` is
+    unchanged and nothing here imports either package.
+    """
     skills_root = materialize_skills(cartridges, workspace)
     backend = _backend(env, skills_root)
     subagents = []
@@ -209,4 +218,6 @@ def build_orchestrator(
         skills=[f"{SKILLS_MOUNT}_orchestrator/"],
         backend=backend,
         name="orchestrator",
+        middleware=middleware,
+        **({"checkpointer": checkpointer} if checkpointer is not None else {}),
     )

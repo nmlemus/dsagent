@@ -65,9 +65,11 @@ class Answers:
     def __init__(self, *decisions: GateDecision):
         self.left = list(decisions)
         self.asked: list[str] = []
+        self.requests: list = []
 
-    def __call__(self, prompt: str) -> GateDecision:
-        self.asked.append(prompt)
+    def __call__(self, request) -> GateDecision:
+        self.asked.append(request.prompt)
+        self.requests.append(request)
         return self.left.pop(0) if self.left else GateDecision.APPROVE
 
 
@@ -254,7 +256,7 @@ def test_a_passed_auto_gate_is_not_re_run(tmp_path, monkeypatch):
 
 def test_run_id_is_derived_from_the_tool_call_not_the_clock():
     """Re-entry must land in the same run directory, or it re-pays for the run."""
-    from dsagent.cli import workflow_run_id
+    from dsagent.runner import workflow_run_id
 
     first = workflow_run_id("eda-to-report", "toolu_01ABC")
     second = workflow_run_id("eda-to-report", "toolu_01ABC")
@@ -263,7 +265,7 @@ def test_run_id_is_derived_from_the_tool_call_not_the_clock():
 
 
 def test_run_id_falls_back_to_a_timestamp_without_a_tool_call():
-    from dsagent.cli import workflow_run_id
+    from dsagent.runner import workflow_run_id
 
     generated = workflow_run_id("eda-to-report")
     assert generated.startswith("eda-to-report-")
@@ -286,3 +288,16 @@ def test_re_entry_reopens_the_same_run_and_keeps_the_finished_work(mmm, tmp_path
     second = json.loads(run_json.read_text())
     assert second["steps"]["ingest"]["started_at"] == first["steps"]["ingest"]["started_at"]
     assert FakeAgent.calls == ["ingest", "data-gate", "model-spec"]
+
+
+def test_the_gate_request_carries_what_a_gate_card_has_to_show(mmm):
+    """A terminal needs only the prompt; a browser needs to know which step waits."""
+    a = Answers(GateDecision.REJECT)
+    mmm(a).run("mmm-meridian", MMM_INPUTS)
+    req = a.requests[0]
+    assert req.run_id == "run"
+    assert req.workflow == "mmm-meridian"
+    assert req.step == "data-gate"
+    assert req.persona == "pablo"
+    assert req.produces == ["artifacts/data-gate.md"]
+    assert "Data gate report ready" in req.prompt
