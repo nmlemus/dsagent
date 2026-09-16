@@ -42,7 +42,7 @@ class Gate(BaseModel):
     """For auto gates: script path relative to the workflow dir. Exit 0 = pass."""
 
     @model_validator(mode="after")
-    def _check_fields(self) -> "Gate":
+    def _check_fields(self) -> Gate:
         if self.kind == "auto" and not self.check:
             raise ValueError("auto gate requires `check`")
         return self

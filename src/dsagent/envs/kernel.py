@@ -61,7 +61,8 @@ class JupyterKernel:
         try:
             self._kc.stop_channels()
             self._km.shutdown_kernel(now=True)
-        except Exception:  # pragma: no cover
+        # A dying kernel must not mask the error that got us here.
+        except Exception:  # noqa: BLE001, S110  # pragma: no cover
             pass
 
 

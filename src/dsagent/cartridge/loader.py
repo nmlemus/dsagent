@@ -185,7 +185,8 @@ def _validate_matrix(c: Cartridge) -> None:
             if env not in c.envs:
                 problems.append(f"workflow '{w.name}' step '{st.id}' uses unknown env '{env}'")
     if problems:
-        raise CartridgeError("cartridge '%s' is inconsistent:\n  - %s" % (c.name, "\n  - ".join(problems)))
+        joined = "\n  - ".join(problems)
+        raise CartridgeError(f"cartridge '{c.name}' is inconsistent:\n  - {joined}")
 
 
 def generate_command_skills(c: Cartridge) -> list[Path]:
