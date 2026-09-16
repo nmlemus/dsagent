@@ -9,6 +9,7 @@ the agent gets `execute`, `read_file`, `write_file`, `ls`, `glob`, `grep` for fr
 from __future__ import annotations
 
 import queue
+import sys
 from pathlib import Path
 
 from deepagents.backends import LocalShellBackend
@@ -103,4 +104,5 @@ def make_kernel_env(spec: EnvSpec, workspace: Path) -> Env:
         if kernel is not None:
             kernel.close()
 
-    return Env(spec=spec, workspace=workspace, backend=backend, tools=[run_python], closers=[_close])
+    return Env(spec=spec, workspace=workspace, backend=backend, tools=[run_python],
+               closers=[_close], python=sys.executable)

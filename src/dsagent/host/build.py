@@ -17,6 +17,7 @@ visible to the persona.
 from __future__ import annotations
 
 import os
+import shlex
 import shutil
 from collections.abc import Callable
 from pathlib import Path
@@ -24,17 +25,22 @@ from typing import Any
 
 from deepagents import create_deep_agent
 from deepagents.backends import CompositeBackend, FilesystemBackend
+from langchain_core.tools import tool
 
 from dsagent.cartridge.models import Cartridge, Persona
 from dsagent.envs.base import Env
 
 DEFAULT_MODEL = os.environ.get("DSAGENT_MODEL", "anthropic:claude-sonnet-5")
 SKILLS_MOUNT = "/skills/"
+"""Where skills are mounted for the file tools. A virtual path: nothing running
+inside the env can resolve it — that is what `run_skill_script` is for."""
+SKILLS_DIR = Path(".dsagent") / "skills"
+"""Where skills are materialized on disk, relative to the workspace."""
 
 
 def materialize_skills(cartridges: list[Cartridge], workspace: Path) -> Path:
     """Copy each persona's granted skills into a per-persona folder. Idempotent."""
-    root = workspace / ".dsagent" / "skills"
+    root = workspace / SKILLS_DIR
     if root.exists():
         shutil.rmtree(root)
     for c in cartridges:
@@ -62,6 +68,52 @@ def _backend(env: Env, skills_root: Path) -> CompositeBackend:
     )
 
 
+def _skill_script_tool(cartridge: Cartridge, persona: str, env: Env, workspace: Path):
+    """A persona's only way to run the scripts that ship with its skills.
+
+    Skills are mounted at a virtual path for the file tools, which nothing
+    running inside the env can resolve, and their real location is an internal
+    detail of skill materialization. Resolving it here also enforces the matrix:
+    asking for a skill the persona was not granted is an error, not a path that
+    happens not to exist.
+    """
+    granted = sorted(s.name for s in cartridge.skills_for(persona))
+
+    @tool
+    def run_skill_script(skill: str, script: str, argv: list[str] | None = None) -> str:
+        """Run a script that ships with one of your skills.
+
+        `skill` is the skill's name, `script` the file name inside its `scripts/`
+        directory (for example "profile.py"), and `argv` the command-line
+        arguments to pass it. The script runs with this environment's Python,
+        from the workspace root, so paths you pass in `argv` are
+        workspace-relative.
+
+        Always run a skill's script this way — its files are not reachable by
+        path from `execute` or `run_python`.
+
+        Returns the exit code followed by the script's output.
+        """
+        if skill not in granted:
+            return (
+                f"error: '{skill}' is not one of your skills. "
+                f"You have: {', '.join(granted) or 'none'}."
+            )
+        scripts = workspace / SKILLS_DIR / persona / skill / "scripts"
+        target = scripts / script
+        if not target.is_file():
+            available = sorted(f.name for f in scripts.glob("*")) if scripts.is_dir() else []
+            return (
+                f"error: skill '{skill}' has no script '{script}'. "
+                f"Available: {', '.join(available) or 'none'}."
+            )
+        command = [env.python, str(target.relative_to(workspace)), *(argv or [])]
+        result = env.backend.execute(" ".join(shlex.quote(a) for a in command))
+        return f"exit code: {result.exit_code}\n{result.output}"
+
+    return run_skill_script
+
+
 def _persona_prompt(c: Cartridge, p: Persona) -> str:
     peers = ", ".join(f"{q.name} ({q.role})" for q in c.personas.values() if q.name != p.name)
     return (
@@ -69,7 +121,8 @@ def _persona_prompt(c: Cartridge, p: Persona) -> str:
         f"## Context\n"
         f"You are **{p.name}**, {p.role}, part of the '{c.name}' team. Peers: {peers or 'none'}.\n"
         f"The run workspace is the filesystem root; write every artifact under it using the exact "
-        f"paths you are asked for. Read a skill's SKILL.md before using it."
+        f"paths you are asked for. Read a skill's SKILL.md before using it, and run a skill's "
+        f"scripts with `run_skill_script` — never by path, they are not reachable from the shell."
     )
 
 
@@ -83,13 +136,14 @@ def build_persona_agent(
     extra_tools: list[Callable[..., Any]] | None = None,
 ):
     p = cartridge.personas[persona]
-    skills_root = workspace / ".dsagent" / "skills"
+    skills_root = workspace / SKILLS_DIR
     if not (skills_root / persona).exists():
         materialize_skills([cartridge], workspace)
     return create_deep_agent(
         model=model or p.model or DEFAULT_MODEL,
         system_prompt=_persona_prompt(cartridge, p),
-        tools=[*env.tools, *(extra_tools or [])],
+        tools=[*env.tools, _skill_script_tool(cartridge, persona, env, workspace),
+               *(extra_tools or [])],
         skills=[f"{SKILLS_MOUNT}{persona}/"],
         backend=_backend(env, skills_root),
         name=persona,
@@ -143,7 +197,7 @@ def build_orchestrator(
                     "description": f"{p.role}. {p.description}",
                     "system_prompt": _persona_prompt(c, p),
                     "skills": [f"{SKILLS_MOUNT}{p.name}/"],
-                    "tools": list(env.tools),
+                    "tools": [*env.tools, _skill_script_tool(c, p.name, env, workspace)],
                     **({"model": p.model} if p.model else {}),
                 }
             )

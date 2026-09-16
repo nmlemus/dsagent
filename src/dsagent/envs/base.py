@@ -29,6 +29,13 @@ class Env:
     backend: BackendProtocol
     tools: list[Callable[..., Any]] = field(default_factory=list)
     closers: list[Callable[[], None]] = field(default_factory=list)
+    python: str = "python3"
+    """The interpreter that runs inside this env.
+
+    The kernel env is the interpreter running DSAgent, not whatever `python3`
+    resolves to on PATH — those differ whenever DSAgent runs from a virtualenv,
+    and the cartridge's requirements are installed in the former.
+    """
 
     def close(self) -> None:  # pragma: no cover - trivial
         for c in self.closers:
