@@ -3,8 +3,10 @@ from dsagent.runner.runner import (
     STEP_EVENT,
     TOOL_EVENT,
     GateDecision,
+    GateRecord,
     RunnerEvent,
     RunState,
+    StepRecord,
     WorkflowRunner,
     visible_input_names,
 )
@@ -14,8 +16,10 @@ __all__ = [
     "STEP_EVENT",
     "TOOL_EVENT",
     "GateDecision",
+    "GateRecord",
     "RunState",
     "RunnerEvent",
+    "StepRecord",
     "WorkflowRunner",
     "visible_input_names",
 ]

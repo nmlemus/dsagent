@@ -83,7 +83,10 @@ re-executes the whole task from the top on resume, and matches resume values
 > skipped — that is the existing idempotency and it is what makes re-entry cheap.
 
 This needs `StepRecord.gate` (decision + timestamp) split from `StepRecord.status`, which
-today means both "work done" and "gate passed". Unit test (`FakeAgent`, no model): a
+today means both "work done" and "gate passed". Built in PR 2, with one refinement the
+implementation forced: the rule applies to **human** gates only. An auto gate calls no
+`interrupt()`, so re-running one buys no sequence stability while a convergence check
+costs minutes — it is skipped once its record reads `approve`. Unit test (`FakeAgent`, no model): a
 two-gate workflow stops at gate 1; re-entering with `approve` does **not** re-invoke
 step 1's agent and stops at gate 2; re-entering with `reject` records `reject` on gate 2,
 not `approve`.

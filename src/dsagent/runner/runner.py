@@ -69,9 +69,27 @@ class RunnerEvent:
 
 
 @dataclass
+class GateRecord:
+    """What a human (or a check script) decided about a step, and when.
+
+    Separate from `StepRecord.status` because they answer different questions:
+    `status` is whether the step's *work* finished, `gate` is whether anyone
+    agreed to go on. Conflating them is what made a re-entered run skip a decided
+    gate along with its step — see `_gate`.
+    """
+
+    decision: str  # GateDecision value: "approve" | "reject"
+    note: str = ""
+    ts: float = 0.0
+
+
+@dataclass
 class StepRecord:
     id: str
-    status: str = "pending"  # pending | running | done | failed | awaiting_gate
+    status: str = "pending"  # pending | running | done | failed — the work, not the gate
+    gate: GateRecord | None = None
+    """The decision on this step's gate, once one has been made. `None` while
+    undecided, and re-set on every entry until it reads `approve`."""
     started_at: float | None = None
     finished_at: float | None = None
     output: str = ""
@@ -102,12 +120,18 @@ class RunState:
     @classmethod
     def load(cls, run_dir: Path) -> RunState:
         d = json.loads((run_dir / "run.json").read_text())
-        d["steps"] = {k: StepRecord(**v) for k, v in d["steps"].items()}
+        d["steps"] = {k: _step_record(v) for k, v in d["steps"].items()}
         return cls(**d)
 
     def save(self, run_dir: Path) -> None:
         d = asdict(self)
         (run_dir / "run.json").write_text(json.dumps(d, indent=2))
+
+
+def _step_record(d: dict[str, Any]) -> StepRecord:
+    """`asdict` flattens `GateRecord`; reading it back has to rebuild it."""
+    gate = d.get("gate")
+    return StepRecord(**{**d, "gate": GateRecord(**gate) if gate else None})
 
 
 AgentFactory = Callable[[Cartridge, str, Env, Path], Any]
@@ -238,17 +262,16 @@ class WorkflowRunner:
         try:
             for step in wf.ordered_steps():
                 rec = state.steps[step.id]
-                if rec.status == "done":
-                    continue
-                if rec.status == "awaiting_gate":
-                    if not self._gate(wf, step, rec, state, dry_run):
+                # The work is skipped once it is done; the gate never is. A gate
+                # is a `interrupt()` call under `dsagent serve`, and LangGraph
+                # matches resume values by position, so a gate that disappears
+                # from one entry to the next hands its answer to the next gate.
+                if rec.status != "done":
+                    self._run_step(wf, step, rec, state, inputs, dry_run)
+                    if rec.status == "failed":
+                        state.status = "failed"
+                        state.save(self.run_dir)
                         return state
-                    continue
-                self._run_step(wf, step, rec, state, inputs, dry_run)
-                if rec.status == "failed":
-                    state.status = "failed"
-                    state.save(self.run_dir)
-                    return state
                 if step.gate and not self._gate(wf, step, rec, state, dry_run):
                     return state
             state.status = "done"
@@ -379,36 +402,65 @@ class WorkflowRunner:
                 })
 
     def _gate(self, wf: Workflow, step: Step, rec: StepRecord, state: RunState, dry_run: bool) -> bool:
+        """Decide whether the run may go past this step. True = carry on.
+
+        An **auto** gate is a script, and re-running a convergence check that
+        already passed costs minutes for nothing, so it is skipped once approved.
+
+        A **human** gate is asked on every entry, decided or not, and the answer
+        is thrown away when `rec.gate` already reads `approve`. That looks
+        wasteful and is the whole point of this method: under `dsagent serve`
+        `ask_human` becomes a LangGraph `interrupt()`, LangGraph re-executes
+        `run_workflow` from the top on resume and matches resume values
+        positionally, and `Interrupt.id` comes from the call's position rather
+        than its payload. Drop the call for gate 1 on re-entry and gate 2 silently
+        receives gate 1's answer. Reproduced on langgraph 1.2.11; see
+        `docs/ui-slice.md` §2.
+        """
         gate = step.gate
         assert gate is not None
+        decided = rec.gate.decision if rec.gate else None
         if gate.kind == "auto":
-            self.log(f"[gate] auto check {gate.check} after {step.id}")
-            if dry_run:
-                return True
-            env = self.env_for(step.env or wf.env)
-            script = wf.path / gate.check
-            r = subprocess.run(
-                ["python3", str(script)], cwd=self.workspace, capture_output=True, text=True, check=False
-            )
-            if r.returncode != 0:
-                rec.status, rec.error = "failed", f"auto gate failed:\n{r.stdout}{r.stderr}"
-                state.status = "failed"
-                state.save(self.run_dir)
-                self._emit_step(wf, step, "failed", rec.error)
-                return False
-            return True
+            return self._auto_gate(wf, step, rec, state, dry_run, decided)
+
         prompt = gate.prompt or f"Step '{step.id}' finished. Continue?"
         self.log(f"[gate] human: {prompt}")
-        decision = GateDecision.APPROVE if dry_run else self.ask_human(prompt)
-        if decision is GateDecision.APPROVE:
-            rec.status = "done"
-            state.save(self.run_dir)
+        answer = GateDecision.APPROVE if dry_run else self.ask_human(prompt)
+        if decided == GateDecision.APPROVE.value:
+            return True  # asked for the sequence's sake; the decision already stands
+        rec.gate = GateRecord(decision=answer.value, ts=time.time())
+        state.save(self.run_dir)
+        if answer is GateDecision.APPROVE:
             return True
-        rec.status = state.status = "awaiting_gate"
+        state.status = "awaiting_gate"
         state.save(self.run_dir)
         self._emit_step(wf, step, "awaiting_gate")
         self.log(f"[gate] run paused at '{step.id}'. Resume with --resume once approved.")
         return False
+
+    def _auto_gate(self, wf: Workflow, step: Step, rec: StepRecord, state: RunState,
+                   dry_run: bool, decided: str | None) -> bool:
+        gate = step.gate
+        assert gate is not None and gate.check is not None
+        if decided == GateDecision.APPROVE.value or dry_run:
+            return True
+        self.log(f"[gate] auto check {gate.check} after {step.id}")
+        env = self.env_for(step.env or wf.env)  # noqa: F841  # M2.3: auto-gate runs inside the env
+        script = wf.path / gate.check
+        r = subprocess.run(
+            ["python3", str(script)], cwd=self.workspace, capture_output=True, text=True, check=False
+        )
+        output = f"{r.stdout}{r.stderr}".strip()
+        if r.returncode != 0:
+            rec.gate = GateRecord(decision=GateDecision.REJECT.value, note=output[-500:], ts=time.time())
+            rec.status, rec.error = "failed", f"auto gate failed:\n{output}"
+            state.status = "failed"
+            state.save(self.run_dir)
+            self._emit_step(wf, step, "failed", rec.error)
+            return False
+        rec.gate = GateRecord(decision=GateDecision.APPROVE.value, note=output[-500:], ts=time.time())
+        state.save(self.run_dir)
+        return True
 
 
 SKILL_MANIFEST = "/SKILL.md"
