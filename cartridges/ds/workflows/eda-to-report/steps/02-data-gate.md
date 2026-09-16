@@ -1,10 +1,28 @@
-Using `artifacts/data-profile.json` and the gate thresholds in the `eda` skill,
-evaluate every check and write `artifacts/data-gate.md`.
+Evaluate every gate threshold in the `eda` skill against `artifacts/data-profile.json`
+and write `artifacts/data-gate.md`.
+
+**Read the numbers from the profile JSON. Do not reload the dataset and do not recompute
+anything the profile already contains** — null shares, duplicate share, distinct counts,
+outlier counts and `key_uniqueness` are all in there. The profile is the evidence; your
+job is the verdict on it. Recomputing costs a second pass over the data and invites the
+two of you to disagree.
+
+Use `key_uniqueness` for the key check: `unique: false` (or a non-zero `duplicates`) fails
+the grain. When `column` is `null` no key was declared — record the check as not
+applicable rather than inventing one.
+
+Cover, one row per check: null share per column, exact duplicate rows, key uniqueness,
+and time coverage / missing periods where a date column exists. Give each row its value,
+its threshold and its denominator.
 
 The file must end with exactly one of:
 
 - `GATE: PASS`
 - `GATE: FAIL — <one-line reason>`
 
-If it fails, still write the report; the human will decide whether to continue.
-State clearly which columns or periods are affected and what a fix would look like.
+If it fails, still write the report; the human will decide whether to continue. State
+clearly which columns or periods are affected and what a fix would look like. Anything
+that does not breach a threshold but changes how the data can be read belongs in a
+"Flags" section above the verdict — that is what the analysis step will carry as caveats.
+
+`data/` is read-only here. Working files go under `artifacts/scratch/`.

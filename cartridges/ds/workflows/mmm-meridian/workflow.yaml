@@ -19,6 +19,7 @@ steps:
     env: default
     instructions: steps/02-data-gate.md
     needs: [ingest]
+    sees: []                    # works from the ingest artifacts on disk
     produces: [artifacts/data-gate.md]
     gate:
       kind: human
@@ -37,6 +38,7 @@ steps:
     persona: ana
     instructions: steps/04-fit.md
     needs: [model-spec]
+    sees: [kpi, date_range]
     produces: [model/posterior.pkl, artifacts/diagnostics.md, artifacts/diagnostics.json]
     timeout: 4h
     gate:
@@ -47,6 +49,7 @@ steps:
     persona: ana
     instructions: steps/05-optimize.md
     needs: [fit]
+    sees: [kpi]
     produces: [artifacts/budget-optimization.md]
 
   - id: report
@@ -54,4 +57,5 @@ steps:
     env: default
     instructions: steps/06-report.md
     needs: [optimize]
+    sees: []                    # works from the artifacts the earlier steps wrote
     produces: [report/mmm-report.md, report/mmm-report.html]

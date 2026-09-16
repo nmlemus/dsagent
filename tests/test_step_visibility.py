@@ -136,7 +136,40 @@ def test_task_message_lists_only_visible_inputs(tmp_path, monkeypatch):
     assert "- (none)" in by_step["data-gate"]  # it works from artifacts on disk
 
 
-def test_validate_reports_steps_that_are_shown_nothing():
+def _workflow(tmp_path, **step_kwargs):
+    from dsagent.cartridge.models import Workflow, WorkflowInput
+
+    (tmp_path / "steps").mkdir(exist_ok=True)
+    (tmp_path / "steps" / "one.md").write_text("profile the data and write it up")
+    return Workflow(
+        name="wf", path=tmp_path,
+        inputs={"data_path": WorkflowInput(type="path")},
+        steps=[Step(id="one", persona="marie", instructions="steps/one.md", **step_kwargs)],
+    )
+
+
+def test_blind_step_check_flags_an_instruction_that_interpolates_nothing(tmp_path):
+    """The prose-mention mistake: the value silently stops reaching the persona."""
+    from dsagent.cartridge.models import Cartridge
+    from dsagent.cli import _blind_steps
+
+    c = Cartridge(name="t", root=tmp_path, personas={}, skills={},
+                  workflows={"wf": _workflow(tmp_path)}, envs={})
+    assert _blind_steps(c) == {"wf": ["one"]}
+
+
+def test_blind_step_check_stays_quiet_when_sees_is_explicit(tmp_path):
+    """`sees: []` is a decision — the warning exists to catch an oversight."""
+    from dsagent.cartridge.models import Cartridge
+    from dsagent.cli import _blind_steps
+
+    c = Cartridge(name="t", root=tmp_path, personas={}, skills={},
+                  workflows={"wf": _workflow(tmp_path, sees=[])}, envs={})
+    assert _blind_steps(c) == {}
+
+
+def test_the_ds_cartridge_declares_visibility_for_every_step():
+    """Every step either interpolates what it needs or says `sees:` on purpose."""
     result = CliRunner().invoke(app, ["cartridge", "validate", str(DS)])
     assert result.exit_code == 0, result.output
-    assert "are shown no" in result.output.replace("\n", " ")
+    assert "are shown no" not in result.output.replace("\n", " ")

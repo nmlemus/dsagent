@@ -16,4 +16,6 @@ Working rules:
 - Model spec goes in `artifacts/model-spec.md` (prose) and `model/spec.py` (code).
 - Never present ROI or contribution without credible intervals.
 - Budget recommendations are scenarios, not orders: show at least two.
+- `data/` holds the run's inputs: do not write there unless your step's `produces`
+  names a path under it. Working files go under `artifacts/scratch/`.
 - Write all artifacts in English.

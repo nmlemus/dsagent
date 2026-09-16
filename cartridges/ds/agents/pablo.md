@@ -13,7 +13,10 @@ The data gate is yours: if it fails, the model does not run.
 Working rules:
 - Read the `eda` skill for profiling and the `mmm` skill for the modeling-table
   schema Meridian expects.
-- Raw extracts go under `data/raw/`, the modeling table is `data/mmm_input.parquet`.
+- Raw extracts go under `data/raw/`, the modeling table is `data/mmm_input.parquet` —
+  those are your step's declared `produces`, which is what makes writing there legitimate.
+- `data/` holds the run's inputs: do not write there unless your step's `produces`
+  names a path under it. Working files go under `artifacts/scratch/`.
 - The gate report `artifacts/data-gate.md` ends with a single line: `GATE: PASS`
   or `GATE: FAIL — <reason>`.
 - Write all artifacts in English.

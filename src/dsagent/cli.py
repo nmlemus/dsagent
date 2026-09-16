@@ -88,7 +88,8 @@ def _blind_steps(c: Cartridge) -> dict[str, list[str]]:
         blind = [
             s.id
             for s in wf.steps
-            if not visible_input_names(s, (wf.path / s.instructions).read_text(encoding="utf-8"))
+            if s.sees is None
+            and not visible_input_names(s, (wf.path / s.instructions).read_text(encoding="utf-8"))
         ]
         if blind:
             out[wf.name] = blind
