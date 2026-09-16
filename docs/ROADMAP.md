@@ -55,7 +55,6 @@ Status legend: `[ ]` todo · `[~]` in progress · `[x]` done. One task per PR.
 ## M4 — Connectors + hardening
 
 - [ ] Runner: stream personas with `updates` only and reconstruct the final state, instead of `["updates", "values"]`. `values` mode copies the whole transcript on every node, which is wasted allocation on a long step; the runner only needs the last one
-- [ ] `_fill` uses `str.format_map`, so step instructions containing JSON break templating: `mmm-meridian`'s `fit` step has `{"rhat_max": float, ..., "params": {name: rhat}}` in its markdown and raises `ValueError: Space not allowed in string format specifier` before any model is called. `visible_input_names` already defines a placeholder with the `_PLACEHOLDER` regex; `_fill` should substitute with the same regex so the two agree. Found while testing gates (2026-09-16); blocks M2.4
 - [ ] Multi-run management in the UI (list runs, open past run, resume paused run)
 - [ ] BigQuery connector via cartridge `.mcp.json` + LangChain MCP adapters
 - [ ] Run resumability across process restarts (already in `run.json`; needs API surface)
@@ -99,3 +98,7 @@ Status legend: `[ ]` todo · `[~]` in progress · `[x]` done. One task per PR.
   record already reads `approve` — that is what keeps the `interrupt()` sequence stable under `dsagent serve`.
   An **auto** gate is skipped once approved instead: it calls no `interrupt()`, so re-running it buys no
   stability and a convergence check costs minutes.
+- 2026-09-16 — `_fill` substitutes with the `_PLACEHOLDER` regex, not `str.format_map`, so it and
+  `visible_input_names` share one definition of what a placeholder is. Step instructions are prose written for a
+  persona and prose contains braces — JSON, dict literals, CSS, f-string examples — all of which format syntax
+  either mangles or raises on. `mmm-meridian`'s `fit` step documents a JSON artifact and could not run at all.

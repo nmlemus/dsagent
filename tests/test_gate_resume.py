@@ -179,11 +179,20 @@ def test_a_completed_run_records_approve_on_its_gate(tmp_path, monkeypatch):
 
 # --- auto gates ------------------------------------------------------------
 #
-# `fit` is the cartridge's only auto gate, and a full `mmm-meridian` run cannot
-# reach it today: its step instructions contain a JSON example, and `_fill` uses
-# `str.format_map`, which reads `{name: rhat}` as a format spec and raises
-# (pre-existing on `v2`, recorded in the ROADMAP). So these drive `_gate`
-# directly on that step rather than waiting for the DAG to arrive there.
+# `fit` is the cartridge's only auto gate. The first test below reaches it the
+# way a real run does, through the DAG; the rest drive `_gate` directly, which is
+# the cheaper way to cover the rejection and skip branches.
+
+
+def test_a_full_run_reaches_the_auto_gate_and_records_its_verdict(mmm):
+    """End to end: two human gates approved, then the check script runs for real."""
+    state = mmm(Answers()).run("mmm-meridian", MMM_INPUTS)
+    assert state.status == "done"
+    assert _gate_of(state, "data-gate").decision == "approve"
+    assert _gate_of(state, "model-spec").decision == "approve"
+    fit = _gate_of(state, "fit")
+    assert fit.decision == "approve"
+    assert "GATE PASS" in fit.note
 
 
 def _fit_gate(tmp_path, monkeypatch, diagnostics: dict | None):
