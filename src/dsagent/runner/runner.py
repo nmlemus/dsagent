@@ -569,14 +569,30 @@ def _visible_inputs(step: Step, instructions: str, inputs: dict[str, Any]) -> di
     return {k: v for k, v in inputs.items() if k in names}
 
 
-class _Defaults(dict):
-    def __missing__(self, key: str) -> str:
-        return "{" + key + "}"
-
-
 def _fill(text: str, inputs: dict[str, Any]) -> str:
-    """Substitute `{input_name}` in step instructions; unknown names are left as-is."""
-    return text.format_map(_Defaults({k: ("None" if v is None else v) for k, v in inputs.items()}))
+    """Substitute `{input_name}` in step instructions. Everything else is literal.
+
+    Substitution goes through `_PLACEHOLDER`, the same pattern
+    `visible_input_names` uses to decide what a step sees — the two must agree,
+    or a step is shown an input it cannot interpolate, or interpolates one it was
+    never shown.
+
+    This used `str.format_map`, which disagreed: format syntax reads
+    `{"rhat_max": float}` as a field with a format spec and raises, so a step
+    whose markdown documents a JSON artifact could not run at all
+    (`mmm-meridian`'s `fit`). Step instructions are prose written for a persona,
+    and prose contains braces — JSON, dict literals, CSS, f-string examples. They
+    are all literal here; only a bare `{name}` naming a known input is replaced.
+    """
+
+    def substitute(match: re.Match[str]) -> str:
+        name = match.group(1)
+        if name not in inputs:
+            return match.group(0)
+        value = inputs[name]
+        return "None" if value is None else str(value)
+
+    return _PLACEHOLDER.sub(substitute, text)
 
 
 def _last_text(result: Any) -> str:
