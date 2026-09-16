@@ -21,7 +21,15 @@ from rich.table import Table
 from dsagent import __version__, requirements
 from dsagent.cartridge import CartridgeError, load_cartridge, load_cartridges
 from dsagent.cartridge.models import Cartridge, EnvSpec
-from dsagent.runner import GateDecision, WorkflowRunner, visible_input_names
+from dsagent.runner import (
+    FILE_EVENT,
+    STEP_EVENT,
+    TOOL_EVENT,
+    GateDecision,
+    RunnerEvent,
+    WorkflowRunner,
+    visible_input_names,
+)
 
 app = typer.Typer(help="DSAgent v2 — cartridge-driven Deep Agents harness.", no_args_is_help=True)
 cartridge_app = typer.Typer(help="Inspect and validate cartridges.")
@@ -168,6 +176,31 @@ def cartridge_list(path: Path = typer.Argument(DEFAULT_CARTRIDGE)):
             for s in w.ordered_steps()))
 
 
+def _human_size(n: int) -> str:
+    return f"{n} B" if n < 1024 else (f"{n / 1024:.1f} kB" if n < 1024 * 1024 else f"{n / 1048576:.1f} MB")
+
+
+def _print_event(e: RunnerEvent) -> None:
+    """Render the runner's stream the way `docs/runs/*.md` draws a timeline."""
+    v = e.value
+    if e.name == STEP_EVENT:
+        status = v["status"]
+        if status == "started":
+            console.print(f"[bold]▶ {v['step']}[/bold] ({v['persona']}) {v['index'] + 1}/{v['total']}")
+        elif status == "done":
+            console.print(f"[green]◀ {v['step']} done[/green]")
+        elif status == "failed":
+            console.print(f"[red]◀ {v['step']} failed[/red] {v.get('error') or ''}", markup=False)
+        else:
+            console.print(f"[yellow]⏸ {v['step']} {status}[/yellow]")
+    elif e.name == TOOL_EVENT and v["phase"] == "started":
+        args = ", ".join(f"{k}={val}" for k, val in (v.get("args_preview") or {}).items())
+        console.print(f"  · {v['tool']}({args})", style="dim", markup=False)
+    elif e.name == FILE_EVENT:
+        mark = "[cyan]●[/cyan]" if v["kind"] == "deliverable" else "○"
+        console.print(f"  {mark} {v['path']}  [dim]({v['kind']}, {_human_size(v['size'])})[/dim]")
+
+
 @app.command()
 def run(
     workflow: str,
@@ -177,6 +210,7 @@ def run(
     resume: bool = typer.Option(False, "--resume", help="continue a paused/failed run"),
     dry_run: bool = typer.Option(False, "--dry-run", help="walk the DAG without calling any model"),
     yes: bool = typer.Option(False, "--yes", "-y", help="auto-approve human gates"),
+    quiet: bool = typer.Option(False, "--quiet", "-q", help="only print the final result"),
 ):
     """Run a workflow from a cartridge."""
     c = load_cartridge(cartridge)
@@ -189,6 +223,7 @@ def run(
         c, run_dir,
         ask_human=(lambda p: GateDecision.APPROVE) if yes else _ask,
         log=lambda m: console.print(m, style="dim", markup=False),
+        on_event=_print_event if not quiet else None,
     )
     state = runner.run(workflow, _parse_inputs(input), resume=resume, dry_run=dry_run)
     color = {"done": "green", "failed": "red"}.get(state.status, "yellow")
@@ -228,7 +263,8 @@ def chat(
             return f"unknown workflow {name}; use list_workflows"
         run_dir = RUNS_DIR / f"{name}-{time.strftime('%Y%m%d-%H%M%S')}"
         state = WorkflowRunner(by_wf[name], run_dir, ask_human=_ask,
-                               log=lambda m: console.print(m, style="dim", markup=False)).run(name, inputs or {})
+                               log=lambda m: console.print(m, style="dim", markup=False),
+                               on_event=_print_event).run(name, inputs or {})
         return json.dumps({"run_dir": str(run_dir), "status": state.status,
                            "steps": {k: v.status for k, v in state.steps.items()}})
 
