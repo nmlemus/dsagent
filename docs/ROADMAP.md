@@ -53,6 +53,7 @@ Status legend: `[ ]` todo · `[~]` in progress · `[x]` done. One task per PR.
 - [ ] Multi-run management in the UI (list runs, open past run, resume paused run)
 - [ ] BigQuery connector via cartridge `.mcp.json` + LangChain MCP adapters
 - [ ] Run resumability across process restarts (already in `run.json`; needs API surface)
+- [ ] chore: `dsagent --version` prints "Missing command" (eager callback vs `no_args_is_help`)
 
 ## Decisions log
 
