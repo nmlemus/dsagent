@@ -88,6 +88,23 @@ two-gate workflow stops at gate 1; re-entering with `approve` does **not** re-in
 step 1's agent and stops at gate 2; re-entering with `reject` records `reject` on gate 2,
 not `approve`.
 
+**`run_id` must be deterministic per invocation.** The same re-execution that motivates
+the gate rule also re-runs the top of `run_workflow`, where the tool mints
+`RUNS_DIR / f"{name}-{time.strftime('%Y%m%d-%H%M%S')}"` (`cli.py:229`). On re-entry that
+is a *new, empty* run directory, so `resume` finds no `run.json`, every step reads as
+`pending`, and the run redoes — and re-pays for — work it already did. The gate rule alone
+does not save it: it protects the interrupt sequence, not the state the sequence indexes into.
+
+The id is derived from the tool call, not from the clock. `tool_call_id` is the right
+source: verified that injecting it with
+`Annotated[str, InjectedToolCallId]` yields the same value on the original call and on the
+re-entry (`toolu_01ABC` both times), because the id belongs to the `AIMessage` that the
+checkpoint replays. So `run_id = f"{workflow}-{tool_call_id}"`, and `resume=True` whenever
+that directory already exists. `thread_id` plus a counter in graph state is the fallback if
+a caller ever reaches `run_workflow` without a tool call; it is strictly more machinery for
+the same guarantee, so it stays the fallback. Test in PR 2: two entries of the same tool
+call open the same `run_dir` and the second does not re-invoke a completed step's agent.
+
 **Checkpointer.** `InMemorySaver` for the slice — one `dsagent serve` process,
 `thread_id` from AG-UI `RunAgentInput.thread_id`. `run.json` already survives restarts;
 the checkpointer only has to outlive the gate answer. `SqliteSaver` is a follow-up, and
@@ -164,6 +181,15 @@ is an `<img>`, `.html` goes in `<iframe sandbox src=…>` with an **empty** sand
 002's report is self-contained and needs no scripts. Plotly dashboards will need
 `allow-scripts` plus a separate origin; deferred, not designed here.
 
+Before deciding what to do with the unattributed persona `TOOL_CALL_*`, PR 5 checks
+`emit_subagent_events` / `subagent_visibility` (`"inline"` default, `"attributed"`,
+`"hidden"`) on the agent. Expect them not to help: the bridge opens a subagent window only
+for a tool literally named `task` (`agent.py:426`, `if name != "task"`), and the runner
+launches persona steps itself from inside `run_workflow` rather than through Deep Agents'
+`task`. If that holds, `"hidden"` cannot suppress them and `"attributed"` cannot label
+them, and `dsagent.tool` is the only attribution mechanism we have. Confirm against a real
+run before building on it.
+
 ## 5. PRs, smallest first (base `v2`)
 
 1. **harness: runner emits step/tool/file events.** `RunnerEvent` + `on_event` on
@@ -173,6 +199,12 @@ is an `<img>`, `.html` goes in `<iframe sandbox src=…>` with an **empty** sand
    `status`; unconditional gate call; the two-gate resume test from §2.
 3. **harness: dispatch runner events as LangChain custom events.** Thin adapter on
    `on_event`; unit test captures the dispatcher and checks the three names and payload keys.
+   Plus a **timing test**, which is the one that matters: a tool that emits, sleeps 2 s, then
+   emits, consumed through `astream_events`, asserting the consumer sees the first event
+   *before* the tool returns. Events that only flushed at tool end would make the whole
+   design pointless for a six-minute tool. Probed green on langgraph 1.2.11 — first event at
+   t=0.005 s, tool return at t=2.012 s — so the test pins behaviour we have, rather than
+   hoping for it.
 4. **harness: `dsagent serve`.** `[ui]` extra (`ag-ui-langgraph`, `copilotkit`, `uvicorn`);
    `build_orchestrator(..., middleware=[CopilotKitMiddleware()], checkpointer=InMemorySaver())`;
    `LangGraphAGUIAgent` + `add_langgraph_fastapi_endpoint`; the files endpoint. Tests use

@@ -26,7 +26,7 @@ Status legend: `[ ]` todo · `[~]` in progress · `[x]` done. One task per PR.
 ### M2.2 UI vertical slice (see docs/ui.md) — moved up: the product is the UI
 - [ ] **Runner: stream step events (start/tool/end) instead of only `log()`** — the foundation for both `chat` progress and the AG-UI bridge. Each event carries the step's `produces`, so a consumer can tell a deliverable from a working file (runs 001/002)
 - [x] Design PR: `docs/ui-slice.md` — verified package APIs, run-inside-a-tool design, event schemas, frontend plan, PR breakdown
-- [ ] Runner: stable gate-`interrupt()` sequence on re-entry (`StepRecord.gate` split from `status`), with the two-gate resume test
+- [ ] Runner: stable gate-`interrupt()` sequence on re-entry (`StepRecord.gate` split from `status`) and a deterministic `run_id` derived from `tool_call_id`, with the two-gate resume test and a re-entry test asserting the same `run_dir` is reopened
 - [ ] `dsagent serve`: FastAPI + `ag-ui-langgraph` (`add_langgraph_fastapi_endpoint`) + `copilotkit` (`LangGraphAGUIAgent`, `CopilotKitMiddleware()`) exposing the orchestrator, plus `/runs/{id}/files/{path}`
 - [ ] Map that event stream onto AG-UI `CUSTOM` events `dsagent.step` / `dsagent.tool` / `dsagent.file` via `dispatch_custom_event`; human gates become LangGraph interrupts answered from the UI
 - [ ] `ui/` Next.js + CopilotKit: chat left, canvas right; canvas lists workspace files as the filesystem middleware streams them (iframe for `.html`, markdown, PNG, table for `.csv/.parquet`)
@@ -85,3 +85,8 @@ Status legend: `[ ]` todo · `[~]` in progress · `[x]` done. One task per PR.
   positionally and derives `Interrupt.id` from the call position, so skipping a decided gate — which
   the runner does today, since `status == "done"` covers both work and gate — shifts the sequence and
   feeds gate *n*'s answer to gate *n+1* (reproduced with two gates). Step *work* stays skipped.
+- 2026-09-16 — `run_workflow` derives its `run_id` from the tool call (`run_id = f"{workflow}-{tool_call_id}"`,
+  injected with `InjectedToolCallId`), never from the clock. LangGraph re-executes the tool from the top on
+  resume, and the current timestamped `run_dir` would mint a fresh empty run on every re-entry — losing
+  `run.json` and re-paying for every completed step. The tool call id is stable across the original call and
+  the re-entry (verified). `thread_id` + a state counter stays the fallback for a caller without a tool call.
