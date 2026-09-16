@@ -13,13 +13,15 @@ from dsagent.cartridge import load_cartridge
 from dsagent.envs.base import Env
 from dsagent.runner import GateDecision, GateRequest
 
-fastapi = pytest.importorskip("fastapi", reason="needs the 'ui' extra")
+pytest.importorskip("fastapi", reason="needs the 'ui' extra")
 pytest.importorskip("ag_ui_langgraph", reason="needs the 'ui' extra")
 pytest.importorskip("copilotkit", reason="needs the 'ui' extra")
 
-from fastapi.testclient import TestClient
+# E402: these have to come after the skips — importing them without the extra is
+# the ImportError the skips exist to avoid.
+from fastapi.testclient import TestClient  # noqa: E402
 
-from dsagent import serve
+from dsagent import serve  # noqa: E402
 
 DS = Path(__file__).resolve().parents[1] / "cartridges" / "ds"
 
