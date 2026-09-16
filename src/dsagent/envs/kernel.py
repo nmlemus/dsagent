@@ -14,8 +14,9 @@ from pathlib import Path
 from deepagents.backends import LocalShellBackend
 from langchain_core.tools import tool
 
+from dsagent import requirements
 from dsagent.cartridge.models import EnvSpec
-from dsagent.envs.base import Env
+from dsagent.envs.base import Env, EnvRequirementsError
 
 
 class JupyterKernel:
@@ -64,7 +65,23 @@ class JupyterKernel:
             pass
 
 
+def _verify_requirements(spec: EnvSpec) -> None:
+    """Fail before the kernel exists rather than inside the persona's first call."""
+    missing = requirements.missing(spec.requirements)
+    if not missing:
+        return
+    raise EnvRequirementsError(
+        f"env '{spec.name}' is missing {len(missing)} of its {len(spec.requirements)} "
+        f"declared requirements: {', '.join(missing)}\n"
+        f"install them with:\n"
+        f"  {requirements.pip_install_command(missing)}\n"
+        f"or, for every kernel env of the cartridge:\n"
+        f"  dsagent cartridge install <cartridge path>"
+    )
+
+
 def make_kernel_env(spec: EnvSpec, workspace: Path) -> Env:
+    _verify_requirements(spec)
     backend = LocalShellBackend(root_dir=workspace, virtual_mode=True, inherit_env=True)
     kernel: JupyterKernel | None = None
 

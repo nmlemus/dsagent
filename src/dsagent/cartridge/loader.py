@@ -28,6 +28,7 @@ from dsagent.cartridge.models import (
     Skill,
     Workflow,
 )
+from dsagent.requirements import distribution_name
 
 _FRONTMATTER = re.compile(r"^---\s*\n(.*?)\n---\s*\n?(.*)$", re.DOTALL)
 
@@ -130,6 +131,7 @@ def _load_envs(root: Path, declared: dict[str, Any]) -> dict[str, EnvSpec]:
     envs: dict[str, EnvSpec] = {"default": EnvSpec(name="default", kind="kernel")}
     for name, spec in (declared or {}).items():
         spec = dict(spec or {})
+        _validate_requirements(name, spec.get("requirements"))
         if "build" in spec:
             build = root / spec["build"]
             if not (build / "Dockerfile").exists():
@@ -137,6 +139,23 @@ def _load_envs(root: Path, declared: dict[str, Any]) -> dict[str, EnvSpec]:
             spec["build"] = build
         envs[name] = EnvSpec(name=name, **spec)
     return envs
+
+
+def _validate_requirements(env_name: str, declared: Any) -> None:
+    """Requirements must be a list of pip requirement strings; nothing else is read."""
+    if declared is None:
+        return
+    if not isinstance(declared, list):
+        raise CartridgeError(
+            f"env '{env_name}': requirements must be a list, got {type(declared).__name__}"
+        )
+    for r in declared:
+        if not isinstance(r, str):
+            raise CartridgeError(f"env '{env_name}': requirement must be a string, got {r!r}")
+        try:
+            distribution_name(r)
+        except ValueError as e:
+            raise CartridgeError(f"env '{env_name}': {e}") from e
 
 
 def _validate_matrix(c: Cartridge) -> None:

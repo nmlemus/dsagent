@@ -1,3 +1,3 @@
-from dsagent.envs.base import Env, make_env
+from dsagent.envs.base import Env, EnvRequirementsError, make_env
 
-__all__ = ["Env", "make_env"]
+__all__ = ["Env", "EnvRequirementsError", "make_env"]

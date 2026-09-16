@@ -17,7 +17,6 @@ location with ``DSAGENT_INTEGRATION_RUN_DIR``.
 
 from __future__ import annotations
 
-import importlib.util
 import json
 import os
 import re
@@ -27,12 +26,14 @@ from pathlib import Path
 
 import pytest
 
+from dsagent import requirements
 from dsagent.cartridge import load_cartridge
 from dsagent.host.build import DEFAULT_MODEL
 from dsagent.runner import GateDecision, RunState, WorkflowRunner
 
 REPO = Path(__file__).resolve().parents[2]
 CARTRIDGE = REPO / "cartridges" / "ds"
+WORKFLOW = "eda-to-report"
 DATASET = REPO / "tests" / "data" / "seattle-weather.csv"
 
 EXPECTED_ROWS = 1461
@@ -42,13 +43,6 @@ QUESTION = (
     "How do precipitation and temperature differ across the weather categories, "
     "and how did they change between 2012 and 2015?"
 )
-
-# The kernel env runs in this interpreter (jupyter_client's native `python3`
-# kernelspec points at sys.executable), so an in-process check is the right
-# proxy for what the persona will find when it calls `run_python`.
-# pandas: the `eda` skill's scripts/profile.py. matplotlib: the figures step 03
-# asks for. markdown: the `reports` skill's scripts/render_html.py.
-KERNEL_REQUIREMENTS = ("pandas", "matplotlib", "markdown")
 
 # Credential per model provider, so a missing key skips up front instead of
 # failing once the kernel is up and the first step is already running. Only the
@@ -68,8 +62,14 @@ pytestmark = pytest.mark.skipif(
 )
 
 
-def _missing_requirements() -> list[str]:
-    return [m for m in KERNEL_REQUIREMENTS if importlib.util.find_spec(m) is None]
+def _missing_requirements(cartridge) -> list[str]:
+    """What the workflow's env declares and this interpreter cannot satisfy.
+
+    The kernel env runs in this interpreter, so an in-process check is the right
+    proxy for what the persona will find when it calls `run_python`.
+    """
+    env = cartridge.envs[cartridge.workflows[WORKFLOW].env]
+    return requirements.missing(env.requirements)
 
 
 def _missing_credential() -> tuple[str, str] | None:
@@ -102,11 +102,12 @@ def _diagnostics(state: RunState, run_dir: Path, log: list[str]) -> str:
 @pytest.fixture(scope="module")
 def completed_run() -> tuple[RunState, Path, str]:
     """Run the workflow once; every test below reads the same artifacts."""
-    missing = _missing_requirements()
+    cartridge = load_cartridge(CARTRIDGE)
+    missing = _missing_requirements(cartridge)
     if missing:
         pytest.skip(
-            f"kernel env lacks {', '.join(missing)}; the `eda` and `reports` skill "
-            f"scripts need them: pip install {' '.join(missing)}"
+            f"env declares requirements this interpreter lacks: {', '.join(missing)}\n"
+            f"install them with: dsagent cartridge install {CARTRIDGE}"
         )
 
     credential = _missing_credential()
@@ -117,7 +118,7 @@ def completed_run() -> tuple[RunState, Path, str]:
     run_dir = _run_dir()
     log: list[str] = []
     runner = WorkflowRunner(
-        load_cartridge(CARTRIDGE),
+        cartridge,
         run_dir,
         # Unattended: the gate's verdict is asserted from its report, not acted on.
         ask_human=lambda prompt: GateDecision.APPROVE,
@@ -129,7 +130,7 @@ def completed_run() -> tuple[RunState, Path, str]:
 
     started = time.time()
     state = runner.run(
-        "eda-to-report",
+        WORKFLOW,
         {"data_path": str(data_path), "question": QUESTION, "key_column": KEY_COLUMN},
     )
     elapsed = time.time() - started
@@ -148,7 +149,7 @@ def test_declared_artifacts_are_on_disk_and_non_empty(completed_run):
     state, workspace, diag = completed_run
     if state.status != "done":
         pytest.fail(diag)
-    workflow = load_cartridge(CARTRIDGE).workflows["eda-to-report"]
+    workflow = load_cartridge(CARTRIDGE).workflows[WORKFLOW]
     declared = [p for step in workflow.steps for p in step.produces]
     empty = [p for p in declared if not (workspace / p).exists() or (workspace / p).stat().st_size == 0]
     # The runner only checks existence; emptiness is the failure mode it misses.

@@ -104,7 +104,7 @@ workflows:
   - workflows/eda-to-report
 
 envs:
-  default:  { kind: kernel }           # persistent Jupyter kernel, ported from v1
+  default:  { kind: kernel, requirements: [pandas>=2, matplotlib, markdown] }
   meridian: { kind: docker, build: envs/meridian, gpu: optional }
 ```
 
@@ -195,6 +195,17 @@ RUN pip install --no-cache-dir "google-meridian" pandas pyarrow plotly
 # GPU variant: build-arg CUDA=1 → pip install "google-meridian[and-cuda]"
 WORKDIR /workspace
 ```
+
+An env declares the Python distributions it must provide:
+
+```yaml
+envs:
+  default: { kind: kernel, requirements: [pandas>=2, matplotlib, markdown] }
+```
+
+`requirements` are opaque pip requirement strings. The harness never interprets them — which is what keeps invariant 1 intact: that `pandas` is needed is the `ds` cartridge's business, not the harness's. A kernel env verifies them when it is provisioned and refuses to start with the exact `pip install` command for whatever is missing, so a run fails before any persona is invoked rather than three tool calls into step 1. `dsagent cartridge install <path>` installs every kernel env's requirements into the interpreter running DSAgent. Docker envs declare theirs for documentation only: the image installs them and the harness only validates that the field is well formed.
+
+The check is distribution metadata, not `import`: what a cartridge declares is what pip installs, and the import name is frequently not the distribution name (`scikit-learn` imports as `sklearn`). Resolving that would mean the harness carrying a table of package knowledge. Version specifiers are pip's business at install time.
 
 Because the sandbox protocol is provider-agnostic, `kind: modal` or `kind: langsmith` can be added later without touching workflows.
 
