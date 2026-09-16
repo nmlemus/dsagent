@@ -25,8 +25,10 @@ Status legend: `[ ]` todo · `[~]` in progress · `[x]` done. One task per PR.
 
 ### M2.2 UI vertical slice (see docs/ui.md) — moved up: the product is the UI
 - [ ] **Runner: stream step events (start/tool/end) instead of only `log()`** — the foundation for both `chat` progress and the AG-UI bridge. Each event carries the step's `produces`, so a consumer can tell a deliverable from a working file (runs 001/002)
-- [ ] `dsagent serve`: FastAPI + `ag-ui-langgraph` (`LangGraphAGUIAgent`, `add_langgraph_fastapi_endpoint`) exposing the orchestrator; `CopilotKitMiddleware()` in the graph
-- [ ] Map that event stream onto AG-UI `CUSTOM` events `dsagent.step` and `dsagent.gate`; human gates become HITL interrupts answered from the UI
+- [x] Design PR: `docs/ui-slice.md` — verified package APIs, run-inside-a-tool design, event schemas, frontend plan, PR breakdown
+- [ ] Runner: stable gate-`interrupt()` sequence on re-entry (`StepRecord.gate` split from `status`) and a deterministic `run_id` derived from `tool_call_id`, with the two-gate resume test and a re-entry test asserting the same `run_dir` is reopened
+- [ ] `dsagent serve`: FastAPI + `ag-ui-langgraph` (`add_langgraph_fastapi_endpoint`) + `copilotkit` (`LangGraphAGUIAgent`, `CopilotKitMiddleware()`) exposing the orchestrator, plus `/runs/{id}/files/{path}`
+- [ ] Map that event stream onto AG-UI `CUSTOM` events `dsagent.step` / `dsagent.tool` / `dsagent.file` via `dispatch_custom_event`; human gates become LangGraph interrupts answered from the UI
 - [ ] `ui/` Next.js + CopilotKit: chat left, canvas right; canvas lists workspace files as the filesystem middleware streams them (iframe for `.html`, markdown, PNG, table for `.csv/.parquet`)
 - [ ] Gate card (`request_approval` render) → approve/reject → runner resumes
 - [ ] Workflow progress render: DAG with step status from `dsagent.step` events
@@ -72,3 +74,19 @@ Status legend: `[ ]` todo · `[~]` in progress · `[x]` done. One task per PR.
 - 2026-09-16 — Steps record their own telemetry into `run.json` (tool calls by name, token usage, skills read, workspace files touched with mtimes). Sourced from LangChain's standard `tool_calls`/`usage_metadata` and from workspace mtimes, never from a provider SDK. Subagent activity that Deep Agents does not surface in the step result is not counted.
 - 2026-09-16 — Env dependencies are declared per env as `EnvSpec.requirements` (opaque pip strings the harness never interprets, so invariant 1 holds). Kernel envs verify at provisioning and fail fast with the exact `pip install`; `dsagent cartridge install <path>` installs them into the current interpreter; Docker envs keep theirs in the Dockerfile and the harness only validates the field. Verification is distribution metadata rather than importability, because import name ≠ distribution name and a mapping would put package knowledge in the harness.
 - 2026-09-16 — Skill scoping materialised on disk per persona (copy, not symlink) and mounted via `CompositeBackend` at `/skills/<persona>/`.
+- 2026-09-16 — M2.2 transport facts, each verified by importing the package (`docs/ui-slice.md`).
+  `LangGraphAGUIAgent` is in `copilotkit`, not `ag-ui-langgraph` (which exports `LangGraphAgent`);
+  `docs/ui.md` had it wrong. The bridge reads `astream_events` and passes no `stream_mode`, so
+  `get_stream_writer()` writes never reach it — the runner emits with `dispatch_custom_event`.
+  A gate is a LangGraph `interrupt()` carried as an AG-UI interrupt, so the planned `dsagent.gate`
+  CUSTOM event is dropped; the three CUSTOM events are `dsagent.step` / `dsagent.tool` / `dsagent.file`.
+- 2026-09-16 — A gate's `interrupt()` is called on every re-entry, decided or not, and its return
+  value discarded when `run.json` already records a decision. LangGraph matches resume values
+  positionally and derives `Interrupt.id` from the call position, so skipping a decided gate — which
+  the runner does today, since `status == "done"` covers both work and gate — shifts the sequence and
+  feeds gate *n*'s answer to gate *n+1* (reproduced with two gates). Step *work* stays skipped.
+- 2026-09-16 — `run_workflow` derives its `run_id` from the tool call (`run_id = f"{workflow}-{tool_call_id}"`,
+  injected with `InjectedToolCallId`), never from the clock. LangGraph re-executes the tool from the top on
+  resume, and the current timestamped `run_dir` would mint a fresh empty run on every re-entry — losing
+  `run.json` and re-paying for every completed step. The tool call id is stable across the original call and
+  the re-entry (verified). `thread_id` + a state counter stays the fallback for a caller without a tool call.

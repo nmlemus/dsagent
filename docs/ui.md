@@ -10,9 +10,11 @@ is coming.
 TEXT_MESSAGE_*, TOOL_CALL_*, STATE_SNAPSHOT/DELTA, CUSTOM) over HTTP/SSE or WebSocket.
 First-party integrations for LangGraph, CrewAI, Google ADK, Microsoft Agent Framework,
 Pydantic AI, Mastra, AWS Strands/AgentCore; community for Claude Agent SDK and OpenAI
-Agents. For our stack the bridge is `ag-ui-langgraph` (`LangGraphAGUIAgent`,
-`add_langgraph_fastapi_endpoint`) plus CopilotKit's `CopilotKitMiddleware()`, which
-streams Deep Agents' todos, files and subagent activity to the frontend automatically.
+Agents. For our stack the bridge is `ag-ui-langgraph` (`LangGraphAgent`,
+`add_langgraph_fastapi_endpoint`) plus CopilotKit's `CopilotKitMiddleware()` and its
+`LangGraphAGUIAgent` subclass, which streams Deep Agents' todos, files and subagent
+activity to the frontend automatically. (This paragraph first placed `LangGraphAGUIAgent`
+in `ag-ui-langgraph`; it is in `copilotkit`. Verified signatures in `docs/ui-slice.md`.)
 This is the *de facto* standard; building our own WebSocket protocol (v1 style) would
 be a mistake.
 
@@ -102,7 +104,9 @@ mark those paths as deliverables without a heuristic on file extensions or direc
 ## Slice for M2.2 (thin vertical slice, before Docker/Meridian)
 
 1. `dsagent serve`: FastAPI app with `add_langgraph_fastapi_endpoint` for the
-   orchestrator; runner emits `CUSTOM` events `dsagent.step` and `dsagent.gate`.
+   orchestrator; runner emits `CUSTOM` events `dsagent.step`, `dsagent.tool` and
+   `dsagent.file`. There is no `dsagent.gate` event — a gate is a LangGraph `interrupt()`,
+   which AG-UI carries as an interrupt, not as `CUSTOM`. See `docs/ui-slice.md`.
 2. `ui/` (Next.js + CopilotKit): chat + canvas; canvas shows workspace files as they
    appear (iframe for `.html`, markdown, images, table for `.csv/.parquet`).
 3. Gate card: `request_approval` HITL → approve/reject → runner resumes.
