@@ -16,7 +16,7 @@ Status legend: `[ ]` todo · `[~]` in progress · `[x]` done. One task per PR.
 
 ### M2.1 First real run of `eda-to-report`
 - [x] First commit and push as branch `v2` of `nmlemus/dsagent` (decided 2026-09-16; `main` stays v1 until 2.0 ships)
-- [ ] Add `tests/integration/test_eda_to_report.py` (skipped unless `DSAGENT_INTEGRATION=1`) using a small public CSV
+- [x] Add `tests/integration/test_eda_to_report.py` (skipped unless `DSAGENT_INTEGRATION=1`) using a small public CSV
 - [ ] Run it with a real model; capture what the personas actually do in `docs/runs/eda-to-report-001.md` (prompt gaps, tool misuse, cost, wall time)
 - [ ] Fix step instructions / skills based on that run (expect 2–3 iterations)
 - [ ] Runner: stream step events (start/tool/end) instead of only `log()`, so `chat` and a future API can show progress
