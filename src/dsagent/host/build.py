@@ -28,7 +28,7 @@ from deepagents.backends import CompositeBackend, FilesystemBackend
 from dsagent.cartridge.models import Cartridge, Persona
 from dsagent.envs.base import Env
 
-DEFAULT_MODEL = os.environ.get("DSAGENT_MODEL", "anthropic:claude-sonnet-4-6")
+DEFAULT_MODEL = os.environ.get("DSAGENT_MODEL", "anthropic:claude-sonnet-5")
 SKILLS_MOUNT = "/skills/"
 
 

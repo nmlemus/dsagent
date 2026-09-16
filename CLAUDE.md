@@ -27,7 +27,8 @@ task list; work top-down, one task per branch/PR, and tick it when done.
 
 Python ≥ 3.11 · `deepagents` 0.7.x · pydantic 2 · typer · jupyter-client. Install with
 `pip install -e ".[dev,anthropic]"`. Model via `DSAGENT_MODEL` (default
-`anthropic:claude-sonnet-4-6`).
+`anthropic:claude-sonnet-5`); a persona may override it with `model:` in its
+frontmatter, and `dsagent chat --model` overrides both.
 
 ## Commands
 
