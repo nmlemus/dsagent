@@ -63,6 +63,19 @@ Two routes:
 | `POST /agent` | The orchestrator as an AG-UI SSE stream. A workflow's progress arrives as `CUSTOM` events named `dsagent.step`, `dsagent.tool` and `dsagent.file`; a human gate arrives as an interrupt the client answers with `{"decision": "approve"}`. `GET /agent/health` reports liveness. |
 | `GET /runs/{run_id}/files/{path}` | One file from a run's workspace, so the canvas can render the artifacts those events announce. Resolved inside `<run_dir>/workspace` — anything escaping it, and anything under `.dsagent/`, is a 404. |
 
+The UI lives in [`ui/`](ui/) — Next.js + CopilotKit, chat left and canvas right:
+
+```bash
+# terminal 1
+dsagent serve                          # http://127.0.0.1:8000/agent
+
+# terminal 2
+cd ui && npm install && npm run dev     # http://localhost:3000
+```
+
+`npm run build` is the UI's check for now; there are no frontend tests yet.
+`DSAGENT_URL` points the UI at a different agent.
+
 Each browser tab is one `thread_id`, which is what a gate resumes into. The slice
 checkpoints in memory, so a `serve` restart loses in-flight gates; `run.json` still
 has every finished step, and the run resumes from there. Event schemas and the
