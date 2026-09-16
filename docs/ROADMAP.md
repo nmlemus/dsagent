@@ -27,9 +27,9 @@ Status legend: `[ ]` todo · `[~]` in progress · `[x]` done. One task per PR.
 - [x] **Runner: stream step events instead of only `log()`** — `RunnerEvent` + `on_event` on `WorkflowRunner`, emitting `dsagent.step` / `dsagent.tool` / `dsagent.file`; personas run with `.stream()` so tool and file events arrive while the step is still working. Each step event carries `produces`, so a consumer can tell a deliverable from a working file (runs 001/002). No AG-UI dependency
 - [x] Design PR: `docs/ui-slice.md` — verified package APIs, run-inside-a-tool design, event schemas, frontend plan, PR breakdown
 - [x] Runner: stable gate-`interrupt()` sequence on re-entry (`StepRecord.gate` split from `status`) and a deterministic `run_id` derived from `tool_call_id`, with the two-gate resume test and a re-entry test asserting the same `run_dir` is reopened
-- [ ] `dsagent serve`: FastAPI + `ag-ui-langgraph` (`add_langgraph_fastapi_endpoint`) + `copilotkit` (`LangGraphAGUIAgent`, `CopilotKitMiddleware()`) exposing the orchestrator, plus `/runs/{id}/files/{path}`
+- [x] `dsagent serve`: FastAPI + `ag-ui-langgraph` (`add_langgraph_fastapi_endpoint`) + `copilotkit` (`LangGraphAGUIAgent`, `CopilotKitMiddleware()`) exposing the orchestrator, plus `/runs/{id}/files/{path}`. Optional `[ui]` extra; base dependencies unchanged
 - [x] Dispatch runner events as LangChain custom events (`dsagent/runner/dispatch.py`), which `ag-ui-langgraph` forwards as AG-UI `CUSTOM` with the same name and value. Pinned by a test that runs the runner inside a sync tool under an async `astream_events` consumer, and by a timing test: the first event arrives while the tool is still working
-- [ ] Human gates become LangGraph `interrupt()`s answered from the UI (`ask_human` → `interrupt`), on the resume rules already built
+- [x] Human gates become LangGraph `interrupt()`s answered from the UI (`ask_human` → `interrupt`), on the resume rules already built. `GateRequest` gives the hook the step context a gate card needs
 - [ ] `ui/` Next.js + CopilotKit: chat left, canvas right; canvas lists workspace files as the filesystem middleware streams them (iframe for `.html`, markdown, PNG, table for `.csv/.parquet`)
 - [ ] Gate card (`request_approval` render) → approve/reject → runner resumes
 - [ ] Workflow progress render: DAG with step status from `dsagent.step` events
@@ -103,3 +103,13 @@ Status legend: `[ ]` todo · `[~]` in progress · `[x]` done. One task per PR.
   `visible_input_names` share one definition of what a placeholder is. Step instructions are prose written for a
   persona and prose contains braces — JSON, dict literals, CSS, f-string examples — all of which format syntax
   either mangles or raises on. `mmm-meridian`'s `fit` step documents a JSON artifact and could not run at all.
+- 2026-09-16 — `dsagent serve` is an optional `[ui]` extra, pinned exactly for `ag-ui-langgraph` and
+  `copilotkit` (pre-1.0, and their APIs already moved once under this design) and floored for `fastapi`
+  and `uvicorn`. Installing it does not move `deepagents`, `langgraph` or `langchain-core`. The harness
+  core imports neither package: `build_orchestrator` takes `middleware` and `checkpointer`, and `serve.py`
+  supplies `CopilotKitMiddleware()` and `InMemorySaver()`.
+- 2026-09-16 — `ask_human` takes a `GateRequest` (run_id, workflow, step, persona, produces, prompt)
+  rather than a bare prompt. A terminal needs only the prompt; a gate card in a browser has to say which
+  step of which run is waiting and what it produced, and under `serve` the request becomes the
+  `interrupt()` payload. `dsagent chat` and `dsagent serve` now share one `run_workflow`
+  (`runner/tools.py`) and differ only in that hook and in where events go.

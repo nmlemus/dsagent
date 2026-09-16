@@ -8,7 +8,6 @@
 
 from __future__ import annotations
 
-import json
 import subprocess
 import sys
 import time
@@ -26,10 +25,12 @@ from dsagent.runner import (
     STEP_EVENT,
     TOOL_EVENT,
     GateDecision,
+    GateRequest,
     RunnerEvent,
     WorkflowRunner,
     dispatch_runner_event,
     visible_input_names,
+    workflow_tools,
 )
 
 app = typer.Typer(help="DSAgent v2 — cartridge-driven Deep Agents harness.", no_args_is_help=True)
@@ -39,28 +40,6 @@ console = Console()
 
 DEFAULT_CARTRIDGE = Path("cartridges/ds")
 RUNS_DIR = Path(".dsagent/runs")
-
-
-def workflow_run_id(workflow: str, tool_call_id: str = "") -> str:
-    """The run directory name for one `run_workflow` invocation.
-
-    Derived from the tool call, never from the clock. Under `dsagent serve` the
-    gate is a LangGraph `interrupt()`, and resuming re-executes `run_workflow`
-    from the top: a timestamped id would mint a fresh, empty run directory on
-    every re-entry, so `resume` would find no `run.json`, every step would read
-    as `pending`, and the run would redo — and re-pay for — work it had already
-    done. `tool_call_id` is stable across the original call and the re-entry,
-    because it belongs to the `AIMessage` the checkpoint replays (verified
-    against a `create_deep_agent` graph).
-
-    The timestamp remains the fallback for a caller that reaches this without a
-    tool call — a direct programmatic call, where there is nothing to re-enter.
-    `docs/ui-slice.md` §2 names `thread_id` plus a counter in graph state as the
-    other option; it is strictly more machinery for the same guarantee, so it
-    stays unbuilt until something needs it.
-    """
-    suffix = tool_call_id or time.strftime("%Y%m%d-%H%M%S")
-    return f"{workflow}-{suffix}"
 
 
 def _parse_inputs(pairs: list[str]) -> dict[str, str]:
@@ -73,8 +52,9 @@ def _parse_inputs(pairs: list[str]) -> dict[str, str]:
     return out
 
 
-def _ask(prompt: str) -> GateDecision:
-    return GateDecision.APPROVE if typer.confirm(prompt, default=False) else GateDecision.REJECT
+def _ask(request: GateRequest) -> GateDecision:
+    """The terminal's gate: a y/n prompt. `dsagent serve` uses an interrupt instead."""
+    return GateDecision.APPROVE if typer.confirm(request.prompt, default=False) else GateDecision.REJECT
 
 
 @app.callback()
@@ -244,7 +224,7 @@ def run(
     run_dir = RUNS_DIR / run_id
     runner = WorkflowRunner(
         c, run_dir,
-        ask_human=(lambda p: GateDecision.APPROVE) if yes else _ask,
+        ask_human=(lambda request: GateDecision.APPROVE) if yes else _ask,
         log=lambda m: console.print(m, style="dim", markup=False),
         on_event=_print_event if not quiet else None,
     )
@@ -265,51 +245,23 @@ def chat(
     model: str | None = typer.Option(None, "--model"),
 ):
     """Interactive session with the orchestrator (personas as subagents)."""
-    from typing import Annotated
-
-    from langchain_core.tools import InjectedToolCallId, tool
-
     from dsagent.envs import make_env
     from dsagent.host import build_orchestrator
 
     carts = load_cartridges(cartridge)
-    by_wf = {w: c for c in carts for w in c.workflows}
     env = make_env(carts[0].envs["default"], workspace)
 
-    @tool
-    def list_workflows() -> str:
-        """List workflows available in the loaded cartridges."""
-        return json.dumps({w: c.workflows[w].description for w, c in by_wf.items()}, indent=2)
+    def on_event(e: RunnerEvent) -> None:
+        # Two consumers: the terminal running `dsagent chat`, and whatever is
+        # attached to the graph's event stream.
+        _print_event(e)
+        dispatch_runner_event(e)
 
-    @tool
-    def run_workflow(
-        name: str,
-        inputs: dict | None = None,
-        tool_call_id: Annotated[str, InjectedToolCallId] = "",
-    ) -> str:
-        """Run a cartridge workflow end to end. `inputs` is a dict matching the workflow's declared inputs."""
-        if name not in by_wf:
-            return f"unknown workflow {name}; use list_workflows"
-        run_dir = RUNS_DIR / workflow_run_id(name, tool_call_id)
-        resume = (run_dir / "run.json").exists()
-        def on_event(e: RunnerEvent) -> None:
-            # Two consumers: the terminal running `dsagent chat`, and whatever is
-            # attached to the graph's event stream — a browser, once PR 4 lands.
-            _print_event(e)
-            dispatch_runner_event(e)
-
-        state = WorkflowRunner(by_wf[name], run_dir, ask_human=_ask,
-                               log=lambda m: console.print(m, style="dim", markup=False),
-                               on_event=on_event).run(name, inputs or {}, resume=resume)
-        # `status` is the work and no longer says "paused", so report the gate
-        # decisions alongside it — otherwise a paused run reads as all-done.
-        return json.dumps({
-            "run_dir": str(run_dir), "status": state.status,
-            "steps": {k: v.status for k, v in state.steps.items()},
-            "gates": {k: v.gate.decision for k, v in state.steps.items() if v.gate},
-        })
-
-    agent = build_orchestrator(carts, env, workspace, model=model, workflow_tools=[list_workflows, run_workflow])
+    tools = workflow_tools(
+        carts, RUNS_DIR, ask_human=_ask, on_event=on_event,
+        log=lambda m: console.print(m, style="dim", markup=False),
+    )
+    agent = build_orchestrator(carts, env, workspace, model=model, workflow_tools=tools)
     console.print(f"[bold]dsagent[/bold] {__version__} · cartridges: {', '.join(c.name for c in carts)} · Ctrl-C to quit")
     history: list[dict] = []
     try:
@@ -324,6 +276,39 @@ def chat(
     except (KeyboardInterrupt, EOFError):
         env.close()
         console.print("\nbye")
+
+
+@app.command()
+def serve(
+    cartridge: list[Path] = typer.Option([DEFAULT_CARTRIDGE], "--cartridge", "-c", help="repeatable"),
+    workspace: Path = typer.Option(Path(".dsagent/serve"), "--workspace"),
+    model: str | None = typer.Option(None, "--model"),
+    host: str = typer.Option("127.0.0.1", "--host"),
+    port: int = typer.Option(8000, "--port"),
+):
+    """Serve the orchestrator over AG-UI for the web UI. Needs the `ui` extra."""
+    try:
+        import uvicorn
+
+        from dsagent.serve import build_app
+    except ImportError as e:  # pragma: no cover — depends on what is installed
+        console.print(f"[red]missing the 'ui' extra[/red] ({e}). Install with: "
+                      'pip install -e ".[ui]"')
+        raise typer.Exit(1) from e
+
+    from dsagent.envs import make_env
+
+    carts = load_cartridges(cartridge)
+    env = make_env(carts[0].envs["default"], workspace)
+    application = build_app(carts, env, workspace, RUNS_DIR, model=model)
+    console.print(
+        f"[bold]dsagent serve[/bold] {__version__} · cartridges: "
+        f"{', '.join(c.name for c in carts)}\n"
+        f"  agent  http://{host}:{port}/agent\n"
+        f"  files  http://{host}:{port}/runs/{{run_id}}/files/{{path}}"
+    )
+    uvicorn.run(application, host=host, port=port)
+
 
 
 if __name__ == "__main__":

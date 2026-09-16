@@ -21,7 +21,7 @@ Swap the DS cartridge for a BMAD cartridge and the same binary becomes an SDLC t
 
 ## 2. Non-goals (v2.0)
 
-No UI beyond CLI and an HTTP/WebSocket API. No multi-tenant auth. No hosted sandbox providers in the first cut (the sandbox protocol allows them later). No attempt to re-implement planning, context management or tool-calling loops — Deep Agents owns those.
+No UI beyond the CLI and an HTTP API. *(Revised 2026-09-16: the UI moved into M2 — see `docs/ui.md`. The API is AG-UI over SSE, not WebSocket.)* No multi-tenant auth. No hosted sandbox providers in the first cut (the sandbox protocol allows them later). No attempt to re-implement planning, context management or tool-calling loops — Deep Agents owns those.
 
 ## 3. Cartridge format
 
@@ -229,7 +229,9 @@ Every step also records what it actually did, into its `run.json` entry: tool ca
 
 **`envs/`** — `KernelBackend` (ported) and `DockerBackend` (new), both behind the sandbox protocol.
 
-**`api/`** — CLI (`dsagent chat`, `dsagent run <workflow>`, `dsagent cartridge add|list|validate`) and the FastAPI + WebSocket server ported from v1 (`server/routes/chat.py`, `hitl.py`, `artifacts.py`, `sessions.py`).
+**`cli.py` / `serve.py`** — the two front ends. `cli.py` is `dsagent cartridge validate|list`, `run`, `chat` and `serve`. `serve.py` is the HTTP surface, and it replaces the v1 FastAPI + WebSocket server rather than porting it: the transport is AG-UI over SSE, via `ag_ui_langgraph.add_langgraph_fastapi_endpoint` and `copilotkit.LangGraphAGUIAgent`, so there is no hand-rolled protocol to maintain (`docs/ui.md`). It mounts the orchestrator at `POST /agent` and serves a run's workspace at `GET /runs/{run_id}/files/{path}`, resolved inside the workspace and refusing anything that escapes it or lives under `.dsagent/`.
+
+The two front ends differ in exactly two ways, and share `runner/tools.py` for everything else: how a gate is asked, and where runner events go. In the terminal a gate is `typer.confirm` and events are printed; under `serve` a gate is a LangGraph `interrupt()` carrying the payload in `docs/ui-slice.md` §3, and events go out through `dispatch_custom_event`. Interrupts need a checkpointer, so the served graph is built with one (in-memory for the M2.2 slice); `run.json` remains what survives a process restart, and the checkpointer only has to outlive a gate answer. `build_orchestrator` takes `middleware` and `checkpointer` so that wiring lives in `serve.py` and the harness core never imports either package — the `ui` extra is optional.
 
 Everything in v1's `core/engine.py` (924-line hand-rolled LLM loop), `core/planner.py`, `core/context.py`, `prompts/` and `memory/summarizer.py` is dropped: Deep Agents provides the loop, the todo/planning middleware, context management and summarization.
 

@@ -22,10 +22,20 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+# `dsagent serve` only. Pinned exactly for the two pre-1.0 packages whose APIs were
+# read rather than documented (see docs/ui-slice.md §1 — `LangGraphAGUIAgent` is not
+# where the AG-UI docs said it was, and the bridge's stream handling decides how the
+# runner emits events); floors for the two stable ones.
+ui = [
+    "ag-ui-langgraph==0.0.45",
+    "copilotkit==0.1.96",
+    "fastapi>=0.141",
+    "uvicorn>=0.53",
+]
 anthropic = ["langchain-anthropic"]
 openai = ["langchain-openai"]
 google = ["langchain-google-genai"]
-dev = ["pytest>=8", "ruff"]
+dev = ["pytest>=8", "ruff", "httpx>=0.28"]  # httpx: fastapi TestClient
 
 [project.scripts]
 dsagent = "dsagent.cli:app"

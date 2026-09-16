@@ -69,6 +69,24 @@ class RunnerEvent:
 
 
 @dataclass
+class GateRequest:
+    """What the runner tells a human gate, so an answer can be asked for.
+
+    `ask_human` used to receive the prompt alone, which is all a terminal needs.
+    A gate card in a browser needs to say which step of which run is waiting and
+    what it produced, and under `dsagent serve` this becomes the `interrupt()`
+    payload — see `docs/ui-slice.md` §3.
+    """
+
+    run_id: str
+    workflow: str
+    step: str
+    persona: str
+    produces: list[str]
+    prompt: str
+
+
+@dataclass
 class GateRecord:
     """What a human (or a check script) decided about a step, and when.
 
@@ -153,7 +171,7 @@ class WorkflowRunner:
         run_dir: Path,
         *,
         agent_factory: AgentFactory | None = None,
-        ask_human: Callable[[str], GateDecision] | None = None,
+        ask_human: Callable[[GateRequest], GateDecision] | None = None,
         log: Callable[[str], None] = print,
         on_event: Callable[[RunnerEvent], None] | None = None,
     ) -> None:
@@ -162,7 +180,7 @@ class WorkflowRunner:
         self.workspace = run_dir / "workspace"
         self.workspace.mkdir(parents=True, exist_ok=True)
         self.agent_factory = agent_factory or self._default_factory
-        self.ask_human = ask_human or (lambda prompt: GateDecision.APPROVE)
+        self.ask_human = ask_human or (lambda request: GateDecision.APPROVE)
         self.log = log
         self.on_event = on_event
         self.run_id = run_dir.name
@@ -425,7 +443,11 @@ class WorkflowRunner:
 
         prompt = gate.prompt or f"Step '{step.id}' finished. Continue?"
         self.log(f"[gate] human: {prompt}")
-        answer = GateDecision.APPROVE if dry_run else self.ask_human(prompt)
+        request = GateRequest(
+            run_id=self.run_id, workflow=wf.name, step=step.id, persona=step.persona,
+            produces=list(step.produces), prompt=prompt,
+        )
+        answer = GateDecision.APPROVE if dry_run else self.ask_human(request)
         if decided == GateDecision.APPROVE.value:
             return True  # asked for the sequence's sake; the decision already stands
         rec.gate = GateRecord(decision=answer.value, ts=time.time())
