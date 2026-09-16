@@ -170,6 +170,8 @@ steps:
     produces: [report/mmm-report.html]
 ```
 
+**A step only sees the inputs it uses.** By default the runner shows a step exactly the workflow inputs its own instruction text interpolates — a step that never writes `{question}` is never told the question, and it does not appear in the prompt's `## Inputs` block either. `sees: [name, ...]` on a step overrides that in either direction (`sees: []` shows nothing). Run 001 is why: with every input visible to every step, the profiling persona read the analysis question and answered it, then the gate step re-derived a verdict the profile had already written — about a third of the run spent on work that belonged to later steps. Naming an input in prose is not enough to see it; interpolate it or declare it. `dsagent cartridge validate` lists steps of an input-taking workflow that end up seeing nothing, which is usually that mistake.
+
 **Invocation — same rule as BMAD.** BMAD exposes both agents and workflows as named skills (`bmad-agent-pm` loads a persona; `bmad-prd` runs a workflow) and a loaded persona can start any workflow from its menu. DSAgent does the same, so these three are equivalent and all end in the runner: the user types `/ds-mmm` (a command skill the harness auto-generates as `skills/ds-mmm/SKILL.md` from `workflow.yaml`, which is also what Claude Code sees); the user says "Ana, hazme un MMM" and Ana — whose `cartridge.yaml` entry lists `workflows: [mmm-meridian]` — calls `run_workflow`; or the orchestrator recognises the intent and routes it. A persona can only start workflows it is listed on, exactly like skill scope:
 
 ```yaml

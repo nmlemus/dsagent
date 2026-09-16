@@ -21,7 +21,7 @@ from rich.table import Table
 from dsagent import __version__, requirements
 from dsagent.cartridge import CartridgeError, load_cartridge, load_cartridges
 from dsagent.cartridge.models import Cartridge, EnvSpec
-from dsagent.runner import GateDecision, WorkflowRunner
+from dsagent.runner import GateDecision, WorkflowRunner, visible_input_names
 
 app = typer.Typer(help="DSAgent v2 — cartridge-driven Deep Agents harness.", no_args_is_help=True)
 cartridge_app = typer.Typer(help="Inspect and validate cartridges.")
@@ -64,10 +64,35 @@ def cartridge_validate(path: Path = typer.Argument(DEFAULT_CARTRIDGE)):
     console.print(f"[green]✓[/green] cartridge [bold]{c.name}[/bold] v{c.version} is consistent")
     console.print(f"  personas: {len(c.personas)} · skills: {len(c.skills)} · workflows: {len(c.workflows)} · envs: {len(c.envs)}")
     console.print(f"  command skills regenerated: {', '.join(f'/{c.name}-{w}' for w in c.workflows)}")
+    for wf_name, blind in _blind_steps(c).items():
+        console.print(
+            f"  [yellow]![/yellow] workflow '{wf_name}': step(s) {', '.join(blind)} are shown no "
+            f"inputs — their instructions interpolate none and they declare no `sees:`"
+        )
     for env, missing in _unsatisfied_envs(c).items():
         console.print(f"  [yellow]![/yellow] env '{env}' missing: {', '.join(missing)}")
     if _unsatisfied_envs(c):
         console.print(f"  run [bold]dsagent cartridge install {path}[/bold] to install them")
+
+
+def _blind_steps(c: Cartridge) -> dict[str, list[str]]:
+    """Steps of an input-taking workflow that end up seeing no input at all.
+
+    Almost always a step whose instructions name an input in prose but never
+    interpolate it, so the value silently stops reaching the persona.
+    """
+    out: dict[str, list[str]] = {}
+    for wf in c.workflows.values():
+        if not wf.inputs:
+            continue
+        blind = [
+            s.id
+            for s in wf.steps
+            if not visible_input_names(s, (wf.path / s.instructions).read_text(encoding="utf-8"))
+        ]
+        if blind:
+            out[wf.name] = blind
+    return out
 
 
 def _kernel_envs(c: Cartridge) -> list[EnvSpec]:

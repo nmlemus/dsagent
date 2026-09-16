@@ -58,6 +58,10 @@ class Step(BaseModel):
     produces: list[str] = Field(default_factory=list)
     gate: Gate | None = None
     timeout: str | None = None
+    sees: list[str] | None = None
+    """Workflow inputs this step is shown. `None` means the ones its own
+    instruction text interpolates — a step that never writes `{question}` is
+    never told the question. Set it explicitly to widen or narrow that."""
 
 
 class WorkflowInput(BaseModel):

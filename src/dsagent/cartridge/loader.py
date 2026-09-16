@@ -122,6 +122,11 @@ def _load_workflows(root: Path, declared: list[str]) -> dict[str, Workflow]:
                 raise CartridgeError(f"workflow {wf.name}: step {s.id} instructions not found: {s.instructions}")
             if s.gate and s.gate.kind == "auto" and not (wdir / s.gate.check).exists():
                 raise CartridgeError(f"workflow {wf.name}: step {s.id} gate check not found: {s.gate.check}")
+            unknown = [n for n in (s.sees or []) if n not in wf.inputs]
+            if unknown:
+                raise CartridgeError(
+                    f"workflow {wf.name}: step {s.id} `sees` names unknown input(s): {', '.join(unknown)}"
+                )
         wf.ordered_steps()  # raises on cycles
         workflows[wf.name] = wf
     return workflows
