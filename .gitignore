@@ -5,3 +5,11 @@ __pycache__/
 .venv/
 .env
 .env.*
+
+# ui/ — ui/.env is committed on purpose: it holds no secrets, only the
+# telemetry opt-out and the default agent URL.
+!ui/.env
+ui/node_modules/
+ui/.next/
+ui/next-env.d.ts
+ui/tsconfig.tsbuildinfo

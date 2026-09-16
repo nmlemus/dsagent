@@ -30,7 +30,8 @@ Status legend: `[ ]` todo · `[~]` in progress · `[x]` done. One task per PR.
 - [x] `dsagent serve`: FastAPI + `ag-ui-langgraph` (`add_langgraph_fastapi_endpoint`) + `copilotkit` (`LangGraphAGUIAgent`, `CopilotKitMiddleware()`) exposing the orchestrator, plus `/runs/{id}/files/{path}`. Optional `[ui]` extra; base dependencies unchanged
 - [x] Dispatch runner events as LangChain custom events (`dsagent/runner/dispatch.py`), which `ag-ui-langgraph` forwards as AG-UI `CUSTOM` with the same name and value. Pinned by a test that runs the runner inside a sync tool under an async `astream_events` consumer, and by a timing test: the first event arrives while the tool is still working
 - [x] Human gates become LangGraph `interrupt()`s answered from the UI (`ask_human` → `interrupt`), on the resume rules already built. `GateRequest` gives the hook the step context a gate card needs
-- [ ] `ui/` Next.js + CopilotKit: chat left, canvas right; canvas lists workspace files as the filesystem middleware streams them (iframe for `.html`, markdown, PNG, table for `.csv/.parquet`)
+- [x] `ui/` Next.js + CopilotKit shell: chat left, empty canvas right, `/api/copilotkit` relaying to `dsagent serve` via `HttpAgent`. Verified from the browser against a real model (`docs/runs/ui-shell-001.png`)
+- [ ] Canvas contents: workspace files from `dsagent.file` (iframe for `.html`, markdown, PNG, table for `.csv/.parquet`)
 - [ ] Gate card (`request_approval` render) → approve/reject → runner resumes
 - [ ] Workflow progress render: DAG with step status from `dsagent.step` events
 - [ ] Run `eda-to-report` end to end from the browser; screenshot in `docs/runs/`
@@ -113,3 +114,8 @@ Status legend: `[ ]` todo · `[~]` in progress · `[x]` done. One task per PR.
   step of which run is waiting and what it produced, and under `serve` the request becomes the
   `interrupt()` payload. `dsagent chat` and `dsagent serve` now share one `run_workflow`
   (`runner/tools.py`) and differ only in that hook and in where events go.
+- 2026-09-16 — CopilotChat renders **nothing** for a tool call with no registered renderer. Observed in the
+  shell: the orchestrator's `list_workflows` call is in the AG-UI stream as `TOOL_CALL_START/ARGS/END/RESULT`
+  and appears nowhere in the chat, not even collapsed. So the unattributed persona `TOOL_CALL_*` are invisible
+  by default rather than noisy, and PR 6/8 must *opt in* to rendering them (`useRenderTool` /
+  `useDefaultRenderTool`) rather than suppress them. `dsagent.tool` stays the attributed source for the DAG panel.
