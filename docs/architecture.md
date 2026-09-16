@@ -219,6 +219,8 @@ The harness has five modules and deliberately nothing else.
 
 **`runner/`** — executes a workflow: topological order over `needs`, one `task()` per step aimed at the right persona, env switch per step, `produces` verification, gate handling, resumability (a run is a directory with `run.json` state; re-running continues from the last completed step). This is the successor of v1's `core/planner.py` + `core/executor.py`, but it never plans — the DAG is declared, not invented.
 
+Every step also records what it actually did, into its `run.json` entry: tool calls counted by name, `input_tokens`/`output_tokens`, the `SKILL.md` files it read, and the workspace files it created or modified with their mtimes. It is read back from LangChain's standard message surface (`tool_calls`, `usage_metadata`) and from the workspace's own mtimes, so no provider-specific code enters the harness and a message carrying neither simply contributes nothing. This is what makes a run readable after the fact — which persona reached for which skill, what it cost, and in what order artifacts appeared (the last of which is also the input to the canvas design in `docs/ui.md`).
+
 **`envs/`** — `KernelBackend` (ported) and `DockerBackend` (new), both behind the sandbox protocol.
 
 **`api/`** — CLI (`dsagent chat`, `dsagent run <workflow>`, `dsagent cartridge add|list|validate`) and the FastAPI + WebSocket server ported from v1 (`server/routes/chat.py`, `hitl.py`, `artifacts.py`, `sessions.py`).

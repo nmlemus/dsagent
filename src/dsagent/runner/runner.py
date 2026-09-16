@@ -9,7 +9,10 @@ instructions, verifies `produces` on disk, and handles gates:
 * ``auto``  — runs the check script inside the step's env; non-zero exit fails
   the step.
 
-State lives in ``<run_dir>/run.json`` so a run survives restarts.
+State lives in ``<run_dir>/run.json`` so a run survives restarts. Each step
+also records what it actually did — tool calls by name, token usage, skills
+read and workspace files touched — read back from the agent result and from the
+workspace itself, never from anything provider-specific.
 """
 
 from __future__ import annotations
@@ -40,6 +43,14 @@ class StepRecord:
     finished_at: float | None = None
     output: str = ""
     error: str = ""
+    tool_calls: dict[str, int] = field(default_factory=dict)
+    """How many times the step called each tool, by tool name."""
+    usage: dict[str, int] = field(default_factory=dict)
+    """`input_tokens` / `output_tokens`, summed over the step's AI messages."""
+    skills_read: list[str] = field(default_factory=list)
+    """Paths of SKILL.md files the step read, in first-read order."""
+    files: list[dict[str, Any]] = field(default_factory=list)
+    """`{path, mtime}` for workspace files the step created or modified, oldest first."""
 
 
 @dataclass
@@ -178,11 +189,15 @@ class WorkflowRunner:
             rec.status, rec.finished_at, rec.output = "done", time.time(), "(dry run)"
             state.save(self.run_dir)
             return
+        before: dict[str, float] | None = None
         try:
             env = self.env_for(env_name)
             agent = self.agent_factory(self.cartridge, step.persona, env, self.workspace)
+            before = _snapshot(self.workspace)
             result = agent.invoke({"messages": [{"role": "user", "content": self._task_message(wf, step, inputs)}]})
             rec.output = _last_text(result)
+            # Before the produces check: a step that failed is the one worth reading.
+            _record_telemetry(rec, result)
             missing = [p for p in step.produces if not (self.workspace / p).exists()]
             if missing:
                 raise RuntimeError(f"step '{step.id}' did not produce: {', '.join(missing)}")
@@ -191,6 +206,8 @@ class WorkflowRunner:
             rec.status, rec.error = "failed", str(e)
             self.log(f"[step] {step.id} FAILED: {e}")
         finally:
+            if before is not None:
+                rec.files = _changed_files(before, _snapshot(self.workspace))
             rec.finished_at = time.time()
             state.save(self.run_dir)
 
@@ -223,6 +240,65 @@ class WorkflowRunner:
         state.save(self.run_dir)
         self.log(f"[gate] run paused at '{step.id}'. Resume with --resume once approved.")
         return False
+
+
+SKILL_MANIFEST = "/SKILL.md"
+"""A skill is a directory with this file; reading it is how a persona loads one."""
+
+
+def _attr(obj: Any, key: str) -> Any:
+    """Messages are objects from a chat model and plain dicts from a fake agent."""
+    return obj.get(key) if isinstance(obj, dict) else getattr(obj, key, None)
+
+
+def _messages(result: Any) -> list[Any]:
+    if isinstance(result, dict):
+        return result.get("messages") or []
+    return _attr(result, "messages") or []
+
+
+def _record_telemetry(rec: StepRecord, result: Any) -> None:
+    """Read back what the step did from its own messages.
+
+    Only LangChain's standard message surface is touched — `tool_calls` and
+    `usage_metadata` — so this stays true for any provider, and a message that
+    carries neither simply contributes nothing.
+    """
+    usage = {"input_tokens": 0, "output_tokens": 0}
+    for msg in _messages(result):
+        for call in _attr(msg, "tool_calls") or []:
+            name = _attr(call, "name")
+            if not name:
+                continue
+            rec.tool_calls[name] = rec.tool_calls.get(name, 0) + 1
+            _record_skill_reads(rec, name, _attr(call, "args") or {})
+        for field_name in usage:
+            usage[field_name] += int((_attr(msg, "usage_metadata") or {}).get(field_name, 0) or 0)
+    rec.usage = usage
+
+
+def _record_skill_reads(rec: StepRecord, tool: str, args: dict[str, Any]) -> None:
+    if tool != "read_file":
+        return
+    for value in args.values():
+        if isinstance(value, str) and SKILL_MANIFEST in value and value not in rec.skills_read:
+            rec.skills_read.append(value)
+
+
+def _snapshot(workspace: Path) -> dict[str, float]:
+    """mtime per workspace file, skipping the harness's own materialized skills."""
+    out: dict[str, float] = {}
+    for p in workspace.rglob("*"):
+        rel = p.relative_to(workspace)
+        if not p.is_file() or rel.parts[0] == ".dsagent":
+            continue
+        out[rel.as_posix()] = p.stat().st_mtime
+    return out
+
+
+def _changed_files(before: dict[str, float], after: dict[str, float]) -> list[dict[str, Any]]:
+    changed = [{"path": p, "mtime": m} for p, m in after.items() if before.get(p) != m]
+    return sorted(changed, key=lambda f: (f["mtime"], f["path"]))
 
 
 class _Defaults(dict):
