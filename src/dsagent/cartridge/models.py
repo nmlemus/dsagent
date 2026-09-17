@@ -132,6 +132,15 @@ class Workflow(BaseModel):
 
 class EnvSpec(BaseModel):
     name: str
+    cartridge: str = ""
+    """Which cartridge declared this env.
+
+    Carried on the spec rather than threaded through `make_env`, because the
+    only thing that needs it is a Docker image tag and the alternative is a
+    third argument on a function every test stubs. A spec that knows its own
+    provenance also makes `dsagent/ds-meridian` possible at all: without it two
+    cartridges declaring `meridian` would build over each other's image.
+    """
     kind: Literal["kernel", "docker"] = "kernel"
     build: Path | None = None
     """Docker: directory with a Dockerfile, relative to cartridge root."""

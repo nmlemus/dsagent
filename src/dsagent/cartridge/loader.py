@@ -132,8 +132,10 @@ def _load_workflows(root: Path, declared: list[str]) -> dict[str, Workflow]:
     return workflows
 
 
-def _load_envs(root: Path, declared: dict[str, Any]) -> dict[str, EnvSpec]:
-    envs: dict[str, EnvSpec] = {"default": EnvSpec(name="default", kind="kernel")}
+def _load_envs(root: Path, declared: dict[str, Any], cartridge: str = "") -> dict[str, EnvSpec]:
+    envs: dict[str, EnvSpec] = {
+        "default": EnvSpec(name="default", cartridge=cartridge, kind="kernel")
+    }
     for name, spec in (declared or {}).items():
         spec = dict(spec or {})
         _validate_requirements(name, spec.get("requirements"))
@@ -142,7 +144,7 @@ def _load_envs(root: Path, declared: dict[str, Any]) -> dict[str, EnvSpec]:
             if not (build / "Dockerfile").exists():
                 raise CartridgeError(f"env '{name}': {build}/Dockerfile not found")
             spec["build"] = build
-        envs[name] = EnvSpec(name=name, **spec)
+        envs[name] = EnvSpec(name=name, cartridge=cartridge, **spec)
     return envs
 
 
@@ -263,7 +265,7 @@ def load_cartridge(root: str | Path, *, generate_commands: bool = True) -> Cartr
     skills = {k: v for k, v in skills.items() if not k.startswith(f"{name}-")}
     personas = _load_personas(root, cy.get("personas", {}) or {})
     workflows = _load_workflows(root, cy.get("workflows", []) or [])
-    envs = _load_envs(root, cy.get("envs", {}) or {})
+    envs = _load_envs(root, cy.get("envs", {}) or {}, cartridge=name)
 
     c = Cartridge(
         name=name,

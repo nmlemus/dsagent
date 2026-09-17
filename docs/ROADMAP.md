@@ -114,6 +114,16 @@ Design settled before task 1: `docs/architecture.md` §3.4, "What a Docker env h
 
 ## Decisions log
 
+- 2026-09-17 — **Docker's output is collected through files, never `capture_output=True`.** A pipe
+  ends when every writer closes it, and the Docker CLI leaves writers behind: it spawns
+  `docker-credential-desktop get` holding its own stderr, and when the CLI exits the helper is
+  orphaned still holding that end. `subprocess.run(capture_output=True)` reaps the child in seconds
+  and then waits on an EOF that never arrives — first seen as a `docker build` that sat for forty
+  minutes having never pulled a layer, with the CLI a zombie and the helper at `ppid 1`. Files have
+  no such rule, so `run_docker` waits on the process and nothing else; `stdin` is `/dev/null` for the
+  same family of reasons. A timeout is not the fix: `subprocess.run` kills the child on timeout and
+  then calls `communicate()` again, unbounded, against the same orphan. The unit test is a command
+  that prints, backgrounds a child holding both streams, and exits at once — it hangs without this.
 - 2026-09-17 — **A Docker env's workspace is a bind-mount, never a copy.** Everything the
   harness learned to do in M2.5/M2.6 reads the run directory from the host afterwards:
   `produces` is verified there, the files endpoint serves from it, `show_chart` names a file
