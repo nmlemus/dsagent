@@ -1192,3 +1192,109 @@ the last section rather than dropping it.
 
 `pytest` 306 passed / 8 skipped · `ruff check src tests` · `dsagent cartridge
 validate cartridges/ds` · `npm run build`, `typecheck`, `lint`.
+
+## Review round — PR #76
+
+Mergeable with small fixes. Fifteen items, all applied on this branch.
+
+### The three that mattered
+
+**The export was a script running on the API's own origin.** `json.dumps` inside
+a `<script>` is not safe: an HTML parser ends a script at the first `</`,
+whatever the JavaScript around it thinks, so a chart title or a data cell
+containing `</script>` closed the block and everything after it became markup.
+And `markdown.markdown` passes raw HTML through by design. Every word in an
+export was written by a persona, and a persona's words come from a model that
+read the operator's data — that is the whole threat model, and it was open. Now:
+`</` is written `<\/` in every embedded JSON; `<` is neutered before the markdown
+is rendered, so no tag can form from a persona's text; and the response carries
+`Content-Disposition: attachment`, a CSP of `sandbox allow-scripts`, and
+`nosniff`, so a browser that renders it anyway does so with an opaque origin.
+Tested with a title of `</script><img src=x onerror=…>` and a data cell to match.
+
+**The chat owned the rail.** `.rail-steps` and `.chat` both asked for `flex: 1`,
+and in every live screenshot the run's steps were crushed to one row beside an
+empty message box. The chat is a footer now — a fixed strip that grows when
+somebody is typing in it — the steps take the rest, CopilotKit's inspector and
+its disclaimer are off, and its reply text is legible on navy instead of navy
+on navy.
+
+**The charts were somebody else's product.** Vega's stock Tableau palette, Vega's
+stock font, and the spec's `title` drawn *inside* the SVG under a card header
+that already said it. There is now one Vega config — the Aiuda typefaces, axis
+and grid inks, and a categorical range that starts with the document's own navy
+— defined in `dsagent.export` and served at `GET /chart-theme`, so the screen and
+the exported file read from one copy and cannot drift. The card strips the
+spec-level title; so does the export.
+
+A spec that names its own colours still wins, and the personas had been naming
+them (`scheme: tableau10`, `color: "#e67e22"`). That is fixed where it is decided
+— the `reports` skill now says not to choose colours — rather than by overriding
+a persona's spec from the renderer, because sometimes a colour is a statement.
+
+### Correctness
+
+- **Every visible card refetched its rows ten times a second while scrubbing.**
+  `useRows` depended on the whole `card` object, and the reducer builds a fresh
+  one each pass. It depends on the file, the run and the version now.
+- **The finished-run header stayed on screen during a replay**, quoting the total
+  cost and the final summary above a document rewound to minute two. It is hidden
+  while scrubbing; the scrubber is how you come back.
+- **A mark change could change the aggregation.** `withMark` deleted the
+  persona's `x.timeUnit` whenever the new mark was not a bar. It is only ever
+  *added*, and only to an axis the persona left ungrouped.
+- **"sent as context" was not true.** The brush fed the card's own ask form and
+  nothing else. It now lives in a selection the chat's `useAgentContext` reads,
+  so it rides with whatever is asked next — checked by brushing a range and
+  typing a question that named nothing; the answer came back with the dates.
+- **The repair budget did not hold.** `attempts` was keyed by chart alone and
+  lived for the runner's life, while `amend_tools` rebuilt its tools per call so
+  an amend could be retried for ever. Keyed by `(step, chart_id)`, with one
+  ledger shared across amends.
+- **A step sent back could pass by doing nothing**: the refused files were still
+  on disk, so `produces` was satisfied by the very artifact that was refused. At
+  least one promised file must now be newer than the decision. *One*, not all —
+  a step that owes a report and its machine-readable twin may legitimately need
+  to change only one, and failing that would be a false alarm.
+- **Stop asked the human first.** The check sat after the gate, so a stop pressed
+  during a gated step stopped the run by way of putting a question to somebody.
+  It runs before the gate now — and writing the test found that **the stop
+  request never survived at all**: it was a field in `run.json`, which the runner
+  rewrites at the end of every step, so the flag an HTTP handler had just written
+  went with it. Two writers, one document, and the one who does not own the value
+  wins — the same shape as the shared temp file, found the same way. It is a file
+  in the run directory now. That stop does not cancel work already in flight is
+  written down, in the runner and on the button.
+
+### Invariant 1
+
+The harness had learned three things about the ds cartridge: a docstring naming
+`key_column`, `endswith("column")` as a way to decide what to guess, and
+`inputs["question"]` / `inputs["data_path"]` read by name in the export. All
+three are now the cartridge's to say: `workflow.yaml` declares `title_input`,
+`data_input`, and `guess: unique_column` on the input that wants it. The harness
+knows what "a column with no repeats" is; it does not know what a key is, and it
+never reads the *name* of an input to decide anything.
+
+### Small
+
+`markdown` declared in the `[ui]` extra — it was used by the export and only ever
+installed as a side effect of the cartridge's kernel env, so the venv that tested
+it exercised the `<pre>` fallback. The one-paragraph summary ends on a word with
+an ellipsis and keeps its numbering. Workspace paths are encoded segment by
+segment in two more places. Pivot opens on a column that actually repeats, and
+Perspective's "configure" button takes the tokens through a stylesheet its shadow
+root adopts. The dead `.resizer` rules are gone, and a description list is
+written `dt` then `dd`, with the value put first visually rather than in the
+markup. The ask button names the persona who drew the chart.
+
+### Verified
+
+`pytest` 316 passed / 8 skipped — thirteen new, including the `</script>` title,
+raw HTML in a persona's markdown, the download headers, one theme for both
+renderers, a step sent back that rewrites nothing, and a stop that must not ask
+anybody anything · `ruff check src tests` · `dsagent cartridge validate` ·
+`npm run build`, `typecheck`, `lint`. Re-checked in the browser against
+`next build && next start`: four steps visible in the rail, no disclaimer, no
+duplicate chart titles, the pivot grouped by `dtype`, and the brush answered by
+the model.

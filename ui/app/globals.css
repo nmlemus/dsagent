@@ -521,7 +521,11 @@ button {
   margin: var(--gap-2) 0 var(--gap-2);
 }
 
+/* `dt` then `dd` in the markup, because that is what a description list is;
+   reversed here, because the number is what the eye wants first. */
 .rail-metric {
+  display: flex;
+  flex-direction: column-reverse;
   background: rgba(255, 255, 255, 0.05);
   border-radius: var(--radius);
   padding: 6px 7px;
@@ -1977,46 +1981,6 @@ select.control {
   }
 }
 
-/* ------------------------------------------------------------ resizers ---- */
-
-.resizer {
-  background: var(--rule);
-  position: relative;
-  z-index: 5;
-}
-
-.resizer::after {
-  /* A 1px line is the thing seen; 9px is the thing grabbed. */
-  content: "";
-  position: absolute;
-  inset: -4px;
-}
-
-.resizer-x {
-  width: 1px;
-  cursor: col-resize;
-}
-
-.resizer-y {
-  height: 1px;
-  cursor: row-resize;
-}
-
-.resizer:hover,
-.resizer:focus-visible {
-  background: var(--accent);
-}
-
-body.is-resizing {
-  cursor: col-resize;
-  user-select: none;
-}
-
-body.is-resizing iframe {
-  /* A drag must not be swallowed by the report the operator is dragging past. */
-  pointer-events: none;
-}
-
 /* --------------------------------------------------- the chat, restyled ---- */
 
 /**
@@ -2144,13 +2108,42 @@ body.is-resizing iframe {
  * by its own variables, no component replaced and no class reached into — with
  * the dark values it needs on this ground.
  */
+/* The chat is the *foot* of the rail, not its body. Both it and the step list
+   asked for `flex: 1`, and the chat won: in every live screenshot the run's
+   steps were crushed to one row while an empty message box owned the rail.
+   Collapsed it takes a fixed strip, and it grows when somebody is actually
+   typing in it. */
 .rail .chat {
-  flex: none;
+  flex: 0 0 auto;
   border-top: 1px solid var(--rail-rule);
   border-right: 0;
   background: transparent;
   color: var(--rail-ink);
-  max-height: 46vh;
+  max-height: 170px;
+  transition: max-height 160ms ease;
+}
+
+.rail .chat:focus-within,
+.rail .chat:hover {
+  max-height: 52vh;
+}
+
+/* CopilotKit renders assistant text in its own muted colour, which on navy is
+   very nearly the navy. These are the two that carry words. */
+.rail .chat [data-testid="copilot-message-list"],
+.rail .chat [data-testid="copilot-message-list"] * {
+  color: var(--rail-ink);
+}
+
+.rail .chat [data-testid="copilot-chat-textarea"] {
+  color: #fff;
+}
+
+/* The disclaimer's text is emptied through `labels`; this is the strip it
+   leaves behind. The same sentence is on the home screen, once. */
+.rail .chat [data-testid="copilot-input-overlay"] + div,
+.rail .chat [data-testid="copilot-input-overlay"] ~ div:empty {
+  display: none;
 }
 
 .rail .chat.is-replay,
@@ -2472,6 +2465,19 @@ body.is-resizing iframe {
 .pivot perspective-viewer {
   height: 100%;
   width: 100%;
+  /* Perspective themes itself through its own variables, the same way
+     CopilotKit does. Its "configure" button is the one control that shows
+     through, so it gets this product's type and colours rather than its own. */
+  --theme-font-family: var(--ui);
+  --mono-font-family: var(--mono);
+  --button--font-family: var(--ui);
+  --button--font-size: 12px;
+  --color: var(--ink);
+  --inactive--color: var(--ink-faint);
+  --active--color: var(--accent);
+  --plugin--background: var(--surface);
+  --select--background-color: var(--surface);
+  --icon--color: var(--ink-dim);
 }
 
 .rail-narration {
@@ -2803,6 +2809,11 @@ body.is-resizing iframe {
   border-radius: var(--radius);
 }
 
+.plan-estimate > div {
+  display: flex;
+  flex-direction: column-reverse;
+}
+
 .plan-estimate dd {
   margin: 0;
   font-size: 15px;
@@ -2869,6 +2880,8 @@ body.is-resizing iframe {
 }
 
 .done-figures > div {
+  display: flex;
+  flex-direction: column-reverse;
   background: var(--surface);
   border: 1px solid var(--rule);
   border-radius: var(--radius);

@@ -1,7 +1,7 @@
 "use client";
 
 import { CopilotKit, useAgent } from "@copilotkit/react-core/v2";
-import { createContext, useCallback, useContext, useMemo } from "react";
+import { createContext, useCallback, useContext, useMemo, useState } from "react";
 
 export const AGENT = "dsagent";
 
@@ -24,6 +24,24 @@ const AskContext = createContext<((question: string) => void) | null>(null);
 export const useAsk = () => useContext(AskContext);
 
 /**
+ * What the reader has selected on a chart, for the next thing they say.
+ *
+ * A brush is a person pointing at part of a picture. It has to reach the
+ * conversation *whatever* they type next — not only the card's own ask button —
+ * or the line under the chart saying "sent as context" is not true. The chat's
+ * `useAgentContext` reads this, so it travels with every message until the
+ * selection is cleared.
+ */
+export type Selection = { chartId: string; title: string; text: string } | null;
+
+const SelectionContext = createContext<{
+  selection: Selection;
+  select: (selection: Selection) => void;
+}>({ selection: null, select: () => undefined });
+
+export const useSelection = () => useContext(SelectionContext);
+
+/**
  * The run screen's agent provider.
  *
  * It wraps the *whole* screen, not just the chat panel, because the document and
@@ -43,7 +61,14 @@ export function AskProvider({
 }) {
   if (replay) return <AskContext.Provider value={null}>{children}</AskContext.Provider>;
   return (
-    <CopilotKit runtimeUrl="/api/copilotkit" agent={AGENT} threadId={`chat:${runId}`}>
+    <CopilotKit
+      runtimeUrl="/api/copilotkit"
+      agent={AGENT}
+      threadId={`chat:${runId}`}
+      // CopilotKit's own inspector is a second, unstyled control on a screen
+      // whose whole point is that nothing looks borrowed.
+      enableInspector={false}
+    >
       <Channel>{children}</Channel>
     </CopilotKit>
   );
@@ -66,7 +91,13 @@ function Channel({ children }: { children: React.ReactNode }) {
   // would be a question nobody receives. Better to have no button than one that
   // silently drops what was typed.
   const value = useMemo(() => (isReady ? ask : null), [isReady, ask]);
-  return <AskContext.Provider value={value}>{children}</AskContext.Provider>;
+  const [selection, select] = useState<Selection>(null);
+  const shared = useMemo(() => ({ selection, select }), [selection]);
+  return (
+    <AskContext.Provider value={value}>
+      <SelectionContext.Provider value={shared}>{children}</SelectionContext.Provider>
+    </AskContext.Provider>
+  );
 }
 
 function messageId(): string {

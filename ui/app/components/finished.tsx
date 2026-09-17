@@ -169,7 +169,7 @@ function Summary({ runId, view }: { runId: string; view: RunView }) {
   useEffect(() => {
     if (!path) return;
     let live = true;
-    fetch(`${API}/runs/${encodeURIComponent(runId)}/files/${path}`)
+    fetch(`${API}/runs/${encodeURIComponent(runId)}/files/${segments(path)}`)
       .then((r) => (r.ok ? r.text() : Promise.reject(new Error(String(r.status)))))
       .then((body) => live && setText(opening(body)))
       .catch(() => undefined);
@@ -185,6 +185,11 @@ function Summary({ runId, view }: { runId: string; view: RunView }) {
       <p>{text}</p>
     </div>
   );
+}
+
+/** A workspace path, encoded segment by segment — the slashes are structure. */
+function segments(path: string): string {
+  return path.split("/").map(encodeURIComponent).join("/");
 }
 
 /**
@@ -205,14 +210,20 @@ function opening(markdown: string): string {
     if (line.trim() === "" && body.length > 0) break;
     body.push(line);
   }
-  return body
+  const prose = body
     .join(" ")
     .replace(/[*_`>]/g, "")
-    .replace(/^\s*(?:\d+\.|[-•])\s*/gm, "")
     .replace(/\s+/g, " ")
-    .trim()
-    .slice(0, 600);
+    .trim();
+  if (prose.length <= LIMIT) return prose;
+  // On a word, with an ellipsis that says there is more — not mid-syllable.
+  // Numbered items keep their numbers: "1." is how the report enumerates its
+  // findings, and stripping them ran three of them into one sentence.
+  const cut = prose.lastIndexOf(" ", LIMIT);
+  return `${prose.slice(0, cut > 0 ? cut : LIMIT).trimEnd()}…`;
 }
+
+const LIMIT = 600;
 
 /**
  * The run, scrubbed.
@@ -268,8 +279,8 @@ export function Scrubber({
 function Figure({ label, value, title }: { label: string; value: string; title?: string }) {
   return (
     <div title={title}>
-      <dd className="mono">{value}</dd>
       <dt>{label}</dt>
+      <dd className="mono">{value}</dd>
     </div>
   );
 }

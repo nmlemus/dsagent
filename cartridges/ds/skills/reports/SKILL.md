@@ -78,6 +78,14 @@ Rules that are specific to this tool:
 - **Never inline rows in the spec.** `"data": {"name": "table"}`, always; the rows
   come from `data_ref`. Aggregate first and reference the aggregate — a chart that
   references the raw dataset makes the reader's browser do the `groupby`.
+- **Do not choose colours.** No `scheme`, no `color: "#..."`, no `range` on a
+  colour scale. The product applies its own palette to every chart it draws —
+  the same one on screen and in the exported report — and a spec that names
+  `tableau10` or a hex opts out of it, so one chart in the report looks like it
+  came from somewhere else. Encode `color` by *field* when a chart has series to
+  tell apart, and leave the values alone. The one exception is a mark whose
+  colour carries meaning you are stating in the title — a fitted trend drawn
+  apart from the data it fits — and then say so in the title.
 - **Make it interactive where it earns its keep**: a `point` select on
   `pointerover` for hover; `{"select": "interval", "bind": "scales"}` to pan and
   zoom a quantitative axis; an interval selection on `x` when a reader would want

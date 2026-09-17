@@ -70,6 +70,16 @@ survives a reload, a second tab and a run nobody was watching, none of which a
 message stream does.
 """
 
+STOP_FILE = "stop"
+"""Where a stop request waits, in the run directory.
+
+A file rather than a field, because a field in `run.json` is a field the runner
+overwrites: it saves its own state at the end of every step, and the flag an
+HTTP handler had just written went with it. Two writers, one document, and the
+one who does not own the value wins — the same shape of bug as the shared temp
+file, found the same way.
+"""
+
 GATE_VERSIONS = "gate-versions"
 """Where a rejected gate's artifacts are kept, inside the run directory.
 
@@ -226,15 +236,6 @@ class RunState:
     is what makes a persona's correction a *second version of that chart* rather
     than a second chart with the same title. The log keeps every version; this
     keeps the standing one.
-    """
-    stop_requested: bool = False
-    """Somebody pressed stop. Honoured between steps, and cleared when it is.
-
-    Between steps, not inside one: a step is a persona holding a kernel and half
-    a file, and killing it there leaves a workspace nothing can describe. So the
-    step in flight finishes and the run stops before the next one — which is
-    also the only point at which "stopping never costs more than what already
-    ran" is a promise the runner can keep.
     """
     plan: dict[str, Any] | None = None
     """The proposal this run was started from, if it was started from one.
@@ -555,9 +556,13 @@ class WorkflowRunner:
                         state.status = "failed"
                         state.save(self.run_dir)
                         return state
-                if step.gate and not self._gate(wf, step, rec, state, dry_run):
-                    return state
+                # Before the gate, not after it: a stop pressed while a gated
+                # step was running would otherwise stop the run *by way of*
+                # asking somebody a question first, which is the one thing a
+                # stopped run should not do.
                 if self._stopped(state):
+                    return state
+                if step.gate and not self._gate(wf, step, rec, state, dry_run):
                     return state
             state.status = "done"
             state.save(self.run_dir)
@@ -567,18 +572,23 @@ class WorkflowRunner:
                 self.close()
 
     def _stopped(self, state: RunState) -> bool:
-        """Whether somebody asked this run to stop. Read from disk, not memory.
+        """Whether somebody asked this run to stop, and honouring it if so.
 
-        The request arrives over HTTP, in another thread, and `run.json` is the
-        only thing both sides agree on — the same reason a gate lives there.
+        Checked between steps, never inside one: a step is a persona holding a
+        kernel and half a written file, and ending it there leaves a workspace
+        nothing can describe. The step in flight finishes and the run halts
+        before the next one — which is the only point at which "stopping never
+        costs more than what already ran" is a promise the runner can keep.
+
+        It does **not** cancel work already in flight: a `run_python` call that
+        is executing keeps executing, and the kernel closes the ordinary way as
+        the run unwinds. Stop means "do not start the next thing", and the
+        button says so before it is pressed.
         """
-        try:
-            asked = RunState.load(self.run_dir).stop_requested
-        except (OSError, ValueError, TypeError):
+        flag = self.run_dir / STOP_FILE
+        if not flag.exists():
             return False
-        if not asked:
-            return False
-        state.stop_requested = False
+        flag.unlink(missing_ok=True)
         state.status = "stopped"
         state.save(self.run_dir)
         self.log("[run] stopped between steps, as asked")
@@ -661,6 +671,8 @@ class WorkflowRunner:
             missing = [entry for entry in step.produces if not self.matched(entry)]
             if missing:
                 raise RuntimeError(f"step '{step.id}' did not produce: {', '.join(missing)}")
+            if sent_back is not None:
+                self._verify_rewritten(step, sent_back)
             rec.status = "done"
         except Exception as e:  # noqa: BLE001 — recorded, not swallowed
             rec.status, rec.error = "failed", str(e)
@@ -675,6 +687,31 @@ class WorkflowRunner:
             rec.finished_at = time.time()
             state.save(self.run_dir)
             self._emit_step(wf, step, rec.status, rec.error)
+
+    def _verify_rewritten(self, step: Step, sent_back: GateRecord) -> None:
+        """A step that was sent back has to have rewritten something.
+
+        Existence is not enough here: the files it promised are still on disk
+        from the pass that was refused, so a persona that reads the note and
+        does nothing passes the ordinary `produces` check untouched. At least
+        one of them must be newer than the decision.
+
+        *One*, not all: a step that promises a report and a machine-readable
+        twin may legitimately need to change only one of them, and demanding
+        both would fail a step that did exactly what was asked. What this
+        catches is the case worth catching — nothing changed at all.
+        """
+        promised = [p for entry in step.produces for p in self.matched(entry)]
+        rewritten = [
+            rel for rel in promised
+            if (self.workspace / rel).is_file()
+            and (self.workspace / rel).stat().st_mtime > sent_back.ts
+        ]
+        if promised and not rewritten:
+            raise RuntimeError(
+                f"step '{step.id}' was sent back but rewrote none of "
+                f"{', '.join(promised)} — the note was not addressed"
+            )
 
     def _record_cost(self, rec: StepRecord, step: Step) -> None:
         """Price the step's tokens, if this run was given a price list.

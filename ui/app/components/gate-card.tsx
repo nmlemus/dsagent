@@ -172,7 +172,8 @@ function Diff({ runId, step }: { runId: string; step: StepRow }) {
     if (!previous || !path) return;
     let live = true;
     const was = `${API}/runs/${encodeURIComponent(runId)}/gate-version/` +
-      `${encodeURIComponent(step.step)}/${previous}/${path}`;
+      `${encodeURIComponent(step.step)}/${previous}/` +
+      `${path.split("/").map(encodeURIComponent).join("/")}`;
     Promise.all([
       fetch(was).then((r) => (r.ok ? r.text() : Promise.reject(new Error(String(r.status))))),
       fetch(fileUrl(runId, path)).then((r) => (r.ok ? r.text() : "")),

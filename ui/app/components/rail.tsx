@@ -149,10 +149,10 @@ function Metrics({ detail }: { detail: RunDetail | null }) {
 function Metric({ label, value, title }: { label: string; value: string; title?: string }) {
   return (
     <div className="rail-metric">
+      <dt>{label}</dt>
       <dd className="mono" title={title}>
         {value}
       </dd>
-      <dt>{label}</dt>
     </div>
   );
 }

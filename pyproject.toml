@@ -49,6 +49,10 @@ ui = [
     # still not be a chart — see `charts.validate_spec`. It is also what renders
     # PNG/SVG for a PDF export.
     "vl-convert-python>=1.7",
+    # What turns a persona's markdown into the exported report's HTML. The
+    # cartridge's kernel env happens to install it too, which is why the venv
+    # that tested this only ever exercised the `<pre>` fallback.
+    "markdown>=3.5",
 ]
 anthropic = ["langchain-anthropic"]
 openai = ["langchain-openai"]

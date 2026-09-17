@@ -77,12 +77,31 @@ class WorkflowInput(BaseModel):
     options: list[str] | None = None
     default: str | None = None
     required: bool = True
+    guess: str | None = None
+    """How a screen may offer a value for this input when nobody gave one.
+
+    The only kind the harness knows is `unique_column`: "a column of the
+    uploaded table that has no repeats and nothing missing". It knows nothing
+    about *keys* — that this is what a key means is the cartridge's claim, made
+    here, which is why the name of the input is never inspected.
+    """
 
 
 class Workflow(BaseModel):
     name: str
     description: str = ""
     inputs: dict[str, WorkflowInput] = Field(default_factory=dict)
+    title_input: str | None = None
+    """Which input, if any, a screen may use as the run's title.
+
+    A workflow knows that its `question` is the thing a reader should see at the
+    top of the report; the harness does not, and hard-coding the name of an input
+    is how a domain leaks into it (invariant 1). Absent, screens fall back to the
+    workflow's own name."""
+    data_input: str | None = None
+    """Which input names the table this run works on, for the screens that want
+    to say so. Same reason: a harness that looks for `data_path` has learned
+    something about a cartridge."""
     env: str = "default"
     steps: list[Step]
     path: Path

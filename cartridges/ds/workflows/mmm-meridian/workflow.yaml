@@ -5,6 +5,7 @@ inputs:
   data_path:   { type: string }
   kpi:         { type: string }
   date_range:  { type: daterange, required: false }
+data_input: data_path
 env: meridian
 
 steps:

@@ -140,3 +140,115 @@ class _NoDriver:
 
     def error_for(self, run_id: str) -> None:
         return None
+
+
+# ---- the export is somebody else's file, so nothing in it may run -----------
+
+
+def test_a_title_that_closes_the_script_tag_does_not(run):
+    """An HTML parser ends a script at the first `</`, whatever the JS thinks.
+
+    Every word in an export was written by a persona, and a persona's words come
+    from a model that read the operator's data. A chart title of `</script>…` is
+    the whole threat model in one string.
+    """
+    pytest.importorskip("vl_convert")
+    run_dir, state = run
+    state["charts"]["wet"]["title"] = '</script><img src=x onerror="alert(1)">'
+    (run_dir / "workspace" / "artifacts" / "scratch" / "by_cat.csv").write_text(
+        'weather,precip\n"</script><svg onload=alert(2)>",5.4\n'
+    )
+
+    document = export_html(run_dir, state, vl_version=VEGA_LITE)
+
+    # Neither the title nor the cell can close the block they sit in.
+    assert "</script><img" not in document
+    assert "</script><svg" not in document
+    assert "<\\/script>" in document
+    # The caption is escaped as markup, not smuggled through as a tag.
+    assert "&lt;/script&gt;&lt;img" in document
+
+
+def test_raw_html_in_a_persona_s_markdown_is_shown_not_run(run):
+    pytest.importorskip("vl_convert")
+    run_dir, state = run
+    (run_dir / "workspace" / "artifacts" / "findings.md").write_text(
+        "# Findings\n\nRain is wet. <script>alert(1)</script> <img src=x onerror=alert(2)>\n"
+    )
+
+    document = export_html(run_dir, state, vl_version=VEGA_LITE)
+
+    assert "<script>alert(1)</script>" not in document
+    assert "<img src=x" not in document
+    assert "&lt;script&gt;alert(1)&lt;/script&gt;" in document
+
+
+def test_the_export_is_served_as_a_download_and_sandboxed(tmp_path):
+    pytest.importorskip("vl_convert")
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+
+    from dsagent.api import add_runs_routes
+    from dsagent.cartridge import load_cartridge
+
+    (tmp_path / "run" / "workspace").mkdir(parents=True)
+    (tmp_path / "run" / "run.json").write_text(json.dumps({
+        "workflow": "eda-to-report", "inputs": {}, "steps": {}, "charts": {},
+    }))
+    app = FastAPI()
+    ds = Path(__file__).resolve().parents[1] / "cartridges" / "ds"
+    add_runs_routes(app, [load_cartridge(ds)], tmp_path, driver=_NoDriver())
+    client = TestClient(app)
+
+    answer = client.get("/runs/run/export.html")
+
+    assert answer.status_code == 200
+    assert answer.headers["content-disposition"].startswith("attachment")
+    assert "sandbox" in answer.headers["content-security-policy"]
+    assert answer.headers["x-content-type-options"] == "nosniff"
+
+
+def test_the_screen_and_the_export_are_drawn_with_one_theme(tmp_path):
+    """Two hand-kept palettes drift the first time one of them is edited."""
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+
+    from dsagent.api import add_runs_routes
+    from dsagent.cartridge import load_cartridge
+    from dsagent.export import CHART_CONFIG
+
+    app = FastAPI()
+    ds = Path(__file__).resolve().parents[1] / "cartridges" / "ds"
+    add_runs_routes(app, [load_cartridge(ds)], tmp_path, driver=_NoDriver())
+
+    served = TestClient(app).get("/chart-theme").json()
+
+    assert served == CHART_CONFIG
+    assert served["range"]["category"][0] == "#142850"   # the document's own ink
+    assert "Satoshi" in served["font"]
+
+
+def test_a_chart_s_own_title_is_dropped_because_the_caption_has_it(run):
+    pytest.importorskip("vl_convert")
+    run_dir, state = run
+    state["charts"]["wet"]["spec"]["title"] = "Only rain and snow"
+
+    document = export_html(run_dir, state, vl_version=VEGA_LITE)
+
+    assert document.count("Only rain and snow") == 1
+
+
+def test_the_export_names_its_inputs_without_knowing_what_they_are(run):
+    pytest.importorskip("vl_convert")
+    run_dir, state = run
+    state["inputs"] = {"data_path": "data/w.csv", "kpi": "units", "question": "What is wet?"}
+
+    titled = export_html(run_dir, state, vl_version=VEGA_LITE, title_input="question")
+    untitled = export_html(run_dir, state, vl_version=VEGA_LITE)
+
+    assert "<h1>What is wet?</h1>" in titled
+    # With no workflow saying which input is the headline, the workflow names it.
+    assert "<h1>eda-to-report</h1>" in untitled
+    # Every input is on the meta line, by the name its workflow gave it.
+    for shown in ("data_path: data/w.csv", "kpi: units"):
+        assert shown in titled

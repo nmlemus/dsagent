@@ -170,3 +170,54 @@ def test_a_run_can_be_saved_from_two_threads_at_once(tmp_path):
     assert RunState.load(run_dir).workflow == "w"
     # And no temp files left behind for the next reader to trip over.
     assert [p.name for p in run_dir.glob(".run.json*")] == []
+
+
+def test_a_stop_is_honoured_between_steps_and_before_a_gate(tmp_path, monkeypatch):
+    """Stop means "do not start the next thing" — including not asking a human.
+
+    The check used to sit *after* the gate, so a stop pressed while a gated step
+    was running stopped the run by way of putting a question to somebody first.
+    """
+    from dsagent.envs.base import Env
+    from dsagent.runner import WorkflowRunner
+    from dsagent.runner.runner import STOP_FILE
+    from tests.fakes import tiny_cartridge
+
+    monkeypatch.setattr(
+        "dsagent.runner.runner.make_env",
+        lambda spec, ws: Env(spec=spec, workspace=ws, backend=FakeBackend()),
+    )
+    steps = [
+        {"id": "one", "produces": ["a.md"], "gate": {"kind": "human", "prompt": "Go on?"}},
+        {"id": "two", "needs": ["one"], "produces": ["b.md"]},
+    ]
+    run_dir = tmp_path / "run"
+    asked: list[str] = []
+
+    class Writer:
+        def __init__(self, workspace):
+            self.workspace = workspace
+
+        def invoke(self, payload):
+            for name in ("a.md", "b.md"):
+                if f"`{name}`" in payload["messages"][0]["content"]:
+                    (self.workspace / name).write_text("x")
+            # Somebody presses Stop while the first step is working — the same
+            # way the API does it.
+            (run_dir / STOP_FILE).write_text("")
+            return {"messages": [{"role": "assistant", "content": "done"}]}
+
+    runner = WorkflowRunner(
+        tiny_cartridge(tmp_path / "cartridge", steps), run_dir,
+        agent_factory=lambda c, persona, env, ws: Writer(ws),
+        ask_human=lambda request: asked.append(request.step) or GateDecision.APPROVE,
+        log=lambda m: None,
+    )
+    state = runner.run("w", {"data_path": "x.csv"})
+
+    assert state.status == "stopped"
+    assert asked == [], "a stopped run asked somebody a question on its way out"
+    assert state.steps["one"].status == "done"      # the step in flight finished
+    assert state.steps["two"].status == "pending"   # and nothing after it began
+    # The request is consumed, so resuming is an ordinary resume.
+    assert not (run_dir / STOP_FILE).exists()

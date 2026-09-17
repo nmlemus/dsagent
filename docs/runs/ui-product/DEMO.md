@@ -394,7 +394,17 @@ Cream ground with the navy rail as the one dark surface; the accent on primary
 actions and the running step only; emerald for done, a deep brick for failure,
 amber for a gate that is waiting. The chat is themed through CopilotKit's own
 variables — a second block of them for the rail's navy — and Perspective through
-its own light theme. No browser-default control is left visible.
+its own light theme plus a stylesheet its shadow root adopts, because its
+"configure" button exposes neither a part nor a variable. No browser-default
+control is left visible, and CopilotKit's inspector and disclaimer are off.
+
+**Charts are drawn with the product's own Vega config** — its typefaces, its axis
+and grid inks, its categorical range — served from `GET /chart-theme` so the
+screen and the exported file cannot drift apart. A spec that names its own
+colours still wins, which is why the bars in the screenshots above are the ones
+the personas chose: the `reports` skill now tells them not to, and the charts in
+the next run will be the product's. What a persona means deliberately — a fitted
+trend drawn apart from the data it fits — is still theirs to say.
 
 ---
 

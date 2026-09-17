@@ -41,17 +41,12 @@ from pathlib import Path
 from typing import Any
 
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import (
-    HTMLResponse,
-    PlainTextResponse,
-    Response,
-    StreamingResponse,
-)
+from fastapi.responses import PlainTextResponse, Response, StreamingResponse
 
 from dsagent.cartridge.models import Cartridge
-from dsagent.export import export_html
+from dsagent.export import CHART_CONFIG, export_html
 from dsagent.runner.charts import VEGA_LITE
-from dsagent.runner.runner import GATE_VERSIONS
+from dsagent.runner.runner import GATE_VERSIONS, STOP_FILE
 from dsagent.runs import (
     deliverables,
     is_live,
@@ -88,8 +83,15 @@ file's real one; the column descriptions are of this head, and the screen says
 so."""
 PREVIEW_PROFILE_ROWS = 20
 EMPTY_VALUES = {"", "none", "null", "nil"}
-"""Workflow defaults that mean "nothing". `key_column` defaults to the string
-"None" in the ds cartridge, and a guess has to treat that as unfilled."""
+"""Declared defaults that mean "nothing".
+
+A workflow may give an optional input a default of the literal string "None" —
+YAML has no other way to say "unset" for a string — and a screen offering a guess
+has to read that as unfilled rather than as a value somebody chose."""
+UNIQUE_COLUMN = "unique_column"
+"""The one kind of guess the harness can make: a column with no repeats and
+nothing missing. What that is *for* is the cartridge's business; it asks for it
+per input with `guess:` in `workflow.yaml`."""
 """How much of a table is a preview. 200 is what `docs/ui-product.md` §4.4 asks
 for; the ceiling is there because the parameter arrives from a URL."""
 
@@ -108,12 +110,15 @@ def workflow_shape(cartridge: Cartridge, name: str) -> dict[str, Any]:
         "cartridge": cartridge.name,
         "description": wf.description,
         "env": wf.env,
+        "title_input": wf.title_input,
+        "data_input": wf.data_input,
         "inputs": {
             key: {
                 "type": spec.type,
                 "required": spec.required and spec.default is None,
                 "default": spec.default,
                 "options": spec.options,
+                "guess": spec.guess,
             }
             for key, spec in wf.inputs.items()
         },
@@ -360,8 +365,9 @@ def add_runs_routes(
         if state.get("status") in ("done", "failed", "stopped"):
             return {"stopping": False, "status": state.get("status")}
         if driver.is_running(run_id):
-            state["stop_requested"] = True
-            _rewrite_state(run_dir, state)
+            # A file, not a field in `run.json`: the runner rewrites that file
+            # at the end of every step and would erase a flag it does not own.
+            (run_dir / STOP_FILE).write_text("", encoding="utf-8")
             return {"stopping": True, "status": state.get("status")}
         state["status"] = "stopped"
         state["gate"] = None
@@ -505,23 +511,55 @@ def add_runs_routes(
         except OSError as e:
             raise HTTPException(status_code=404, detail=str(e)) from e
 
-    @app.get("/runs/{run_id}/export.html", response_class=HTMLResponse)
-    def export_report(run_id: str) -> str:
+    @app.get("/chart-theme")
+    def chart_theme() -> dict[str, Any]:
+        """The Vega config every chart is drawn with, here and in an export.
+
+        One copy, served: the screen and the exported file must look the same,
+        and two hand-kept palettes drift the first time one of them is edited.
+        """
+        return CHART_CONFIG
+
+    @app.get("/runs/{run_id}/export.html")
+    def export_report(run_id: str) -> Response:
         """The run as one file somebody else can open, charts still alive.
 
         Self-contained: the Vega bundle, every spec, and a snapshot of the rows
         each chart draws. It works from a `file://` URL with no network and no
         server behind it, which is the difference between sending someone a
         report and sending them a screenshot.
+
+        **Served as a download, and sandboxed if anything renders it anyway.**
+        Every word in it was written by a persona, and a persona's words come
+        from a model that read the operator's data; the export escapes and strips
+        on the way in, but it must not *also* be a script running on this API's
+        own origin. So: `Content-Disposition: attachment`, and a CSP that would
+        give it an opaque origin with no same-origin access if a browser ever
+        showed it inline.
         """
         run_dir = run_dir_of(run_id)
+        state = read_state(run_dir)
+        cartridge = by_workflow.get(state.get("workflow", ""))
+        workflow = cartridge.workflows[state["workflow"]] if cartridge else None
         try:
-            return export_html(run_dir, read_state(run_dir), vl_version=VEGA_LITE)
+            document = export_html(
+                run_dir, state, vl_version=VEGA_LITE,
+                title_input=workflow.title_input if workflow else None,
+            )
         except ImportError:
             raise HTTPException(
                 status_code=501,
                 detail="this server has no vl-convert, so it cannot bundle an interactive report",
             ) from None
+        return Response(
+            content=document,
+            media_type="text/html",
+            headers={
+                "Content-Disposition": f'attachment; filename="{run_dir.name}.html"',
+                "Content-Security-Policy": "sandbox allow-scripts allow-downloads",
+                "X-Content-Type-Options": "nosniff",
+            },
+        )
 
     @app.get("/runs/{run_id}/download")
     def download_all(run_id: str, everything: bool = False):
@@ -614,10 +652,12 @@ def _guesses(shape: dict[str, Any], inputs: dict[str, Any], profile: dict[str, A
              ) -> dict[str, dict[str, str]]:
     """Values the operator has not given, offered as guesses and labelled as such.
 
-    Only one kind of guess is made, and only from the file's own shape: an input
-    the workflow declares but nobody filled, whose name the profile answers —
-    a column that is unique across every row it was shown. The harness does not
-    know what a "key" is; it knows which column has no repeats.
+    Only one kind of guess is made, and only from the file's own shape: a column
+    that is unique across every row it was shown, offered for an input whose
+    workflow asked for exactly that with `guess: unique_column`. The harness does
+    not know what a "key" is and never reads the *name* of an input to decide —
+    a harness that looks for something ending in "column" has learned a
+    cartridge's naming convention, which is invariant 1 going quietly.
     """
     if not profile:
         return {}
@@ -630,7 +670,7 @@ def _guesses(shape: dict[str, Any], inputs: dict[str, Any], profile: dict[str, A
         given = str(inputs.get(key) or "").strip()
         if given and given.lower() not in EMPTY_VALUES:
             continue
-        if spec["type"] == "string" and unique and key.endswith("column"):
+        if spec.get("guess") == UNIQUE_COLUMN and unique:
             out[key] = {
                 "value": unique[0],
                 "why": f"unique across all {profile['rows']} rows, with nothing missing",

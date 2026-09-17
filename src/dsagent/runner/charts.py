@@ -220,14 +220,20 @@ def chart_tools(
     on_chart: Callable[[ChartRecord], None],
     context: Callable[[], StepContext],
     known: Callable[[str], ChartRecord | None],
+    attempts: dict[tuple[str, str], int] | None = None,
 ) -> list[Any]:
     """`show_chart` and `show_table`, bound to one run.
 
     `context` is asked at call time rather than at build time because a runner
     builds one set of tools and drives several steps through it: the chart has to
     be attributed to the step that is running *now*.
+
+    `attempts` is passed in for the same reason it is keyed by step: one runner's
+    tools outlive one step, and a caller that rebuilds the tools per call — the
+    orchestrator amending a chart — would otherwise start from zero every time
+    and never reach the cap at all.
     """
-    attempts: dict[str, int] = {}
+    tries: dict[tuple[str, str], int] = attempts if attempts is not None else {}
 
     def resolve(data_ref: str) -> Path | str:
         """The workspace file `data_ref` names, or why it cannot be used.
@@ -324,21 +330,24 @@ def chart_tools(
             return f"error: {target}"
 
         cid = chart_id.strip() or slug(title)
+        # Keyed by step as well as by chart: two steps may both draw
+        # "by-category", and a budget one of them spent is not the other's.
+        counter = (context().step, cid)
         problem = validate_spec(spec)
         if problem:
-            attempts[cid] = attempts.get(cid, 0) + 1
-            if attempts[cid] >= MAX_ATTEMPTS:
+            tries[counter] = tries.get(counter, 0) + 1
+            if tries[counter] >= MAX_ATTEMPTS:
                 return (
-                    f"error: this spec has failed the Vega-Lite schema {attempts[cid]} times. "
+                    f"error: this spec has failed the Vega-Lite schema {tries[counter]} times. "
                     f"Stop repairing it and write the figure as a PNG instead.\n{problem}"
                 )
             return (
-                f"error: the spec is not valid Vega-Lite (attempt {attempts[cid]} of "
+                f"error: the spec is not valid Vega-Lite (attempt {tries[counter]} of "
                 f"{MAX_ATTEMPTS}). Fix it and call show_chart again with "
                 f'chart_id="{cid}".\n{problem}'
             )
 
-        attempts.pop(cid, None)
+        tries.pop(counter, None)
         columns, rows, preview = describe(target)
         clean = {**spec, "data": {"name": "table"}}
         rec = record("chart", cid, title, data_ref, section, clean, columns, rows)
@@ -419,6 +428,10 @@ def amend_tools(runs_dir: Path) -> list[Any]:
     """
     from dsagent.runner.runner import EVENT_LOG, RunState
 
+    # Rebuilt per call, so the repair budget has to live out here or an amend
+    # could be retried for ever, three at a time, and never hit the cap.
+    attempts: dict[tuple[str, str], int] = {}
+
     def emit(run_id: str) -> Any:
         run_dir = runs_dir / run_id
 
@@ -455,8 +468,9 @@ def amend_tools(runs_dir: Path) -> list[Any]:
         return chart_tools(
             run_dir / "workspace", run_id,
             on_chart=emit(run_id),
-            context=lambda: StepContext(step="chat", persona="orchestrator"),
+            context=lambda: StepContext(step=f"chat:{run_id}", persona="orchestrator"),
             known=known(run_id),
+            attempts=attempts,
         )
 
     @tool

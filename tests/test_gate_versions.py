@@ -150,3 +150,74 @@ class _NoDriver:
 
     def error_for(self, run_id: str) -> None:
         return None
+
+
+def test_a_step_sent_back_that_rewrites_nothing_does_not_pass(run, tmp_path):
+    """Existence is not enough on a re-entry: the refused files are still there.
+
+    A persona that reads the note and changes nothing would otherwise satisfy
+    the ordinary `produces` check with the very artifact that was refused.
+    """
+    runner, _ = run([GateDecision.REJECT], ["only version"])
+    runner.run("w", {"data_path": "x.csv"})
+
+    class Idle:
+        """Writes nothing at all the second time round."""
+
+        def __init__(self, workspace: Path):
+            self.workspace = workspace
+
+        def invoke(self, payload):
+            return {"messages": [{"role": "assistant", "content": "nothing to do"}]}
+
+    runner.agent_factory = lambda c, persona, env, ws: Idle(ws)
+    state = runner.run("w", {"data_path": "x.csv"}, resume=True)
+
+    assert state.status == "failed"
+    assert "sent back but rewrote none of" in state.steps["check"].error
+
+
+def test_rewriting_one_of_several_promises_is_enough(run, tmp_path, monkeypatch):
+    """A step may legitimately need to change only one of the files it owes."""
+    import time
+
+    from dsagent.envs.base import Env
+    from dsagent.runner import WorkflowRunner
+    from tests.fakes import tiny_cartridge
+
+    monkeypatch.setattr(
+        "dsagent.runner.runner.make_env",
+        lambda spec, ws: Env(spec=spec, workspace=ws,
+                             backend=type("B", (), {"close": lambda s: None})()),
+    )
+    steps = [{"id": "check", "produces": ["a.md", "b.json"],
+              "gate": {"kind": "human", "prompt": "Proceed?"}}]
+    answers = [GateDecision.REJECT]
+
+    class Half:
+        """Writes both the first time, then only `a.md`."""
+
+        seen = 0
+
+        def __init__(self, workspace: Path):
+            self.workspace = workspace
+
+        def invoke(self, payload):
+            Half.seen += 1
+            (self.workspace / "a.md").write_text(f"pass {Half.seen}")
+            if Half.seen == 1:
+                (self.workspace / "b.json").write_text("{}")
+            return {"messages": [{"role": "assistant", "content": "done"}]}
+
+    cart = tiny_cartridge(tmp_path / "c2", steps)
+    runner = WorkflowRunner(
+        cart, tmp_path / "run2",
+        agent_factory=lambda c, persona, env, ws: Half(ws),
+        ask_human=lambda request: answers.pop(0) if answers else GateDecision.APPROVE,
+        log=lambda m: None,
+    )
+    runner.run("w", {"data_path": "x.csv"})
+    time.sleep(0.01)  # mtime resolution, not a race
+    state = runner.run("w", {"data_path": "x.csv"}, resume=True)
+
+    assert state.status == "done"

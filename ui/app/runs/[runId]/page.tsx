@@ -80,7 +80,12 @@ export default function RunScreen() {
           view={run.view}
           onOpen={setDetail}
           header={
-            run.detail?.status === "done" && (
+            // Not while scrubbing: the header speaks for the *finished* run —
+            // its total cost, its deliverables, its summary — and printing those
+            // above a document rewound to minute two says two different things
+            // about the same moment. The scrubber below is how you come back.
+            run.detail?.status === "done" &&
+            run.at === null && (
               <Finished
                 runId={runId}
                 detail={run.detail}

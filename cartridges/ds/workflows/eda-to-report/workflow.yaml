@@ -3,7 +3,15 @@ description: Profile a dataset, run the data quality gate, and deliver a finding
 inputs:
   data_path:  { type: path }
   question:   { type: string, default: "What are the main patterns and quality issues in this dataset?" }
-  key_column: { type: string, required: false, default: "None" }
+  # `guess: unique_column` is this workflow telling the harness what a key is:
+  # a column with no repeats and nothing missing. The harness offers it; it does
+  # not know the word "key" and never reads the name of an input to decide.
+  key_column: { type: string, required: false, default: "None", guess: unique_column }
+# Which input a screen may show as the run's title, and which one names the
+# table it works on. Without these the harness would have to recognise
+# "question" and "data_path", which is a cartridge's vocabulary in the harness.
+title_input: question
+data_input: data_path
 env: default
 
 steps:

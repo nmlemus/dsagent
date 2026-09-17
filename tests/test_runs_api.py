@@ -87,8 +87,12 @@ def test_cartridges_describes_every_workflow_the_launcher_can_offer(client):
     eda = next(w for w in body["workflows"] if w["name"] == "eda-to-report")
 
     assert eda["inputs"]["data_path"] == {
-        "type": "path", "required": True, "default": None, "options": None,
+        "type": "path", "required": True, "default": None, "options": None, "guess": None,
     }
+    # The workflow says which input is the title and which is the table, so no
+    # screen has to recognise the words "question" or "data_path" (invariant 1).
+    assert (eda["title_input"], eda["data_input"]) == ("question", "data_path")
+    assert eda["inputs"]["key_column"]["guess"] == "unique_column"
     # `question` has a default, so the form can prefill it and not demand it;
     # `key_column` is optional. §7.2 is exactly this rendered.
     assert eda["inputs"]["question"]["required"] is False
@@ -480,9 +484,9 @@ def test_the_plan_guesses_a_key_from_the_column_that_has_no_repeats():
     from dsagent.api import _guesses
 
     shape = {"inputs": {
-        "data_path": {"type": "path"},
-        "question": {"type": "string"},
-        "key_column": {"type": "string"},
+        "data_path": {"type": "path", "guess": None},
+        "question": {"type": "string", "guess": None},
+        "key_column": {"type": "string", "guess": "unique_column"},
     }}
     profile = {
         "rows": 3,
@@ -496,7 +500,8 @@ def test_the_plan_guesses_a_key_from_the_column_that_has_no_repeats():
 
     assert guesses["key_column"]["value"] == "date"
     assert "unique" in guesses["key_column"]["why"]
-    # `weather` repeats, so it is not offered — and `question` is not a column.
+    # `weather` repeats, so it is not offered. `question` asked for no guess, and
+    # the harness does not look at what an input is *called* to decide.
     assert "weather" not in str(guesses)
     assert "question" not in guesses
 
@@ -504,7 +509,7 @@ def test_the_plan_guesses_a_key_from_the_column_that_has_no_repeats():
 def test_a_value_the_operator_already_gave_is_not_guessed_over():
     from dsagent.api import _guesses
 
-    shape = {"inputs": {"key_column": {"type": "string"}}}
+    shape = {"inputs": {"key_column": {"type": "string", "guess": "unique_column"}}}
     profile = {"rows": 2, "columns": [{"name": "id", "distinct": 2, "empty": 0}]}
 
     assert _guesses(shape, {"key_column": "date"}, profile) == {}
@@ -572,3 +577,37 @@ def test_a_run_that_has_started_keeps_the_inputs_it_began_with(client, tmp_path)
 
     assert refused.status_code == 409
     assert "already started" in refused.json()["detail"]
+
+
+def test_stopping_a_live_run_leaves_a_request_the_runner_will_find(client, tmp_path):
+    """The request is a file, not a field: `run.json` has another writer."""
+    from dsagent.runner.runner import STOP_FILE
+
+    created = client.post("/runs", json={"workflow": "eda-to-report", "inputs": {}}).json()
+    run_id = created["run_id"]
+    runs_dir = tmp_path / "runs"
+    state = json.loads((runs_dir / run_id / "run.json").read_text())
+    state["status"] = "running"
+    (runs_dir / run_id / "run.json").write_text(json.dumps(state))
+
+    class Driving:
+        def is_running(self, _run_id: str) -> bool:
+            return True
+
+        def error_for(self, _run_id: str) -> None:
+            return None
+
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+
+    from dsagent.api import add_runs_routes
+    from dsagent.cartridge import load_cartridge
+
+    app = FastAPI()
+    add_runs_routes(app, [load_cartridge(DS)], runs_dir, driver=Driving())
+    answer = TestClient(app).post(f"/runs/{run_id}/stop").json()
+
+    assert answer["stopping"] is True
+    assert (runs_dir / run_id / STOP_FILE).exists()
+    # And the run still reads `running` — it stops when the runner gets there.
+    assert json.loads((runs_dir / run_id / "run.json").read_text())["status"] == "running"
