@@ -69,11 +69,29 @@ Turning the M2.2 slice into something a stakeholder can watch for ten minutes an
 - [x] SQLite checkpointer + cost in telemetry (§4.3, §4.6)
 - [x] Demo script run, evidence, `docs/runs/ui-product/DEMO.md`, PR
 
+### M2.6 The living report (see docs/ui-living-report.md, docs/mockups/living-report.html) — DONE 2026-09-17 (PR #76)
+
+Charts and tables are objects the reader can use, not images; the run screen is a
+document the team writes into. 13/13 §6 demo lines with a real model, 5 runs, $2.88.
+
+- [x] `show_chart` / `show_table` in the harness: Vega-Lite spec + data by reference (rows never pass through the model), altair schema + vl-convert dry render, repair loop, `charts` in run, `dsagent.chart` event, `Step.section`
+- [x] Cartridge `eda`/`reports` skills and `eda-to-report` steps emit chart objects; PNG only as fallback
+- [x] Run screen as rail / living document / drawer; home "What the team can do"
+- [x] ChartCard / TableCard: hover, pan/zoom, local mark change, brush → context, spec drawer, Perspective pivot — vega + Perspective bundled from node_modules, zero external requests
+- [x] Gate card states what is approved, cost so far and past-run cost, diff on re-entry; a rejected gate sends the step back with the note and keeps the rejected version (`gate-versions/vN`)
+- [x] New run: drop file → plan (no model call) → start; first-class stop
+- [x] Finished run: summary, share link, self-contained HTML export with live charts, zip, log, replay scrubber, versions
+- [x] Review round (#76): export HTML escaping/sanitising + attachment/CSP, rail layout, Aiuda chart theme, replay re-embed thrash, `timeUnit` preserved on mark change, brush context wired, repair attempts per (step, chart), superseded produces need mtime > decision, stop test, invariant-1 leaks removed
+- [ ] Deferred: PDF export (vl-convert PNGs into a print layout); findings diff between two gate versions (product question, not a button); chat-started runs losing their gate on restart (build the agent inside the server lifespan)
+
 ### M2.3 Docker env — next
-- [ ] `DockerBackend` integration test behind `DSAGENT_DOCKER=1` (build `envs/meridian`, `execute("python -c 'import meridian'")`)
-- [ ] Workspace bind-mount + file ownership sanity (non-root user in image)
-- [ ] Auto-gate scripts run *inside* the step env, not on the host (`_gate` currently shells out on the host)
-- [ ] Env lifecycle: reuse container across steps of the same run; always `rm -f` on exit/failure
+Design settled before task 1: `docs/architecture.md` §3.4, "What a Docker env has to honour".
+- [x] Design: bind-mounted workspace, materialized gate scripts, skills already inside the
+      mount (`:ro` for containment only), chart validation stays on the host and says so
+- [ ] `DockerBackend` integration test behind `DSAGENT_DOCKER=1` (build `envs/meridian`, `execute("python -c 'import meridian'")`) + a unit test with a fake docker client for command, mounts and cleanup
+- [ ] Workspace bind-mount + `.dsagent/skills` read-only + file ownership: non-root user at the host uid/gid, and a step's `produces` written in the container verified on the host
+- [ ] Auto-gate scripts and `run_skill_script` run inside the step env; the kernel env unchanged
+- [ ] Env lifecycle: one container per run reused across steps, `rm -f` in a `finally` on exit/failure/stop, fresh container on resume, container id + image in `runner.log` and a `dsagent.env` event
 
 ### M2.4 `mmm-meridian` on the Meridian sample dataset
 - [ ] `cartridges/ds/skills/mmm/scripts/load_sample.py` — fetch Google's simulated dataset into `data/`
@@ -89,12 +107,35 @@ Turning the M2.2 slice into something a stakeholder can watch for ten minutes an
 ## M4 — Connectors + hardening
 
 - [ ] Runner: stream personas with `updates` only and reconstruct the final state, instead of `["updates", "values"]`. `values` mode copies the whole transcript on every node, which is wasted allocation on a long step; the runner only needs the last one
-- [ ] Multi-run management in the UI (list runs, open past run, resume paused run)
+- [x] Multi-run management in the UI (list runs, open past run, resume paused run) — M2.5
 - [ ] BigQuery connector via cartridge `.mcp.json` + LangChain MCP adapters
-- [ ] Run resumability across process restarts (already in `run.json`; needs API surface)
+- [x] Run resumability across process restarts — M2.5 (launcher-started runs; chat-started runs still lose their gate, see M2.6 deferred)
 - [ ] chore: `dsagent --version` prints "Missing command" (eager callback vs `no_args_is_help`)
 
 ## Decisions log
+
+- 2026-09-17 — **A Docker env's workspace is a bind-mount, never a copy.** Everything the
+  harness learned to do in M2.5/M2.6 reads the run directory from the host afterwards:
+  `produces` is verified there, the files endpoint serves from it, `show_chart` names a file
+  in it, the zip is built from it. A container writing to its own copy produces a run whose
+  evidence does not exist.
+- 2026-09-17 — **Auto-gate scripts are materialized, not mounted.** `gate.check` lives in the
+  cartridge, outside the workspace, and `_auto_gate` shells out on the host with `python3`.
+  It is copied to `<workspace>/.dsagent/gates/<workflow>/` at run start — the same trick
+  `materialize_skills` already uses — and run through `env.backend.execute()` with
+  `env.python`. One rule for both env kinds: the kernel env runs the identical command.
+  Mounting the cartridge read-only was the alternative and was rejected for needing a
+  Docker-only code path in a runner that should not know what Docker is.
+- 2026-09-17 — **Skills need no mount of their own.** They are materialized *inside* the
+  workspace (`<workspace>/.dsagent/skills/<persona>/`) and `run_skill_script` already runs a
+  workspace-relative path through the backend, so the bind-mount carries them. A second bind
+  of the same directory with `:ro` is worth adding for containment — a persona should not be
+  able to rewrite the skill it was granted — but not for reachability.
+- 2026-09-17 — **Chart validation stays in the harness process**, which means the `[ui]`
+  extra is needed wherever a cartridge draws charts even if every step runs in Docker. The
+  silent skip in `validate_spec` when `altair` or `vl-convert` is missing becomes a warning
+  in `runner.log` and a note from `dsagent cartridge validate`: unvalidated charts are a
+  thing to be told about, not a thing to discover in a browser.
 
 - 2026-09-17 — **A rejected gate sends its step back.** It used to leave the step `done` and
   re-ask on resume: the persona never saw the note, nothing was rewritten, and the only way
