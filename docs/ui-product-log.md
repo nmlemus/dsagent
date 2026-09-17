@@ -784,9 +784,37 @@ still v1.
   through to `applyNote`, so the first `dsagent.chart` of a run would have become
   a note with no text — a screen quietly wrong rather than one missing something.
 
+### Real run 1 of 10 — `eda-charts-20260917-103207`, $0.605, 5 m 42 s
+
+`eda-to-report` on `tests/data/seattle-weather.csv`, CLI, gate auto-approved (the
+replay discards a recorded wait and stands there for a real person, so buying a
+wait here would have bought nothing). **Seven `show_*` calls, seven chart events,
+zero validation failures** — the personas got Vega-Lite right first time, which is
+the VegaChat result holding on a real cartridge rather than a benchmark.
+
+| | what |
+|---|---|
+| tables | `column-profile` (profile, 6 rows), `data-gate-9-of-9-checks-pass` (9 rows) |
+| charts | precipitation by category (bar, hover) · temperature by category (bar, hover) · deseasonalised max-temp trend (layered) · category share by year (layered) |
+| versions | one chart emitted twice — the persona improved its own title and labels, and it came back as **v2 of that chart**, in place, unprompted |
+| cost | profile $0.101 · data-gate $0.074 · analyze $0.328 · report $0.101 |
+
+Every spec carries `params` (hover, pan-zoom or brush) and every one references
+its data rather than inlining it. `artifacts/figures/` is empty: no PNG was
+written, and nothing asked for one.
+
+The fixture is `ui/fixtures/run-eda-charts` — 160 events over 340 s, 208 kB,
+including the five scratch aggregates the charts read. `make_replay_fixture.py`
+now **copies a run's own `events.jsonl`** when it has one instead of rebuilding
+it from `run.json`: every run writes a log since M2.5, and copying it is both
+simpler and more faithful. The reconstruction stays for run 003, which predates
+the log and is still the M2.5 fixture.
+
+A replayed chart's `data_url` is rewritten to the run replaying it — the recorded
+one names a run that is not on this server.
+
 ### Verified
 
-`pytest` 269 passed / 8 skipped (22 new in `tests/test_charts.py`, covering the
-repair loop, versioning, workspace containment, and every interactive spec shape
-the mockup draws) · `ruff check src tests` · `dsagent cartridge validate` ·
-`npm run build`, `typecheck`, `lint`.
+`pytest` 272 passed / 8 skipped (22 in `tests/test_charts.py`, 3 more in
+`tests/test_replay.py` for the charted fixture) · `ruff check src tests` ·
+`dsagent cartridge validate` · `npm run build`, `typecheck`, `lint`.

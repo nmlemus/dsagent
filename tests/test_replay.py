@@ -147,3 +147,65 @@ def test_inputs_from_the_launcher_win_over_the_recording(replay):
     assert state["inputs"]["question"] == "Why is it always raining?"
     assert state["inputs"]["data_path"] == "data/seattle-weather.csv"
     assert state["status"] == "pending"
+
+
+# ---- the M2.6 fixture: the same run, with charts in it ----------------------
+
+CHARTS = Path(__file__).resolve().parents[1] / "ui" / "fixtures" / "run-eda-charts"
+
+
+@pytest.fixture
+def charted(tmp_path):
+    return Replay(CHARTS, tmp_path / "runs", speed=FAST)
+
+
+def test_the_chart_fixture_is_a_real_run_that_emitted_charts(charted):
+    """Recorded, not reconstructed: this run wrote its own log, charts and all."""
+    names = {e["name"] for e in charted.events}
+    assert "dsagent.chart" in names
+    charts = [e["value"] for e in charted.events if e["name"] == "dsagent.chart"]
+    assert len(charts) == 7
+    assert {c["kind"] for c in charts} == {"chart", "table"}
+    # Four figures, and one of them corrected in place by the persona that made it.
+    figures = {c["chart_id"] for c in charts if c["kind"] == "chart"}
+    assert len(figures) == 4
+    assert max(c["version"] for c in charts) == 2
+    # Every spec references its data rather than carrying it.
+    assert all(c["spec"]["data"] == {"name": "table"} for c in charts if c["kind"] == "chart")
+
+
+def test_a_replayed_chart_points_at_the_run_replaying_it(charted):
+    run_dir = charted.create("replayed", {})
+    charted.start("replayed")
+    assert wait_for(lambda: charted.answer_gate("replayed", GateDecision.APPROVE)), "no gate"
+    assert wait_for(lambda: read_state(run_dir)["status"] == "done")
+
+    state = read_state(run_dir)
+    assert len(state["charts"]) == 6
+    for chart_id, card in state["charts"].items():
+        # The recorded URL named the run it was recorded in; this is a different
+        # run, reading the same file out of its own directory.
+        assert card["data_url"] == f"/runs/replayed/preview/{card['data_ref']}"
+        assert card["run_id"] == "replayed"
+        assert card["chart_id"] == chart_id
+
+    # And the file each one draws from is actually there to be read.
+    for card in state["charts"].values():
+        assert (run_dir / "workspace" / card["data_ref"]).is_file(), card["data_ref"]
+
+    events = [e for e in read_events(run_dir) if e["name"] == "dsagent.chart"]
+    assert len(events) == 7
+    assert [e["value"]["version"] for e in events][-1] == 2
+
+
+def test_the_standing_version_is_the_one_on_the_run(charted):
+    """Seven emissions, six cards: a corrected chart replaces itself."""
+    run_dir = charted.create("replayed", {})
+    charted.start("replayed")
+    assert wait_for(lambda: charted.answer_gate("replayed", GateDecision.APPROVE)), "no gate"
+    assert wait_for(lambda: read_state(run_dir)["status"] == "done")
+
+    charts = read_state(run_dir)["charts"]
+    revised = [c for c in charts.values() if c["version"] > 1]
+    assert len(revised) == 1
+    assert revised[0]["version"] == 2
