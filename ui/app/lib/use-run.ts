@@ -84,12 +84,24 @@ export function useRun(runId: string): Run {
     let current = emptyRun;
     const source = new EventSource(eventsUrl(runId));
     source.onopen = () => setView(current);
+
+    // The server closes a finished run's stream with `event: end`, and a *named*
+    // SSE event never reaches `onmessage` — so listening only there left the
+    // stream unclosed on this side, and `EventSource` dutifully reconnected
+    // every three seconds for as long as the tab stayed open, collecting a fresh
+    // end frame each time. A finished run is finished: close, and refresh the
+    // summary once so the header settles on its final numbers.
+    const done = () => {
+      source.close();
+      setNonce((n) => n + 1);
+    };
+    source.addEventListener("end", done);
+
     source.onmessage = (message) => {
       const event = JSON.parse(message.data) as RunEvent;
-      // The end frame has no `name`: the run is over and so is the stream.
+      // Belt and braces for the same frame arriving unnamed.
       if (!event.name) {
-        source.close();
-        setNonce((n) => n + 1);
+        done();
         return;
       }
       current = reduce(current, { ...event, index: Number(message.lastEventId) });

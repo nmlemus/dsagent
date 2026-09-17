@@ -631,3 +631,93 @@ spend its budget at the end rather than the beginning.
 
 `pytest` 238 passed / 8 skipped · `ruff check src tests` · `npm run build`,
 `typecheck`, `lint` · `dsagent cartridge validate cartridges/ds`.
+
+---
+
+## Review round — PR #75
+
+Mergeable with small fixes. Five groups, all applied on this branch; the harness
+half is `harness: the gate race, the second gate's wait, and four smaller edges`,
+the UI half the commit that follows it.
+
+### 1. Answering a gate the instant it is announced
+
+The runner writes the pending gate and emits `awaiting_gate` *before*
+`ask_human` raises the interrupt, so between the browser seeing the question and
+the thread actually parking there is a window: a checkpoint write plus the
+runner closing its envs, which with a kernel backend is seconds. An operator who
+approves quickly landed in it and got a 409 for being fast. `answer_gate` now
+asks the *run* whether it is at a gate (so answering a run that is merely working
+still returns at once), then joins its thread for up to `PARK_SECONDS` = 5 s. Past
+that it is not parking, it is working, and the 409 is the honest answer.
+
+`Replay` mirrors it, because every screen is built against the replay and a race
+that only exists in one of them is a race that gets re-found later.
+
+The flaky test is gone: `test_a_gate_can_be_answered_the_instant_it_is_announced`
+holds the window open with a backend whose `close()` sleeps, rather than racing a
+20 ms poll against fake agents that park faster than it can look.
+
+### 2. A finished run reconnecting for ever
+
+The server ends a finished stream with `event: end`, and a *named* SSE event
+never reaches `onmessage` — so the browser never closed its side and
+`EventSource` reconnected every three seconds for as long as the tab stayed open.
+`use-run.ts` now listens on `end` as well. Measured in the network tab on a
+finished run: `{eventsRequestsAfter3s: 1, eventsRequestsAfter15s: 1}`.
+
+### 3. The second gate lost its wait
+
+A decided gate is re-asked on every resume to keep the `interrupt()` sequence
+stable. It was also clearing `state.gate` on the way through — and `state.gate`
+belongs to whichever *later* gate is actually waiting, which is how gate 2 ended
+up with no `asked_at` and a 0 s wait. A standing gate now touches nothing: not
+the pending record, not the accumulated wait, and not the event log, where a
+re-announced "awaiting" for a decided gate is a question nobody is being asked.
+`test_the_second_gate_keeps_its_own_wait_across_a_resume` and
+`test_a_decided_gate_is_never_announced_again` hold it, on a two-gate workflow.
+
+### 4. The smaller edges
+
+- `driver.start()` holds its lock across the check *and* the spawn, so two clicks
+  on Start are one run.
+- `list_run_files` validates `run_id` through the same `_run_workspace` helper
+  `_resolve_in_workspace` uses.
+- A run the orchestrator answered without ever calling `run_workflow` is marked
+  failed with a reason, instead of sitting at `pending` for ever looking like it
+  might still start.
+- The chat-started-gate limitation is written down in the `api.py` module
+  docstring and in DEMO.md's "What the demo does not cover".
+- `/preview` dispatches on extension through a `READERS` table; delimited text
+  goes through stdlib `csv`, so quoted fields survive and no dependency is
+  needed. Two DS-flavoured comments in `api.py` are gone (invariant 1).
+
+### 5. The UI
+
+- CopilotKit telemetry is off in code as well as in `.env`. Not as the review
+  wrote it: 1.72 has no `telemetryDisabled` constructor option (TS2353), so the
+  route sets `COPILOTKIT_TELEMETRY_DISABLED` before constructing the runtime. The
+  comment says why.
+- The launcher no longer prefills the literal `"None"` — a workflow default of
+  `None`, `null`, `nil` or empty renders as an empty optional field, and blanks
+  are omitted from the payload rather than sent as strings.
+- If Start fails after the run directory exists, the orphan is deleted:
+  `DELETE /runs/{id}`, which refuses anything that has actually run, because a
+  run's directory is the record of what happened.
+- A finished run opens its report full-width on its own, and the operator's
+  toggle still wins: `reportChoice ?? (finished && focused)`.
+- `t5-run-1024.jpg` retaken at a real 1024 px viewport on the stepper layout,
+  with the metrics row unclipped.
+
+**Deferred: the Share button.** The review allows it, and this is the write-up.
+Sharing a run means deciding what a link *is* — a read-only view of a run
+directory, with its own auth story — and that is a product decision, not a
+button. `GET /runs/{id}/download` already hands over everything the run produced.
+
+Not touched, as instructed: ruff 0.16 flags four pre-existing issues in
+`cartridges/ds/skills/eda/scripts/profile.py` and `tools/make_replay_fixture.py`.
+
+### Verified
+
+`pytest` 247 passed / 8 skipped · `ruff check src tests` · `npm run build`,
+`typecheck`, `lint` · `dsagent cartridge validate cartridges/ds`.

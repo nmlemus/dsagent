@@ -143,8 +143,12 @@ finish. The interrupt survived in `.dsagent/checkpoints.sqlite`.
 
 ## 12. Every screen renders in the Aiuda visual system
 
-**✓** `t5-run-skinned.jpg` (1440) and `t5-run-1024.jpg` (1024), and every demo
-screenshot above: Instrument Serif on run and report titles, Satoshi across the
+**✓** `t5-run-skinned.jpg` (1440) and `t5-run-1024.jpg` — the finished run screen
+at a 1024 px viewport, below the 1100 px breakpoint: the horizontal stepper on
+one line with `report` wrapping under it, the whole metrics row (elapsed, waited,
+tokens, cached, cost) unclipped, and the report already open full-width because
+the run is done. And every demo screenshot above: Instrument Serif on run and
+report titles, Satoshi across the
 UI, JetBrains Mono on every path, id and number — all self-hosted from
 `ui/public/fonts`, no third-party font request. Cream ground, the accent only on
 primary actions and the running step, emerald only for done, a deep brick for

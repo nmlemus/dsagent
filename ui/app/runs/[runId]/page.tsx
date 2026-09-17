@@ -37,7 +37,11 @@ export default function RunScreen() {
   const runId = decodeURIComponent(String(params.runId ?? ""));
   const run = useRun(runId);
   const replay = useReplayMode();
-  const [reportFull, setReportFull] = useState(false);
+  const finished = run.detail?.status === "done";
+  // Null until the operator says otherwise; the run's own state decides the
+  // default. A finished run with a report to show opens it full-width — §2.4 —
+  // and the toggle still wins the moment anyone touches it.
+  const [reportChoice, setReportChoice] = useState<boolean | null>(null);
   const [chatWidth, setChatWidth] = useSplit("chat", 380, CHAT_RANGE);
   const [progressHeight, setProgressHeight] = useSplit("progress", 380, PROGRESS_RANGE);
 
@@ -91,9 +95,9 @@ export default function RunScreen() {
           focused={run.focused}
           onFocus={run.pin}
           waiting={<Waiting run={run} />}
-          finished={run.detail?.status === "done"}
-          reportFull={reportFull}
-          onReportFull={setReportFull}
+          finished={finished}
+          reportFull={reportChoice ?? (finished && Boolean(run.focused))}
+          onReportFull={setReportChoice}
         />
       </div>
     </main>

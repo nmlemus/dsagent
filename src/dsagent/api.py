@@ -35,6 +35,7 @@ import io
 import json
 import math
 import re
+import shutil
 import time
 import zipfile
 from pathlib import Path
@@ -195,6 +196,30 @@ def add_runs_routes(
         except Exception as e:
             raise HTTPException(status_code=400, detail=str(e)) from e
         return {"run_id": run_id, "inputs": inputs}
+
+    @app.delete("/runs/{run_id}")
+    def delete_run(run_id: str) -> dict[str, Any]:
+        """Remove a run that never started.
+
+        The launcher creates a run directory before it uploads or starts
+        anything, so a failure in between leaves one behind: `pending`, empty,
+        and for ever at the top of the list. This is how it cleans up after
+        itself.
+
+        A run that has started is not deletable here. Its directory is the record
+        of what happened — the point of the whole event log — and a button that
+        can erase that is not a button this API offers.
+        """
+        run_dir = run_dir_of(run_id)
+        state = read_state(run_dir)
+        if state.get("status") != "pending":
+            raise HTTPException(
+                status_code=409, detail="this run has started; its record is not deletable"
+            )
+        if driver.is_running(run_id):
+            raise HTTPException(status_code=409, detail="this run is being driven right now")
+        shutil.rmtree(run_dir)
+        return {"deleted": run_id}
 
     @app.put("/runs/{run_id}/data/{name}")
     async def upload_input(run_id: str, name: str, request: Request,

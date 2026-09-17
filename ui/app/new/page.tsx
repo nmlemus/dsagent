@@ -8,6 +8,7 @@ import {
   type WorkflowInput,
   type WorkflowShape,
   createRun,
+  deleteRun,
   getCatalogue,
   startRun,
   uploadInput,
@@ -121,8 +122,10 @@ function RunForm({ workflow }: { workflow: WorkflowShape }) {
   async function start() {
     setStarting(true);
     setFailure(null);
+    let created: string | null = null;
     try {
-      const { run_id } = await createRun(workflow.name, values);
+      const { run_id } = await createRun(workflow.name, filled(values));
+      created = run_id;
       for (const [name, file] of Object.entries(files)) {
         await uploadInput(run_id, name, file);
       }
@@ -131,6 +134,12 @@ function RunForm({ workflow }: { workflow: WorkflowShape }) {
     } catch (e) {
       setFailure(e instanceof Error ? e.message : String(e));
       setStarting(false);
+      // The run directory is created before the upload and the start, so a
+      // failure in between leaves one behind: pending, empty, and for ever at
+      // the top of the list. Take it back — it never ran.
+      if (created) {
+        await deleteRun(created).catch(() => undefined);
+      }
     }
   }
 
@@ -309,10 +318,33 @@ function DateRange({ value, onValue }: { value: string; onValue: (value: string)
   );
 }
 
+/**
+ * The form's starting values.
+ *
+ * A default of `None` is a *cartridge* saying "no value" — `eda-to-report`'s
+ * `key_column` is declared that way — and putting the four letters in a text box
+ * asks the operator to read a convention they have no reason to know. It starts
+ * empty instead.
+ */
 const defaults = (workflow: WorkflowShape): Record<string, string> =>
   Object.fromEntries(
-    Object.entries(workflow.inputs).map(([name, spec]) => [name, spec.default ?? ""]),
+    Object.entries(workflow.inputs).map(([name, spec]) => [
+      name,
+      EMPTY_DEFAULTS.has((spec.default ?? "").trim().toLowerCase()) ? "" : (spec.default ?? ""),
+    ]),
   );
+
+const EMPTY_DEFAULTS = new Set(["", "none", "null", "nil"]);
+
+/**
+ * What to send: everything the operator actually filled in.
+ *
+ * An input left blank is omitted rather than sent as `""`, so the runner applies
+ * the default the workflow declares. Sending an empty string would override that
+ * default with something the step never expected.
+ */
+const filled = (values: Record<string, string>): Record<string, string> =>
+  Object.fromEntries(Object.entries(values).filter(([, value]) => value.trim() !== ""));
 
 /** `data_path` is what the cartridge calls it; "Data path" is what a person reads. */
 const label = (name: string): string =>

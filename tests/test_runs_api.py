@@ -424,3 +424,22 @@ def test_an_interactive_artifact_is_served_under_its_own_prefix(client):
     assert "content-security-policy" not in plain.headers
     # and the same path rules apply: nothing escapes the workspace
     assert client.get(f"/runs-x/{run_id}/files/../../run.json").status_code == 404
+
+
+def test_a_run_that_never_started_can_be_cleaned_up(client, tmp_path):
+    """The launcher creates the directory first; a failure after that leaves one."""
+    run_id = client.post("/runs", json={"workflow": "eda-to-report", "inputs": {}}).json()["run_id"]
+    assert (tmp_path / "runs" / run_id).is_dir()
+
+    assert client.delete(f"/runs/{run_id}").json() == {"deleted": run_id}
+    assert not (tmp_path / "runs" / run_id).exists()
+    assert client.get(f"/runs/{run_id}").status_code == 404
+
+
+def test_a_run_that_happened_is_not_deletable(client):
+    """A run directory is the record of what happened; this API does not erase it."""
+    run_id = start_a_run(client)
+    r = client.delete(f"/runs/{run_id}")
+    assert r.status_code == 409
+    assert "not deletable" in r.json()["detail"]
+    assert client.get(f"/runs/{run_id}").status_code == 200

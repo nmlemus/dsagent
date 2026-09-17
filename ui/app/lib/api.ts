@@ -160,6 +160,10 @@ export const uploadInput = (runId: string, input: string, file: File) =>
     { method: "PUT", body: file, headers: { "content-type": "application/octet-stream" } },
   );
 
+/** Remove a run that never started — see `delete_run`; a started run is refused. */
+export const deleteRun = (runId: string) =>
+  json<{ deleted: string }>(`/runs/${encodeURIComponent(runId)}`, { method: "DELETE" });
+
 export const startRun = (runId: string) =>
   json<{ started: boolean; resumed?: boolean; reason?: string }>(
     `/runs/${encodeURIComponent(runId)}/start`,
