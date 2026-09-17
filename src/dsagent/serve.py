@@ -32,6 +32,27 @@ from dsagent.runner import (
     workflow_tools,
 )
 
+RECURSION_LIMIT = 150
+"""Super-steps one orchestrator turn may take before LangGraph calls it a loop.
+
+LangGraph's default is 25, and it is applied **per invocation** to the graph the
+bridge streams — the orchestrator's. Measured on this graph: a turn costs about
+three super-steps of fixed overhead plus two per model↔tool round, and
+`CopilotKitMiddleware` adds an `after_model` node to each round that a CLI graph
+does not have. So 25 buys roughly ten rounds, and an orchestrator that starts a
+workflow and then reads a few artifacts to summarise can spend them — which is
+what ended run 003 in `RUN_ERROR` *after* the workflow had finished and written
+everything (`docs/runs/eda-to-report-003.md`).
+
+150 is ~70 rounds: six times the longest turn observed, and still low enough that
+a model genuinely looping stops instead of running forever.
+
+Persona graphs are not affected. They are compiled with `checkpointer=False`
+(`build_persona_agent`), which detaches them from the caller, so a step making
+twenty tool calls spends its own budget rather than the orchestrator's — verified,
+and the reason `analyze` survived run 003 while the orchestrator did not.
+"""
+
 GATE_REASON = "dsagent.gate"
 """`reason` on the interrupt payload. `ag_ui_langgraph.interrupts` copies it onto
 the AG-UI interrupt, and the frontend's `useInterrupt({enabled: ...})` filters on
@@ -108,6 +129,7 @@ def build_app(
     model: str | None = None,
     path: str = "/agent",
     seed: Path | None = None,
+    recursion_limit: int = RECURSION_LIMIT,
 ):
     """The FastAPI app: the orchestrator at `path`, the run files under `/runs`."""
     from ag_ui_langgraph import add_langgraph_fastapi_endpoint
@@ -134,7 +156,11 @@ def build_app(
         app,
         # `thread_id` comes off each `RunAgentInput` and the bridge puts it into
         # `config["configurable"]`, so one browser tab is one resumable thread.
-        LangGraphAGUIAgent(name="dsagent", graph=graph, description="DSAgent orchestrator"),
+        # The bridge merges this `config` into what it hands `astream_events`.
+        LangGraphAGUIAgent(
+            name="dsagent", graph=graph, description="DSAgent orchestrator",
+            config={"recursion_limit": recursion_limit},
+        ),
         path=path,
     )
     _add_files_route(app, runs_dir)

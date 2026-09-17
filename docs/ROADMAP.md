@@ -43,7 +43,7 @@ Status legend: `[ ]` todo · `[~]` in progress · `[x]` done. One task per PR.
 The slice works end to end; these are what an operator hits while using it. Ordered as
 `docs/runs/eda-to-report-003.md` orders them.
 
-- [ ] **A successful run ends in a red error.** `GraphRecursionError: Recursion limit of 25` on the orchestrator graph, *after* the workflow is `done` and every artifact is written, so the SSE stream closes with `RUN_ERROR` and the chat shows `terminated`. Every run does this. Needs a `recursion_limit` on the served graph — the value wants choosing, not guessing
+- [x] **A successful run ends in a red error.** Fixed: the served graph runs at `recursion_limit=150` (`dsagent serve --recursion-limit` to change it). The limit is per invocation and applies to the orchestrator alone — a persona is compiled with `checkpointer=False` and spends its own budget. Measured: ~3 super-steps fixed plus ~2 per model↔tool round, and `CopilotKitMiddleware` adds an `after_model` node to each round, so LangGraph's default 25 buys about ten rounds
 - [ ] **A served run leaves no readable log.** `dsagent serve` passes `log=lambda m: None`, so a run directory has `run.json` and no `runner.log`; the CLI writes one. Reading a run after the fact is worse from the browser than from the terminal
 - [ ] **`produces` ticks read ○ while the files are visibly landing.** `produces_matched` is empty on `started` by design, so mid-step the DAG row and the file list disagree in front of the operator
 - [ ] **A reload loses the run.** Canvas state is reduced from the live event stream only; refreshing mid-run shows an empty canvas while the run continues server-side, with no way to re-attach. Related: nothing outside the gate card names the run (see M4's multi-run management)
