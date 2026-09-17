@@ -113,6 +113,7 @@ button {
 /* Buttons: one filled accent for the primary action on a screen, outlines for
    everything else. Nothing gets a shadow. */
 .btn {
+  text-decoration: none;
   display: inline-flex;
   align-items: center;
   gap: var(--gap-2);
@@ -811,8 +812,10 @@ button.promise:hover {
 
 .canvas.is-empty {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   place-items: center;
   padding: var(--gap-4);
+  text-align: center;
 }
 
 .canvas-files {
@@ -1032,5 +1035,229 @@ button.promise:hover {
 
   .metrics {
     gap: var(--gap-3);
+  }
+}
+
+/* ------------------------------------------------------------- launcher ---- */
+
+.page-narrow {
+  max-width: 880px;
+}
+
+.choices {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: var(--gap-3);
+  margin-bottom: var(--gap-5);
+}
+
+.choice {
+  text-align: left;
+  padding: var(--gap-3);
+  border: 1px solid var(--rule);
+  border-left: 3px solid var(--rule);
+  border-radius: var(--radius);
+  background: var(--surface);
+  cursor: pointer;
+}
+
+.choice:hover {
+  border-color: var(--rule-strong);
+}
+
+.choice.is-chosen {
+  border-left-color: var(--accent);
+  border-color: var(--rule-strong);
+}
+
+.choice-name {
+  font-family: var(--mono);
+  font-size: 15px;
+  font-weight: 500;
+}
+
+.choice-what {
+  font-size: 13px;
+  color: var(--ink-dim);
+  margin: var(--gap-2) 0;
+}
+
+.choice-team {
+  display: flex;
+  align-items: center;
+  gap: var(--gap-2);
+  font-size: 12px;
+}
+
+/* One avatar per persona: the team is the thing being hired, so it is the thing
+   shown, rather than an icon standing in for a workflow. */
+.avatar {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  display: inline-grid;
+  place-items: center;
+  font-size: 11px;
+  font-weight: 700;
+  background: var(--surface-sunk);
+  border: 1px solid var(--rule-strong);
+  color: var(--ink-dim);
+}
+
+/* --- the form -------------------------------------------------------------- */
+
+.form {
+  display: grid;
+  grid-template-columns: minmax(0, 1.6fr) minmax(200px, 1fr);
+  gap: var(--gap-5);
+  align-items: start;
+}
+
+.form-fields {
+  display: flex;
+  flex-direction: column;
+  gap: var(--gap-4);
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--gap-1);
+}
+
+.field-label {
+  font-weight: 700;
+  font-size: 14px;
+}
+
+.field-name {
+  font-size: 11px;
+}
+
+/* Form controls are styled, not default: §7.12 asks that no browser chrome shows
+   through, and a native select on macOS is unmistakable. */
+.control {
+  font: inherit;
+  font-size: 14px;
+  color: var(--ink);
+  background: var(--surface);
+  border: 1px solid var(--rule-strong);
+  border-radius: var(--radius);
+  padding: 8px 10px;
+  width: 100%;
+  appearance: none;
+  resize: vertical;
+}
+
+.control:focus {
+  border-color: var(--accent);
+  outline: none;
+}
+
+select.control {
+  background-image: linear-gradient(45deg, transparent 50%, var(--ink-dim) 50%),
+    linear-gradient(135deg, var(--ink-dim) 50%, transparent 50%);
+  background-position: calc(100% - 16px) 16px, calc(100% - 11px) 16px;
+  background-size: 5px 5px, 5px 5px;
+  background-repeat: no-repeat;
+}
+
+.daterange {
+  display: flex;
+  align-items: center;
+  gap: var(--gap-2);
+}
+
+.drop {
+  border: 1px dashed var(--rule-strong);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+  padding: var(--gap-4);
+  text-align: center;
+  transition: border-color 120ms ease, background 120ms ease;
+}
+
+.drop.is-over {
+  border-color: var(--accent);
+  background: var(--accent-wash);
+}
+
+.drop-invite {
+  border: 0;
+  background: none;
+  color: var(--ink-dim);
+  font-size: 14px;
+  cursor: pointer;
+  text-decoration: underline;
+  text-decoration-color: var(--rule-strong);
+  text-underline-offset: 3px;
+}
+
+.drop-invite:hover {
+  color: var(--ink);
+}
+
+.drop-file {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--gap-3);
+  font-size: 13px;
+}
+
+/* --- what will happen ------------------------------------------------------ */
+
+.form-plan {
+  border-left: 1px solid var(--rule);
+  padding-left: var(--gap-4);
+}
+
+.plan-title {
+  font-size: 13px;
+  color: var(--ink-dim);
+  margin-bottom: var(--gap-3);
+}
+
+.plan-steps {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--gap-3);
+  font-size: 13px;
+}
+
+.plan-steps li {
+  display: flex;
+  gap: var(--gap-2);
+  align-items: flex-start;
+}
+
+.plan-gate {
+  color: var(--wait);
+  font-size: 12px;
+}
+
+.form-actions {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  gap: var(--gap-3);
+  padding-top: var(--gap-4);
+  border-top: 1px solid var(--rule);
+  font-size: 13px;
+}
+
+@media (max-width: 760px) {
+  .form {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .form-plan {
+    border-left: 0;
+    padding-left: 0;
+    border-top: 1px solid var(--rule);
+    padding-top: var(--gap-3);
   }
 }

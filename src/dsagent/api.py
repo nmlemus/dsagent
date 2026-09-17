@@ -272,7 +272,14 @@ def add_runs_routes(
                 await asyncio.sleep(POLL_SECONDS)
 
         return StreamingResponse(stream(), media_type="text/event-stream", headers={
-            "Cache-Control": "no-cache",
+            # `no-transform` and an explicit `identity` encoding are aimed at
+            # whatever sits between this and the browser. The Next dev/prod proxy
+            # gzips what it forwards, and a gzip stream buffers: the browser got
+            # ten bytes of gzip header and then nothing, while `curl` — which
+            # asks for no compression — saw every event. The stream is the whole
+            # product; it may not be compressed.
+            "Cache-Control": "no-cache, no-transform",
+            "Content-Encoding": "identity",
             "X-Accel-Buffering": "no",
         })
 

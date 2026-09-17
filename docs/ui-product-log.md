@@ -268,3 +268,53 @@ from `events.jsonl` alone (`t3-run-restored.jpg`).
 Cost is `—` everywhere until task 9. The progress region shows two steps before
 scrolling on a 900 px window; task 6 owns that. The chat pane is a placeholder in
 replay mode, which is honest — there is no model behind a recording.
+
+---
+
+## Task 4 — the launcher
+
+### What changed
+
+`/new`: workflow cards from `GET /cartridges` (name, what it does, the personas
+as avatars, "4 steps, 1 stop for you"), then a form generated from the declared
+inputs — `path` becomes a drop zone, `options` a select, `daterange` two dates,
+anything else a text field, defaults prefilled and optional marked. Beside it,
+"What will happen": the steps in order, with the gate marked *stops here for your
+decision*, so the one thing an operator has to be present for is visible before
+they start rather than after.
+
+Start does three calls — create, upload, start — and lands on the run screen.
+Nothing about paths is typed: the value the steps read is whatever the server
+says the upload landed as.
+
+The form is keyed by workflow, so switching one resets it by remounting rather
+than by an effect reaching in to clear the fields.
+
+### The bug that would have sunk the demo
+
+The live stream reached `curl` and never reached the browser: **Next gzips what
+it proxies, and a gzip stream buffers.** The browser received ten bytes of gzip
+header and then nothing, with no error — the header polled fine, so the run's
+numbers ticked upward beside a stepper frozen on "waiting to start". The endpoint
+now sends `Content-Encoding: identity` and `Cache-Control: no-cache, no-transform`.
+
+Worth stating plainly: every screen in this milestone reads that stream. A
+compressing proxy in front of it silently costs the product its entire live half,
+and the failure looks like "the UI is slow", not like a bug.
+
+### Verified
+
+`npm run build|typecheck|lint` and `pytest` green. In the browser, end to end
+against the replay at 12×: pick `eda-to-report`, drop `seattle-weather.csv` on the
+form, Start (`docs/runs/ui-product/t4-launcher.jpg`) — the run screen shows the
+DAG as declared while it waits, then steps light up as they run, the gate card
+appears inline at `data-gate` with its report already rendered beside it, and
+Approve leaves **"Approved after 16s"** on the step (M2.2.1 item 5, closed).
+Figures arrive as a burst and the canvas follows the step, not the files
+(`t4-run-live.jpg`).
+
+### Deferred to task 6
+
+The progress region is too short at 900 px: the gate card needed a scroll to
+reach. A glob promise that matched four figures lays its files out in a run-on
+line. Both are the progress region's own task.
