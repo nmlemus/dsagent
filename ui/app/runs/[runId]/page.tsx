@@ -57,10 +57,11 @@ export default function RunScreen() {
       style={
         {
           "--chat-w": `${chatWidth}px`,
-          // A waiting gate is the most important thing on the screen, and the
-          // decision must never be below a fold. The region grows to fit it and
-          // goes back to the operator's own split once it is answered.
-          "--progress-h": `${run.view.gateStep ? Math.max(progressHeight, GATE_MIN_H) : progressHeight}px`,
+          // A waiting gate — or a failure — is the most important thing on the
+          // screen, and neither the decision nor the reason may sit below a
+          // fold. The region grows to fit and goes back to the operator's own
+          // split once the run is moving again.
+          "--progress-h": `${needsRoom(run) ? Math.max(progressHeight, STOPPED_MIN_H) : progressHeight}px`,
         } as React.CSSProperties
       }
     >
@@ -76,6 +77,8 @@ export default function RunScreen() {
           onOpen={run.pin}
           onDecide={(decision, note) => void run.decide(decision, note)}
           deciding={run.deciding}
+          onResume={() => void run.resume()}
+          resuming={run.resuming}
         />
         <Resizer
           axis="y"
@@ -137,7 +140,14 @@ function Waiting({ run }: { run: ReturnType<typeof useRun> }) {
 /** Limits that keep a drag from making either region useless. */
 const CHAT_RANGE: [number, number] = [280, 720];
 const PROGRESS_RANGE: [number, number] = [120, 900];
-const GATE_MIN_H = 560;
+const STOPPED_MIN_H = 560;
+
+/** Whether the run is stopped and the panel has to show why, in full. */
+function needsRoom(run: ReturnType<typeof useRun>): boolean {
+  if (run.view.gateStep) return true;
+  const status = run.detail?.status;
+  return status === "failed" || (status === "awaiting_gate" && !run.detail?.live);
+}
 const HEADER_PX = 56;
 
 /** Whether this server is serving a recording; the chat has nothing behind it. */

@@ -826,8 +826,14 @@ button.promise:hover {
   gap: var(--gap-2);
 }
 
+.verdicts {
+  display: flex;
+  flex-direction: column;
+  gap: var(--gap-2);
+  margin-top: var(--gap-3);
+}
+
 .verdict {
-  margin-top: var(--gap-2);
   font-size: 12px;
   padding-left: 18px;
   position: relative;
@@ -1454,4 +1460,28 @@ body.is-resizing iframe {
 .view-table td.is-null {
   color: var(--ink-faint);
   font-style: italic;
+}
+
+/* A run that has stopped says so once, in a sentence, with the one button that
+   moves it on. Never a toast, and never a stack trace (M2.2.1, item 6). */
+.banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--gap-3);
+  margin-bottom: var(--gap-3);
+  padding: var(--gap-2) var(--gap-3);
+  border-radius: var(--radius);
+  border-left: 3px solid var(--fail);
+  background: var(--fail-wash);
+  font-size: 13px;
+}
+
+.banner.is-waiting {
+  border-left-color: var(--wait);
+  background: var(--wait-wash);
+}
+
+.banner p {
+  margin: 0;
 }

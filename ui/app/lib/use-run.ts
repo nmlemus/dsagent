@@ -2,7 +2,15 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 
-import { type RunDetail, type RunSummary, answerGate, eventsUrl, getRun, listRuns } from "./api";
+import {
+  type RunDetail,
+  type RunSummary,
+  answerGate,
+  eventsUrl,
+  getRun,
+  listRuns,
+  startRun,
+} from "./api";
 import { type RunEvent, type RunView, emptyRun, reduce } from "./run-state";
 
 /**
@@ -23,6 +31,9 @@ export type Run = {
   pin: (path: string) => void;
   decide: (decision: "approve" | "reject", note?: string) => Promise<void>;
   deciding: boolean;
+  /** Pick a stopped run up again — the runner's own resume. */
+  resume: () => Promise<void>;
+  resuming: boolean;
   refresh: () => void;
 };
 
@@ -41,6 +52,7 @@ export function useRun(runId: string): Run {
   const [loading, setLoading] = useState(true);
   const [pinned, setPinned] = useState<{ path: string; at: number } | null>(null);
   const [deciding, setDeciding] = useState(false);
+  const [resuming, setResuming] = useState(false);
   const [nonce, setNonce] = useState(0);
 
   const refresh = useCallback(() => setNonce((n) => n + 1), []);
@@ -101,6 +113,16 @@ export function useRun(runId: string): Run {
     [runId],
   );
 
+  const resume = useCallback(async () => {
+    setResuming(true);
+    try {
+      await startRun(runId);
+      setNonce((n) => n + 1);
+    } finally {
+      setResuming(false);
+    }
+  }, [runId]);
+
   // A pin holds the canvas on the operator's file until the next step finishes,
   // which is also the next moment the run has something better to show. Counting
   // finished steps rather than clearing the pin on a timer keeps that derivable.
@@ -108,7 +130,7 @@ export function useRun(runId: string): Run {
   const focused = pinned?.at === settled ? pinned.path : view.focus;
   const pin = useCallback((path: string) => setPinned({ path, at: settled }), [settled]);
 
-  return { detail, view, error, loading, focused, pin, decide, deciding, refresh };
+  return { detail, view, error, loading, focused, pin, decide, deciding, resume, resuming, refresh };
 }
 
 /** The home screen's list, refreshed while anything on it is moving. */

@@ -27,57 +27,158 @@ export function Progress({
   onOpen,
   onDecide,
   deciding,
+  onResume,
+  resuming,
 }: {
   detail: RunDetail | null;
   steps: StepRow[];
   onOpen: (path: string) => void;
   onDecide: (decision: "approve" | "reject", note: string) => void;
   deciding: boolean;
+  onResume: () => void;
+  resuming: boolean;
 }) {
   const [picked, setPicked] = useState<string | null>(null);
   const attention = focusOf(steps);
   // A click holds until the run's own focus moves on, which is the next moment
   // there is something better to look at.
   const open = steps.find((s) => s.step === picked) ?? attention;
+  // The whole DAG, always: the steps that have happened, in the places the
+  // workflow declares for them, and the ones still to come drawn as waiting. A
+  // stepper that only shows what has run makes a failed run look complete.
   const declared = detail?.workflow_shape?.steps ?? [];
+  const order = declared.length > 0 ? declared.map((s) => s.id) : steps.map((s) => s.step);
+  const byId = new Map(steps.map((s) => [s.step, s]));
 
   return (
     <section className="progress" aria-label="Run progress">
       <RunHeader detail={detail} steps={steps} />
+      <Stalled detail={detail} steps={steps} onResume={onResume} resuming={resuming} />
 
-      {steps.length > 0 ? (
-        <>
-          <ol className="stepper">
-            {steps.map((step) => (
+      <ol className="stepper">
+        {order.map((id) => {
+          const row = byId.get(id);
+          if (row) {
+            return (
               <Chip
-                key={step.step}
-                step={step}
-                open={step.step === open?.step}
-                onPick={() => setPicked(step.step === picked ? null : step.step)}
+                key={id}
+                step={row}
+                open={id === open?.step}
+                onPick={() => setPicked(id === picked ? null : id)}
               />
-            ))}
-          </ol>
-          {open && (
-            <StepDetail
-              step={open}
-              onOpen={onOpen}
-              onDecide={onDecide}
-              deciding={deciding}
-            />
-          )}
-        </>
-      ) : (
-        <ol className="stepper">
-          {declared.map((step, i) => (
-            <li key={step.id} className="chip is-pending">
-              <span className="chip-mark">{initial(step.persona)}</span>
-              <span className="chip-name">{step.id}</span>
-              <span className="chip-note dim">{i === 0 ? "about to start" : "waiting"}</span>
+            );
+          }
+          const spec = declared.find((s) => s.id === id);
+          return (
+            <li key={id} className="chip is-pending">
+              <span className="chip-button" aria-disabled="true">
+                <span className="chip-mark">{initial(spec?.persona ?? "?")}</span>
+                <span className="chip-name">{id}</span>
+                <span className="chip-note dim">waiting</span>
+              </span>
             </li>
-          ))}
-        </ol>
+          );
+        })}
+      </ol>
+
+      {open && (
+        <StepDetail step={open} onOpen={onOpen} onDecide={onDecide} deciding={deciding} />
       )}
     </section>
+  );
+}
+
+/**
+ * What to say, and offer, when a run has stopped and will not start itself.
+ *
+ * Three ways a run stands still: a step failed, a gate was sent back, or the
+ * process that was driving it is gone. All three are one sentence and one button
+ * — the button being `POST /runs/{id}/start`, which is the runner's own resume:
+ * finished steps are skipped, the failed one is re-run, the gate is asked again.
+ */
+function Stalled({
+  detail,
+  steps,
+  onResume,
+  resuming,
+}: {
+  detail: RunDetail | null;
+  steps: StepRow[];
+  onResume: () => void;
+  resuming: boolean;
+}) {
+  if (!detail) return null;
+  const pending = steps.some((s) => s.status === "awaiting_gate" && s.gate?.decision == null);
+  if (pending) return null;
+
+  const failed = steps.find((s) => s.status === "failed");
+  const sentBack = steps.find((s) => s.gate?.decision === "reject");
+  const stale = detail.status === "running" && !detail.live;
+
+  if (detail.status === "failed" || failed) {
+    return (
+      <Banner
+        tone="failed"
+        what={
+          failed
+            ? `${failed.persona} could not finish ${failed.step}. Nothing after it ran.`
+            : (detail.error ?? detail.driver_error ?? "The run stopped with an error.")
+        }
+        action={failed ? `Retry from ${failed.step}` : "Try again"}
+        onAct={onResume}
+        busy={resuming}
+      />
+    );
+  }
+  if (detail.status === "awaiting_gate" && sentBack) {
+    return (
+      <Banner
+        tone="waiting"
+        what={
+          sentBack.gate?.note
+            ? `You sent ${sentBack.step} back: “${sentBack.gate.note}”`
+            : `You sent ${sentBack.step} back.`
+        }
+        action="Resume and reopen the gate"
+        onAct={onResume}
+        busy={resuming}
+      />
+    );
+  }
+  if (stale) {
+    return (
+      <Banner
+        tone="failed"
+        what="Nothing is driving this run — the server that started it is gone."
+        action="Pick it up from here"
+        onAct={onResume}
+        busy={resuming}
+      />
+    );
+  }
+  return null;
+}
+
+function Banner({
+  tone,
+  what,
+  action,
+  onAct,
+  busy,
+}: {
+  tone: "failed" | "waiting";
+  what: string;
+  action: string;
+  onAct: () => void;
+  busy: boolean;
+}) {
+  return (
+    <div className={`banner is-${tone}`}>
+      <p>{what}</p>
+      <button className="btn btn-small" onClick={onAct} disabled={busy}>
+        {busy ? "Starting…" : action}
+      </button>
+    </div>
   );
 }
 

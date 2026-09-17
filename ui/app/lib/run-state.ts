@@ -56,6 +56,12 @@ export type StepRow = {
   /** How many tool calls are still in flight — the "is anything happening" signal. */
   running: number;
   gate: GateOnStep | null;
+  /** Every decision this step's gate has received, oldest first.
+   *
+   * `run.json` keeps only the standing one, because that is what the runner acts
+   * on. A person needs the history: a run that was sent back and later approved
+   * has to still show why it was sent back (§7.10), and the event log has both. */
+  gates: GateOnStep[];
   notes: Note[];
 };
 
@@ -103,6 +109,7 @@ function applyStep(view: RunView, e: Record<string, any>): RunView {
       tools: {},
       running: 0,
       gate: null,
+      gates: [],
       notes: [],
     };
     return {
@@ -118,6 +125,7 @@ function applyStep(view: RunView, e: Record<string, any>): RunView {
       // A pending gate replaces an answered one only forwards: the run is asking
       // again, which is what a resume does.
       gate: (e.gate as GateOnStep) ?? base.gate,
+      gates: withDecision(base.gates, e.gate as GateOnStep | null),
       running: e.status === "started" ? base.running : 0,
     };
   });
@@ -129,6 +137,15 @@ function applyStep(view: RunView, e: Record<string, any>): RunView {
       ? (lastMatched(e) ?? view.focus)
       : view.focus;
   return { ...view2, gateStep: waiting ?? null, focus };
+}
+
+/** Append a decided gate to the step's history, once per decision. */
+function withDecision(history: GateOnStep[], gate: GateOnStep | null): GateOnStep[] {
+  if (!gate?.decision) return history;
+  const already = history.some(
+    (g) => g.decided_at === gate.decided_at && g.decision === gate.decision,
+  );
+  return already ? history : [...history, gate];
 }
 
 function applyFile(view: RunView, e: Record<string, any>): RunView {

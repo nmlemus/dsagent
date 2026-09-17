@@ -456,7 +456,7 @@ zip**; and the report can take the whole pane with a **Report** toggle, back wit
 
 ### Verified
 
-`pytest` 227 (one skipped: this venv has no parquet engine, so the parquet test
+`pytest` 223 passed / 8 skipped (one of them the parquet test: this venv has no engine, so the parquet test
 skips — the endpoint's failure path is covered instead, and a server without
 pandas is a 415 by design). New API tests cover the zip's exact contents, the
 dataset's absence from it, the 404 on a run that has produced nothing, the
@@ -466,3 +466,51 @@ CSP while refusing the same traversal.
 In the browser: Download all yields a 378 kB zip of ten deliverables through the
 proxy; the report opens full-width (`docs/runs/ui-product/t7-report-full.jpg`)
 and comes back; Run scripts re-points the frame at `/runs-x` and keeps rendering.
+
+---
+
+## Task 8 — when a run stops
+
+§2.5: a failed step, a rejected gate and an abandoned run are three ways a run
+stands still, and each needs the same two things — a sentence saying what
+happened, and the one button that moves it on. That button is always
+`POST /runs/{id}/start`, which is the runner's own resume: finished steps are
+skipped, a failed step is re-run, a gate is asked again.
+
+- **Failed:** "noel could not finish analyze. Nothing after it ran." ·
+  *Retry from analyze*
+- **Sent back:** "You sent data-gate back: *“The fog rows look wrong…”*" ·
+  *Resume and reopen the gate*
+- **Abandoned:** "Nothing is driving this run — the server that started it is
+  gone." · *Pick it up from here* (this is `live` from the API: `run.json` cannot
+  tell "running" from "was running when the machine died")
+
+The step itself says which declared file was never written, from its own
+promises rather than from the exception text, with the runner's raw line folded
+behind *Show what the runner reported*. That is M2.2.1 item 6 — the old error
+toast opened frames from a minified bundle.
+
+**The stepper always shows the whole DAG.** Steps that have not run are drawn
+from the workflow's declaration as *waiting*; a stepper built only from events
+makes a failed run look complete. And a stopped run — failed, or sent back —
+grows the progress region the same way a waiting gate does, so the reason and the
+button are never below a fold.
+
+**A step keeps its gate history.** `run.json` records the standing decision,
+because that is what the runner acts on; the event log has every decision, and
+§7.10 asks for the rejection *and its note* to still be there after the run has
+been approved and finished. `StepRow.gates` accumulates them, oldest first.
+
+### Verified (no model, and a genuinely failed run)
+
+M2.2.1's item 7 was "a failed step's presentation is unexercised". It is now:
+`.dsagent/runs/eda-to-report-failed-demo` is a real run driven by the real runner
+with the test suite's streaming fake told to skip two figures, so it fails the way
+a real run fails — `produces` unverified on disk
+(`docs/runs/ui-product/t8-failed-step.jpg`).
+
+The full reject → resume → approve cycle, against the replay
+(`t8-sent-back.jpg`, `t8-gate-history.jpg`): sending the gate back with a note
+stops the run and shows the note in two places; Resume reopens the gate; Approve
+finishes the run; and the step's history then reads **"Sent back after 4s — 'The
+fog rows look wrong…'"** followed by **"Approved after 0s"**.

@@ -73,20 +73,32 @@ export function GateCard({
   );
 }
 
-/** What a rejected gate leaves behind, so the run can be resumed knowingly. */
+/**
+ * Every decision this gate has had, oldest first.
+ *
+ * A run that was sent back and later approved keeps both: the note explaining
+ * the rejection is the reason the second answer was possible, and §7.10 asks for
+ * it to still be there when the run has finished.
+ */
 export function GateVerdict({ step }: { step: StepRow }) {
-  const gate = step.gate;
-  if (!gate?.decision) return null;
-  const waited =
-    gate.decided_at && gate.asked_at ? duration(gate.decided_at - gate.asked_at) : null;
+  const history = step.gates.length > 0 ? step.gates : step.gate?.decision ? [step.gate] : [];
+  if (history.length === 0) return null;
 
   return (
-    <div className={`verdict is-${gate.decision}`}>
-      <span className="verdict-label">
-        {gate.decision === "approve" ? "Approved" : "Sent back"}
-        {waited ? ` after ${waited}` : ""}
-      </span>
-      {gate.note && <p className="verdict-note">“{gate.note}”</p>}
+    <div className="verdicts">
+      {history.map((gate, i) => {
+        const waited =
+          gate.decided_at && gate.asked_at ? duration(gate.decided_at - gate.asked_at) : null;
+        return (
+          <div key={`${gate.decided_at}-${i}`} className={`verdict is-${gate.decision}`}>
+            <span className="verdict-label">
+              {gate.decision === "approve" ? "Approved" : "Sent back"}
+              {waited ? ` after ${waited}` : ""}
+            </span>
+            {gate.note && <p className="verdict-note">“{gate.note}”</p>}
+          </div>
+        );
+      })}
     </div>
   );
 }
