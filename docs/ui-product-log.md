@@ -1080,3 +1080,60 @@ its column names — the four steps with `data-gate` marked *"then it asks you"*
 **$0.54 · 4m 35s · 1 decision · based on 8 runs**. `pytest` 290 / 8 skipped (seven
 new, including the key guess, the "None" default that means unfilled, and a plan
 with nothing to compare against) · `ruff` · `npm run build`, `typecheck`, `lint`.
+
+## Task 9 (completed) — a finished run is a deliverable
+
+When the run ends the top of the document changes: the four numbers a
+stakeholder asks about, a row of ways to take it away, and **the report's own
+opening paragraph lifted to the top** — lifted, not written. If a report does not
+open with its point, the screen shows that rather than inventing one; the fix
+belongs in the `reports` skill.
+
+- **Copy link.** The URL *is* the share, because everything on the screen is
+  rebuilt from the run's own log: anyone who can reach this server sees the same
+  document, and there is no second published copy to drift out of date. There is
+  also no permission model, which the button's title says rather than implies.
+- **Export report** — `GET /runs/{id}/export.html`: **one self-contained file
+  whose charts are still charts.** Vega travels inside it (the bundle
+  `vl-convert` produces, extracted once and reused for every chart), each spec
+  travels with it, and so do the rows each chart draws. It opens from a `file://`
+  URL, offline. Measured in the browser: **zero external requests.**
+- **Download artifacts** (the M2.5 zip) and **Run log** (`events.json`).
+- **Replay this run**, and a scrubber under the three regions. It rewinds the
+  *whole screen* — rail, sections, cards, counters — by re-reducing the event log
+  up to a moment, at 10×. It is not a second implementation of the document: the
+  reducer that draws the live screen is the one that draws this.
+- **Versions**: other finished runs of the same workflow on the same dataset,
+  numbered, with the one you are reading marked.
+
+The export hit the same two traps the run screen did — `"container"` measured
+before layout, and a band scale sized before its data arrived — and takes the
+same two answers. Two bugs in one milestone, in two codebases, from one cause:
+worth the comment it now carries in both.
+
+### Deferred, with the reason
+
+- **PDF.** `vl-convert` renders a chart to PDF in one call, but a *report* PDF is
+  pagination, page furniture and a second layout engine — a piece of work, not a
+  button. The interactive HTML is the export that makes the milestone's point,
+  and it is the one people asked for; PDF is the one people ask for afterwards.
+- **A findings diff between two versions.** Listing versions is cheap and
+  genuinely useful; diffing two runs' *findings* means deciding what a finding is
+  and how two of them correspond, which is a product question about content, not
+  a UI affordance. Comparing artifacts line by line — which the gate card already
+  does — would be a diff of two files, not of two conclusions, and dressing that
+  up as "compare versions" would be worse than not having it.
+
+### Verified
+
+`m26-t9-finished.jpg` (summary, actions, the lifted paragraph),
+`m26-t9-export.jpg` (the exported file rendering its charts with zero external
+requests), `m26-t9-replay.jpg` (the same screen rewound: the gate open again,
+sections 3 and 4 back to pending, two cards instead of seven, v8 of 8 marked).
+`pytest` 297 / 8 skipped — seven new in `tests/test_export.py`, including "no
+CDN appears anywhere in the document" · `ruff` · `npm run build`, `typecheck`,
+`lint`.
+
+One bug this task exposed: the rail's step list had no `overflow`, so with four
+steps open it painted straight over the conversation below it. A flex item
+shrunk by `flex: 1` still draws its whole content.

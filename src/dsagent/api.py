@@ -41,9 +41,16 @@ from pathlib import Path
 from typing import Any
 
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import PlainTextResponse, Response, StreamingResponse
+from fastapi.responses import (
+    HTMLResponse,
+    PlainTextResponse,
+    Response,
+    StreamingResponse,
+)
 
 from dsagent.cartridge.models import Cartridge
+from dsagent.export import export_html
+from dsagent.runner.charts import VEGA_LITE
 from dsagent.runner.runner import GATE_VERSIONS
 from dsagent.runs import (
     deliverables,
@@ -484,6 +491,24 @@ def add_runs_routes(
             return target.read_text(encoding="utf-8", errors="replace")
         except OSError as e:
             raise HTTPException(status_code=404, detail=str(e)) from e
+
+    @app.get("/runs/{run_id}/export.html", response_class=HTMLResponse)
+    def export_report(run_id: str) -> str:
+        """The run as one file somebody else can open, charts still alive.
+
+        Self-contained: the Vega bundle, every spec, and a snapshot of the rows
+        each chart draws. It works from a `file://` URL with no network and no
+        server behind it, which is the difference between sending someone a
+        report and sending them a screenshot.
+        """
+        run_dir = run_dir_of(run_id)
+        try:
+            return export_html(run_dir, read_state(run_dir), vl_version=VEGA_LITE)
+        except ImportError:
+            raise HTTPException(
+                status_code=501,
+                detail="this server has no vl-convert, so it cannot bundle an interactive report",
+            ) from None
 
     @app.get("/runs/{run_id}/download")
     def download_all(run_id: str, everything: bool = False):

@@ -423,6 +423,9 @@ button {
    what a document should do. Below 1100px the three stack and the page scrolls —
    the run screen is usable at 1024, not laid out for it. */
 .run-screen {
+  /* A row for the scrubber, which is `display: none` until there is one to
+     draw; an empty `auto` row costs nothing. */
+  grid-template-rows: minmax(0, 1fr) auto;
   /* No `flex: 1` here. `.app` is a column flex container, and on a flex item
      `flex-grow` decides the main size — the `height` below is ignored, the grid
      stretches to its own content, and then *nothing* scrolls: not the document,
@@ -541,7 +544,11 @@ button {
 .rail-steps {
   flex: 1;
   padding: var(--gap-2);
+  /* The list scrolls inside the rail rather than spilling out of it: without
+     `overflow`, a flex item shrunk to `flex: 1` still paints its full content,
+     and the last step was drawn straight over the conversation below it. */
   min-height: 0;
+  overflow: auto;
 }
 
 .rail-step {
@@ -2840,4 +2847,142 @@ body.is-resizing iframe {
 .pill.is-stopped {
   background: rgba(255, 255, 255, 0.1);
   color: var(--rail-dim);
+}
+
+/* --- a finished run ---------------------------------------------------------- */
+
+.done {
+  margin: 0 0 var(--gap-5);
+}
+
+.done-figures {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: var(--gap-2);
+  margin: 0 0 var(--gap-3);
+}
+
+@media (max-width: 700px) {
+  .done-figures {
+    grid-template-columns: 1fr 1fr;
+  }
+}
+
+.done-figures > div {
+  background: var(--surface);
+  border: 1px solid var(--rule);
+  border-radius: var(--radius);
+  padding: var(--gap-2) var(--gap-3);
+}
+
+.done-figures dd {
+  margin: 0;
+  font-size: 17px;
+}
+
+.done-figures dt {
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+  font-weight: 700;
+}
+
+.done-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--gap-2);
+  margin: 0 0 var(--gap-3);
+}
+
+.done-actions .btn {
+  text-decoration: none;
+}
+
+/* The report's own opening, lifted. The accent rule says "this is the point",
+   and it is the only place on the page the accent is used for emphasis. */
+.done-summary {
+  background: var(--surface);
+  border-left: 3px solid var(--accent);
+  border-radius: 0 var(--radius-lg) var(--radius-lg) 0;
+  padding: var(--gap-3) var(--gap-4);
+}
+
+.done-summary p:last-child {
+  margin: 0;
+  font-size: 15px;
+  color: var(--ink);
+}
+
+.done-eyebrow {
+  margin: 0 0 var(--gap-1);
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--accent);
+}
+
+/* --- the replay scrubber ----------------------------------------------------- */
+
+.scrubber {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  gap: var(--gap-3);
+  padding: 0 var(--gap-3);
+  height: 40px;
+  border-top: 1px solid var(--rule);
+  background: var(--surface-sunk);
+  font-size: 12px;
+  color: var(--ink-dim);
+}
+
+.scrubber button {
+  background: none;
+  border: 1px solid var(--rule-strong);
+  border-radius: var(--radius);
+  padding: 3px 10px;
+  font: inherit;
+  font-weight: 700;
+  color: var(--ink);
+  cursor: pointer;
+}
+
+.scrubber input[type="range"] {
+  flex: 1;
+  accent-color: var(--accent);
+}
+
+.done-versions {
+  display: flex;
+  align-items: center;
+  gap: var(--gap-2);
+  margin: var(--gap-3) 0 0;
+  font-size: 12.5px;
+}
+
+.done-versions .done-eyebrow {
+  margin: 0;
+}
+
+.done-versions a {
+  font-family: var(--mono);
+  font-size: 12px;
+  padding: 2px 8px;
+  border: 1px solid var(--rule);
+  border-radius: 999px;
+  text-decoration: none;
+  color: var(--ink-dim);
+}
+
+.done-versions a:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.done-versions a.is-here {
+  background: var(--ink);
+  border-color: var(--ink);
+  color: var(--cream);
 }

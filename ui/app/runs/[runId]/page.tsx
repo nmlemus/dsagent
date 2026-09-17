@@ -7,6 +7,7 @@ import { useEffect, useState } from "react";
 
 import { AskProvider } from "../../components/ask";
 import { Document } from "../../components/document";
+import { Finished, Scrubber } from "../../components/finished";
 import { Drawer, type Detail } from "../../components/drawer";
 import { Rail } from "../../components/rail";
 import { getCatalogue } from "../../lib/api";
@@ -78,11 +79,31 @@ export default function RunScreen() {
           detail={run.detail}
           view={run.view}
           onOpen={setDetail}
+          header={
+            run.detail?.status === "done" && (
+              <Finished
+                runId={runId}
+                detail={run.detail}
+                view={run.view}
+                onReplay={() => run.span && run.scrub(run.span[0])}
+                replaying={run.at !== null}
+              />
+            )
+          }
           onDecide={(decision, note) => void run.decide(decision, note)}
           deciding={run.deciding}
           onResume={() => void run.resume()}
           resuming={run.resuming}
         />
+
+        {run.span && run.detail?.status === "done" && (
+          <Scrubber
+            span={run.span}
+            at={run.at}
+            onScrub={run.scrub}
+            onLive={() => run.scrub(null)}
+          />
+        )}
 
         <Drawer
           runId={runId}

@@ -36,6 +36,7 @@ export function Document({
   deciding,
   onResume,
   resuming,
+  header,
   children,
 }: {
   runId: string;
@@ -47,6 +48,8 @@ export function Document({
   deciding: boolean;
   onResume: () => void;
   resuming: boolean;
+  /** What a finished run puts above its first section. */
+  header?: React.ReactNode;
   /** Section bodies, keyed by step id — filled in as the milestone proceeds. */
   children?: (step: StepRow, state: SectionState) => React.ReactNode;
 }) {
@@ -65,6 +68,8 @@ export function Document({
           </span>
           <span>{position(planned)}</span>
         </p>
+
+        {header}
 
         {planned.map(({ step, state, section }, i) => (
           <section key={section + i} className={`sec is-${state}`} aria-label={section}>

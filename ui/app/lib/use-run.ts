@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import {
   type RunDetail,
@@ -11,7 +11,7 @@ import {
   listRuns,
   startRun,
 } from "./api";
-import { type RunEvent, type RunView, emptyRun, reduce } from "./run-state";
+import { type RunEvent, type RunView, emptyRun, reduce, reduceAll } from "./run-state";
 
 /**
  * The summary carries totals the event log does not (cost, tokens, gate wait).
@@ -35,6 +35,13 @@ export type Run = {
   resume: () => Promise<void>;
   resuming: boolean;
   refresh: () => void;
+  /** Every event this run has emitted, in order — what a replay scrubs. */
+  events: RunEvent[];
+  /** Show the run as it was at this moment, or `null` for as it is now. */
+  at: number | null;
+  scrub: (at: number | null) => void;
+  /** The first and last event's clock, for a scrubber to draw a track from. */
+  span: [number, number] | null;
 };
 
 /**
@@ -54,6 +61,8 @@ export function useRun(runId: string): Run {
   const [deciding, setDeciding] = useState(false);
   const [resuming, setResuming] = useState(false);
   const [nonce, setNonce] = useState(0);
+  const [events, setEvents] = useState<RunEvent[]>([]);
+  const [at, setAt] = useState<number | null>(null);
 
   const refresh = useCallback(() => setNonce((n) => n + 1), []);
 
@@ -82,8 +91,12 @@ export function useRun(runId: string): Run {
     // way in: the connection opening is what clears the screen, and that is a
     // callback from an external system, which is exactly what effects are for.
     let current = emptyRun;
+    const seen: RunEvent[] = [];
     const source = new EventSource(eventsUrl(runId));
-    source.onopen = () => setView(current);
+    source.onopen = () => {
+      setView(current);
+      setEvents([]);
+    };
 
     // The server closes a finished run's stream with `event: end`, and a *named*
     // SSE event never reaches `onmessage` — so listening only there left the
@@ -104,8 +117,13 @@ export function useRun(runId: string): Run {
         done();
         return;
       }
-      current = reduce(current, { ...event, index: Number(message.lastEventId) });
+      const indexed = { ...event, index: Number(message.lastEventId) };
+      current = reduce(current, indexed);
+      seen.push(indexed);
       setView(current);
+      // Kept whole so the run can be replayed on the same screen. A run's log is
+      // a few hundred objects; the alternative is fetching it a second time.
+      setEvents([...seen]);
     };
     // A dropped connection reconnects on its own and resumes from `Last-Event-ID`,
     // which the server honours — so a flaky network costs a gap, not the screen.
@@ -142,7 +160,19 @@ export function useRun(runId: string): Run {
   const focused = pinned?.at === settled ? pinned.path : view.focus;
   const pin = useCallback((path: string) => setPinned({ path, at: settled }), [settled]);
 
-  return { detail, view, error, loading, focused, pin, decide, deciding, resume, resuming, refresh };
+  // Scrubbing rebuilds the screen from the log up to a moment, which is the same
+  // reduction the live screen does — a replay is not a second implementation.
+  const shown = useMemo(
+    () => (at === null ? view : reduceAll(emptyRun, events.filter((e) => e.value.ts <= at))),
+    [at, view, events],
+  );
+  const span: [number, number] | null =
+    events.length > 1 ? [events[0].value.ts, events[events.length - 1].value.ts] : null;
+
+  return {
+    detail, view: shown, error, loading, focused, pin, decide, deciding, resume, resuming,
+    refresh, events, at, scrub: setAt, span,
+  };
 }
 
 /** The home screen's list, refreshed while anything on it is moving. */
