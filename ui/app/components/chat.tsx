@@ -35,10 +35,17 @@ export function Chat({ runId, detail, replay }: { runId: string; detail: RunDeta
     <CopilotKit runtimeUrl="/api/copilotkit" agent={AGENT} threadId={`chat:${runId}`}>
       <RunContext runId={runId} detail={detail} />
       <section className="chat">
+        <div className="chat-invite">
+          <h2>Ask the team</h2>
+          <p>
+            Which finding is fragile, what a step actually did, what the gate was checking —
+            the orchestrator answers from this run’s own files.
+          </p>
+        </div>
         <CopilotChat
           agentId={AGENT}
           labels={{
-            chatInputPlaceholder: "Ask about this run — findings, files, what a step did…",
+            chatInputPlaceholder: "Ask about this run…",
           }}
         />
       </section>

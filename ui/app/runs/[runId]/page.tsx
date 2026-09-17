@@ -4,12 +4,26 @@ import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useEffect, useState } from "react";
 
+import dynamic from "next/dynamic";
+
 import { Canvas } from "../../components/canvas";
-import { Chat } from "../../components/chat";
 import { Progress } from "../../components/progress";
+import { Resizer, useSplit } from "../../components/resizer";
 import { getCatalogue } from "../../lib/api";
 import { initial } from "../../lib/format";
 import { useRun } from "../../lib/use-run";
+
+/**
+ * The chat is loaded on its own, after the rest of the screen.
+ *
+ * CopilotKit is the largest thing on this page by far, and the run — the reason
+ * the page exists — must not wait for it to hydrate. Reloading mid-run is in the
+ * demo script (§7.6): what has to be quick is the steps and the files, not the
+ * message box.
+ */
+const Chat = dynamic(() => import("../../components/chat").then((m) => m.Chat), {
+  loading: () => <div className="chat is-loading" />,
+});
 
 /**
  * The run screen: conversation left, progress top-right, files bottom-right.
@@ -23,6 +37,8 @@ export default function RunScreen() {
   const runId = decodeURIComponent(String(params.runId ?? ""));
   const run = useRun(runId);
   const replay = useReplayMode();
+  const [chatWidth, setChatWidth] = useSplit("chat", 380, CHAT_RANGE);
+  const [progressHeight, setProgressHeight] = useSplit("progress", 380, PROGRESS_RANGE);
 
   if (run.error) {
     return (
@@ -35,10 +51,19 @@ export default function RunScreen() {
   }
 
   return (
-    <main className="run-screen">
+    <main
+      className="run-screen"
+      style={
+        {
+          "--chat-w": `${chatWidth}px`,
+          "--progress-h": `${progressHeight}px`,
+        } as React.CSSProperties
+      }
+    >
       <div className="run-pane run-pane-chat">
         <Chat runId={runId} detail={run.detail} replay={replay} />
       </div>
+      <Resizer axis="x" label="Resize the conversation" onMove={setChatWidth} />
 
       <div className="run-pane run-pane-work">
         <Progress
@@ -48,6 +73,11 @@ export default function RunScreen() {
           onOpen={run.pin}
           onDecide={(decision, note) => void run.decide(decision, note)}
           deciding={run.deciding}
+        />
+        <Resizer
+          axis="y"
+          label="Resize the progress panel"
+          onMove={(y) => setProgressHeight(y - HEADER_PX)}
         />
         <Canvas
           runId={runId}
@@ -97,6 +127,11 @@ function Waiting({ run }: { run: ReturnType<typeof useRun> }) {
     </div>
   );
 }
+
+/** Limits that keep a drag from making either region useless. */
+const CHAT_RANGE: [number, number] = [280, 720];
+const PROGRESS_RANGE: [number, number] = [120, 900];
+const HEADER_PX = 56;
 
 /** Whether this server is serving a recording; the chat has nothing behind it. */
 function useReplayMode(): boolean {

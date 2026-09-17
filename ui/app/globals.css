@@ -421,7 +421,8 @@ button {
   flex: 1;
   min-height: 0;
   display: grid;
-  grid-template-columns: minmax(340px, 1fr) minmax(0, 1.9fr);
+  /* The split is the operator's, kept in `--chat-w` / `--progress-h`. */
+  grid-template-columns: var(--chat-w, 380px) 1px minmax(0, 1fr);
 }
 
 .run-pane {
@@ -439,7 +440,7 @@ button {
 
 .run-pane-work {
   display: grid;
-  grid-template-rows: minmax(200px, 45%) minmax(0, 1fr);
+  grid-template-rows: var(--progress-h, 380px) 1px minmax(0, 1fr);
 }
 
 .progress {
@@ -1030,7 +1031,7 @@ button.promise:hover {
 
 @media (max-width: 1100px) {
   .run-screen {
-    grid-template-columns: minmax(300px, 1fr) minmax(0, 1.4fr);
+    grid-template-columns: minmax(280px, 0.8fr) 1px minmax(0, 1.4fr);
   }
 
   .metrics {
@@ -1260,4 +1261,108 @@ select.control {
     border-top: 1px solid var(--rule);
     padding-top: var(--gap-3);
   }
+}
+
+/* ------------------------------------------------------------ resizers ---- */
+
+.resizer {
+  background: var(--rule);
+  position: relative;
+  z-index: 5;
+}
+
+.resizer::after {
+  /* A 1px line is the thing seen; 9px is the thing grabbed. */
+  content: "";
+  position: absolute;
+  inset: -4px;
+}
+
+.resizer-x {
+  width: 1px;
+  cursor: col-resize;
+}
+
+.resizer-y {
+  height: 1px;
+  cursor: row-resize;
+}
+
+.resizer:hover,
+.resizer:focus-visible {
+  background: var(--accent);
+}
+
+body.is-resizing {
+  cursor: col-resize;
+  user-select: none;
+}
+
+body.is-resizing iframe {
+  /* A drag must not be swallowed by the report the operator is dragging past. */
+  pointer-events: none;
+}
+
+/* --------------------------------------------------- the chat, restyled ---- */
+
+/**
+ * CopilotKit v2 themes itself through shadcn-shaped variables on
+ * `[data-copilotkit]`. Overriding those is the whole restyle: no component is
+ * replaced, no class is reached into, and an upgrade that changes their internals
+ * still lands in our palette. §7.12 — no unstyled defaults left on screen.
+ */
+.app [data-copilotkit] {
+  --background: var(--surface);
+  --foreground: var(--ink);
+  --card: var(--surface);
+  --card-foreground: var(--ink);
+  --popover: var(--surface);
+  --popover-foreground: var(--ink);
+  --primary: var(--accent);
+  --primary-foreground: #fff;
+  --secondary: var(--surface-sunk);
+  --secondary-foreground: var(--ink);
+  --muted: var(--surface-sunk);
+  --muted-foreground: var(--ink-dim);
+  --accent: var(--surface-sunk);
+  --accent-foreground: var(--ink);
+  --destructive: var(--fail);
+  --destructive-foreground: #fff;
+  --border: var(--rule-strong);
+  --input: var(--rule-strong);
+  --ring: var(--accent);
+  --radius: 3px;
+  --cpk-font-sans: var(--ui);
+  --cpk-font-mono: var(--mono);
+  --cpk-default-font-family: var(--ui);
+  --cpk-default-mono-font-family: var(--mono);
+}
+
+/* An empty thread is an invitation, not a void: it says what this chat is for
+   and, by naming the run's own files, what it can actually answer from. */
+.chat-invite {
+  padding: var(--gap-4) var(--gap-4) 0;
+  max-width: 46ch;
+}
+
+.chat-invite h2 {
+  font-family: var(--display);
+  font-weight: 400;
+  font-size: 21px;
+  margin-bottom: var(--gap-2);
+}
+
+.chat-invite p {
+  color: var(--ink-dim);
+  font-size: 13px;
+}
+
+.chat.is-replay {
+  padding: var(--gap-4);
+  font-size: 14px;
+  color: var(--ink-dim);
+}
+
+.chat.is-loading {
+  flex: 1;
 }

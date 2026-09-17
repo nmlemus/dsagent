@@ -318,3 +318,50 @@ Figures arrive as a burst and the canvas follows the step, not the files
 The progress region is too short at 900 px: the gate card needed a scroll to
 reach. A glob promise that matched four figures lays its files out in a run-on
 line. Both are the progress region's own task.
+
+---
+
+## Task 5 — the skin, the fonts, and the chat
+
+### What changed
+
+**Fonts are self-hosted** in `ui/public/fonts`: Satoshi Medium/Bold/Black
+(Fontshare, FFL — licence committed beside it), Instrument Serif and JetBrains
+Mono (Google's `latin` subsets, OFL). No third-party font request, because client
+data is on the screen and a webfont request carries this page's URL to somebody
+else's server. JetBrains Mono is the variable file, so one face covers both
+weights. A missing file degrades to the system stack rather than to nothing.
+
+**The chat is restyled through CopilotKit's own variables.** v2 themes itself with
+shadcn-shaped tokens on `[data-copilotkit]` — `--background`, `--primary`,
+`--muted`, `--border`, `--ring`, `--radius`, `--cpk-font-sans`. Overriding those
+is the whole job: no component replaced, no internal class reached into, and an
+upgrade that rearranges their DOM still lands in the Aiuda palette. An empty
+thread now says what the chat is for instead of showing a void.
+
+**The three regions are resizable**, with the split kept per axis in
+`localStorage` and read through `useSyncExternalStore` — so no effect overwrites
+state after the first paint, the server renders the default without a hydration
+mismatch, and a second tab moving the divider is heard. Arrow keys move a divider
+too; a control that only answers a mouse is a control some people do not have.
+
+**The chat loads on its own chunk** (`next/dynamic`). CopilotKit is by far the
+largest thing on the page, and §7.6 reloads mid-run: what has to come back
+quickly is the steps and the files, not the message box. Click-to-steps on a
+client-side navigation measures **1.8 s**; a cold load is TTFB 40 ms, DOM
+interactive 184 ms, everything settled by ~3 s.
+
+### Verified
+
+All checks green. Screens at 1440 (`docs/runs/ui-product/t5-run-skinned.jpg`) and
+at 1024 (`t5-run-1024.jpg`): Instrument Serif on the run title, Satoshi across the
+UI, JetBrains Mono on every path and number, the four colours doing only their own
+jobs, and no browser-default control left visible.
+
+### Where this diverges from §2.3, and what task 6 does about it
+
+§2.3 asks for a **horizontal** stepper. What is on screen is a vertical relay
+spine, which reads well but shows two steps in a 900 px window — the gate card
+needed a scroll to reach, which is the one thing on this screen that must never
+need a scroll. Task 6 rebuilds the region as the spec describes: a horizontal
+stepper that always shows the whole DAG, with the detail of one step below it.
