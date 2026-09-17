@@ -134,8 +134,8 @@ def workflow_tools(
     @tool
     def list_run_files(run_id: str) -> str:
         """List the files a run produced, deliverables first. `run_id` names a run directory."""
-        workspace = (runs_dir / run_id / "workspace").resolve()
-        if not workspace.is_dir():
+        workspace = _run_workspace(runs_dir, run_id)
+        if workspace is None:
             return f"unknown run {run_id}"
         declared = set(_deliverables(runs_dir / run_id))
         files = sorted(
@@ -172,6 +172,20 @@ def _deliverables(run_dir: Path) -> list[str]:
     return deliverables(run_dir)
 
 
+def _run_workspace(runs_dir: Path, run_id: str) -> Path | None:
+    """One run's workspace, if `run_id` names a run and nothing else.
+
+    A run id arrives from outside — from a URL at the files endpoint, from a
+    model here — and one that is a path rather than a name walks out of the runs
+    directory entirely. Both tools ask this the same question, because a rule
+    enforced in one of two places is not enforced.
+    """
+    if not run_id or "/" in run_id or "\\" in run_id or run_id in (".", ".."):
+        return None
+    workspace = (runs_dir / run_id / "workspace").resolve()
+    return workspace if workspace.is_dir() else None
+
+
 def _resolve_in_workspace(runs_dir: Path, run_id: str, rel: str) -> Path | None:
     """A run-workspace path that is really inside that workspace, or None.
 
@@ -179,7 +193,7 @@ def _resolve_in_workspace(runs_dir: Path, run_id: str, rel: str) -> Path | None:
     path both arrive from outside — there, from a URL; here, from a model — and
     neither may be allowed to walk out of the run it names.
     """
-    if not run_id or "/" in run_id or "\\" in run_id or run_id in (".", ".."):
+    if _run_workspace(runs_dir, run_id) is None:
         return None
     workspace = (runs_dir / run_id / "workspace").resolve()
     try:

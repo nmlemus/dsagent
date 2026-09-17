@@ -659,12 +659,27 @@ class WorkflowRunner:
             run_id=self.run_id, workflow=wf.name, step=step.id, persona=step.persona,
             produces=list(step.produces), prompt=prompt,
         )
+        standing = decided == GateDecision.APPROVE.value
+        if standing:
+            # This gate is already answered and is only being re-asked to keep the
+            # `interrupt()` sequence stable (see above). It must therefore touch
+            # *nothing*: not `state.gate`, which belongs to whichever later gate
+            # is actually waiting — gate 1 clearing it on re-entry is what left
+            # gate 2 without an `asked_at` and reporting a 0 s wait — not the
+            # accumulated wait, and not the event log, where a re-announced
+            # "awaiting" for a decided gate is a question nobody is being asked.
+            if not dry_run:
+                self.ask_human(request)  # the call is the point; the answer is discarded
+            self._emit_step(wf, step, rec.status, gate=_gate_event(gate.kind, prompt, rec.gate))
+            return True
+
         # When the run stopped, not when it was resumed. Under `dsagent serve` the
         # first pass never returns from `ask_human` — it raises a LangGraph
         # interrupt — and the whole tool re-executes when the answer arrives, so
         # a clock read here would measure the resume rather than the wait, and
         # every gate would report 0s. The pending record written below is what
-        # remembers the real moment; on re-entry it is read back.
+        # remembers the real moment; on re-entry it is read back, and it is keyed
+        # by step so one gate never reads another's.
         pending = state.gate if isinstance(state.gate, dict) else None
         asked_at = (
             float(pending["asked_at"])
@@ -688,12 +703,6 @@ class WorkflowRunner:
         decided_at = time.time()
         state.status, state.gate = "running", None
         state.gate_wait = round(state.gate_wait + max(0.0, decided_at - asked_at), 3)
-        if decided == GateDecision.APPROVE.value:
-            # Asked for the sequence's sake; the standing decision is the one
-            # that counts, and it is the one to re-announce.
-            state.save(self.run_dir)
-            self._emit_step(wf, step, rec.status, gate=_gate_event(gate.kind, prompt, rec.gate))
-            return True
         rec.gate = GateRecord(decision=answer.decision.value, note=answer.note,
                               ts=decided_at, asked_at=asked_at)
         state.save(self.run_dir)

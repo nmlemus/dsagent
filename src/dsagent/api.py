@@ -11,6 +11,15 @@ following. It is also why the gate is answered against the run (`POST
 /runs/{id}/gate`) rather than against whichever stream happens to hold an
 interrupt.
 
+**One run is not like the others: a run started from the chat.** Its interrupt
+lives in the chat graph's saver, which is in memory (`dsagent.serve.build_app`
+explains why), and `POST /runs/{id}/gate` resumes the *driver's* graph. So such a
+run advertises `awaiting_gate` in `run.json` and answers 409 here; it has to be
+approved from the chat that started it, and a server restart loses the question
+entirely. Runs started from the launcher — every run the product's screens
+create — do not have this problem. Closing it means building the AG-UI agent
+inside the server's lifespan so it can hold an async SQLite saver.
+
 Nothing here knows any domain. The launcher's form is generated from whatever
 inputs a workflow declares, so a cartridge with other inputs renders without a
 line changing (invariant 1, applied to a screen).
@@ -56,7 +65,8 @@ the writer and the reader are the same process in every mode we ship.
 
 HEARTBEAT_SECONDS = 15.0
 """A comment line while nothing is happening, so a proxy does not close the stream
-during `analyze`'s three silent minutes."""
+while a step is thinking. A step can go minutes between events and still be
+working; a closed connection in the middle of that is a screen that stops."""
 
 PREVIEW_ROWS = 200
 PREVIEW_MAX_ROWS = 2000
@@ -307,38 +317,42 @@ def add_runs_routes(
     def preview(run_id: str, path: str, rows: int = PREVIEW_ROWS) -> dict[str, Any]:
         """The first rows of a tabular file, as JSON, for a browser that cannot read it.
 
-        Parquet is the case that needs it: there is no reader in a browser, and
-        the M2.2 canvas could only offer a download link. The reading is pandas',
-        which the kernel env's cartridge already requires — and when the
-        interpreter serving this does not have it, the honest answer is 415 rather
-        than a guess at the format.
+        Dispatched on the file's extension rather than assuming one format: this
+        endpoint belongs to the harness, and the harness does not get to decide
+        that "a table" means parquet. Parquet is the case that needed building —
+        no browser reads it — and delimited text is here because reading it costs
+        a stdlib import and saves the browser from parsing a 50 MB file it was
+        handed whole.
+
+        A format nobody here can read, or a reader that is not installed, is a
+        415: the client can still download the file, and a guess would be worse.
         """
         run_dir = run_dir_of(run_id)
         target = resolve_run_file(runs_dir, run_id, path)
         if target is None:
             raise HTTPException(status_code=404, detail="not found")
-        try:
-            import pandas as pd
-        except ImportError:
-            raise HTTPException(
-                status_code=415,
-                detail="this server has no pandas, so it cannot preview a table",
-            ) from None
 
         wanted = max(1, min(rows, PREVIEW_MAX_ROWS))
+        reader = READERS.get(target.suffix.lower())
+        if reader is None:
+            raise HTTPException(
+                status_code=415,
+                detail=f"no preview for {target.suffix or 'a file with no extension'}",
+            )
         try:
-            frame = pd.read_parquet(target)
+            columns, table, total = reader(target, wanted)
+        except HTTPException:
+            raise
         except Exception as e:
             raise HTTPException(status_code=415, detail=f"cannot read {path}: {e}") from e
 
-        head = frame.head(wanted)
         return {
             "path": path,
             "run_id": run_dir.name,
-            "columns": [str(c) for c in head.columns],
-            "rows": [[_jsonable(v) for v in record] for record in head.itertuples(index=False)],
-            "total_rows": int(frame.shape[0]),
-            "shown_rows": int(head.shape[0]),
+            "columns": columns,
+            "rows": table,
+            "total_rows": total,
+            "shown_rows": len(table),
         }
 
     @app.get("/runs/{run_id}/download")
@@ -368,6 +382,59 @@ def add_runs_routes(
                 "Content-Length": str(len(payload)),
             },
         )
+
+
+def _read_parquet(target: Path, rows: int) -> tuple[list[str], list[list[Any]], int]:
+    """Parquet, through pandas — the reader the cartridge's kernel env installs.
+
+    A server without pandas answers 415 rather than guessing; the file is still
+    downloadable, and "this server cannot read that" is a true thing to say.
+    """
+    try:
+        import pandas as pd
+    except ImportError:
+        raise HTTPException(
+            status_code=415, detail="this server has no pandas, so it cannot read parquet"
+        ) from None
+
+    frame = pd.read_parquet(target)
+    head = frame.head(rows)
+    return (
+        [str(c) for c in head.columns],
+        [[_jsonable(v) for v in record] for record in head.itertuples(index=False)],
+        int(frame.shape[0]),
+    )
+
+
+def _read_delimited(target: Path, rows: int) -> tuple[list[str], list[list[Any]], int]:
+    """Delimited text, through the stdlib, so a preview needs no dependency.
+
+    `csv` understands quoted fields containing the delimiter, which the browser's
+    own split-on-comma does not — and it counts the remaining rows without
+    holding the file in memory.
+    """
+    import csv
+
+    delimiter = "\t" if target.suffix.lower() == ".tsv" else ","
+    with target.open(newline="", encoding="utf-8", errors="replace") as fh:
+        reader = csv.reader(fh, delimiter=delimiter)
+        header = next(reader, [])
+        table: list[list[Any]] = []
+        total = 0
+        for row in reader:
+            total += 1
+            if len(table) < rows:
+                table.append(list(row))
+    return [str(c) for c in header], table, total
+
+
+READERS: dict[str, Any] = {
+    ".parquet": _read_parquet,
+    ".pq": _read_parquet,
+    ".csv": _read_delimited,
+    ".tsv": _read_delimited,
+}
+"""Extension → reader. The harness knows formats, not what they contain."""
 
 
 def _archive_members(run_dir: Path, workspace: Path, *, everything: bool) -> list[str]:
@@ -449,8 +516,8 @@ def _safe_name(filename: str) -> str:
 
     Last path segment only, and nothing but letters, digits and `-_.`: a run
     directory is not the place to discover what a creative filename does. Runs of
-    substitutions collapse, because `seattle weather (1).csv` should read as
-    `seattle-weather-1-.csv`'s tidier cousin in a file list someone is looking at.
+    substitutions collapse, so a name full of spaces and brackets arrives as
+    something a person can still read in a file list.
     """
     name = Path(filename.replace("\\", "/")).name
     cleaned = re.sub(r"-+", "-", "".join(

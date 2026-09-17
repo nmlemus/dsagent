@@ -383,8 +383,29 @@ def test_previewing_something_that_is_not_a_table_says_so(client, tmp_path):
     )
     r = client.get(f"/runs/{run_id}/preview/artifacts/data-gate.md")
     assert r.status_code == 415
-    assert "cannot read" in r.json()["detail"]
+    assert "no preview for .md" in r.json()["detail"]
     assert client.get(f"/runs/{run_id}/preview/nope.parquet").status_code == 404
+
+
+def test_delimited_text_is_previewed_without_any_dependency(client, tmp_path):
+    """The preview dispatches on the extension; only parquet needs pandas.
+
+    Quoted fields are the reason this is worth doing server-side at all: the
+    browser's own split-on-comma reads `"Seattle, WA"` as two columns, and `csv`
+    does not.
+    """
+    run_id = client.post("/runs", json={"workflow": "eda-to-report", "inputs": {}}).json()["run_id"]
+    target = tmp_path / "runs" / run_id / "workspace" / "data" / "places.csv"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text('city,note\n"Seattle, WA",wet\nBend,dry\n', encoding="utf-8")
+
+    body = client.get(f"/runs/{run_id}/preview/data/places.csv").json()
+    assert body["columns"] == ["city", "note"]
+    assert body["rows"][0] == ["Seattle, WA", "wet"]
+    assert (body["total_rows"], body["shown_rows"]) == (2, 2)
+    assert client.get(f"/runs/{run_id}/preview/data/places.csv", params={"rows": 1}).json()[
+        "shown_rows"
+    ] == 1
 
 
 def test_an_interactive_artifact_is_served_under_its_own_prefix(client):

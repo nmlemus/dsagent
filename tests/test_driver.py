@@ -165,6 +165,7 @@ def test_a_rejected_gate_keeps_its_note_and_the_run_resumes(driver, tmp_path):
     run_dir = d.create("eda-to-report-reject", {"data_path": "data/seattle.csv"}, "eda-to-report")
     d.start("eda-to-report-reject")
     assert wait_for(lambda: read_state(run_dir).get("gate"))
+    assert wait_for(lambda: not d.is_running("eda-to-report-reject"))
     assert d.answer_gate("eda-to-report-reject", GateDecision.REJECT, "fog rows look wrong")
 
     assert wait_for(lambda: read_state(run_dir)["status"] == "awaiting_gate"
@@ -219,3 +220,97 @@ def test_the_start_message_names_the_workflow_the_run_and_the_inputs():
     assert "eda-to-report" in message
     assert json.dumps({"data_path": "data/seattle-weather.csv"}) in message
     assert "eda-to-report-1" in message
+
+
+def test_a_gate_can_be_answered_the_instant_it_is_announced(driver, tmp_path, monkeypatch):
+    """The operator who approves immediately must not be told to try again.
+
+    The runner writes the pending gate and emits `awaiting_gate` *before*
+    `ask_human` raises the interrupt, so for a moment the run is announced as
+    waiting while its thread is still unwinding — LangGraph has to checkpoint and
+    the runner has to close its envs, which with a real kernel backend is seconds.
+
+    The window is held open here rather than raced for: a backend that takes half
+    a second to close is what a Jupyter kernel is, and with fake agents the real
+    window is too short to catch reliably — which is how this arrived, as a test
+    that failed once in a cold run and passed four times after.
+    """
+    import time
+
+    class SlowBackend(FakeBackend):
+        def close(self):
+            time.sleep(0.5)
+
+    monkeypatch.setattr(
+        "dsagent.runner.runner.make_env",
+        lambda spec, ws: Env(spec=spec, workspace=ws, backend=SlowBackend()),
+    )
+
+    d = driver()
+    run_dir = d.create("eda-to-report-fast", {"data_path": "data/seattle.csv"}, "eda-to-report")
+    d.start("eda-to-report-fast")
+
+    # the moment the run says it is waiting — no pause for the thread to settle
+    assert wait_for(lambda: read_state(run_dir).get("gate"))
+    assert d.is_running("eda-to-report-fast"), "the window this test exists for is closed"
+    assert d.answer_gate("eda-to-report-fast", GateDecision.APPROVE) is True
+
+    assert wait_for(lambda: read_state(run_dir)["status"] == "done")
+    assert read_state(run_dir)["steps"]["data-gate"]["gate"]["decision"] == "approve"
+
+
+def test_answering_a_run_that_is_merely_working_returns_at_once(driver, tmp_path):
+    """Waiting is for a parking run, not for every wrong answer.
+
+    A run that is simply working has nothing to park at, so the call returns
+    immediately rather than holding the request open for the timeout.
+    """
+    import time
+
+    d = driver()
+    d.create("eda-to-report-busy", {"data_path": "data/seattle.csv"}, "eda-to-report")
+    d.start("eda-to-report-busy")
+
+    began = time.time()
+    assert d.answer_gate("eda-to-report-busy", GateDecision.APPROVE, timeout=5.0) is False
+    assert time.time() - began < 1.0, "a working run is not worth waiting five seconds for"
+
+
+def test_two_starts_at_once_drive_the_run_only_once(driver, tmp_path):
+    """Two clicks on Start are two requests on two threads."""
+    import threading
+
+    d = driver()
+    d.create("eda-to-report-twice", {"data_path": "data/seattle.csv"}, "eda-to-report")
+
+    ready = threading.Barrier(2)
+
+    def press():
+        ready.wait()
+        d.start("eda-to-report-twice")
+
+    pressers = [threading.Thread(target=press) for _ in range(2)]
+    for t in pressers:
+        t.start()
+    for t in pressers:
+        t.join(10)
+
+    assert wait_for(lambda: read_state(tmp_path / "runs" / "eda-to-report-twice").get("gate"))
+    # one thread, one invocation: the second press found the first already running
+    assert len([t for t in threading.enumerate() if t.name == "run-eda-to-report-twice"]) <= 1
+
+
+def test_a_run_the_orchestrator_never_started_is_failed_not_pending(driver, tmp_path):
+    """An orchestrator that answers without calling the tool leaves nothing behind.
+
+    The graph is fine, so nothing raises; the run the operator started simply
+    never began. Left `pending` it looks like it might still start, for ever.
+    """
+    from langchain_core.messages import AIMessage
+
+    d = driver(iter([AIMessage(content="I would rather not.")]))
+    run_dir = d.create("eda-to-report-ignored", {"data_path": "x.csv"}, "eda-to-report")
+    d.start("eda-to-report-ignored")
+
+    assert wait_for(lambda: read_state(run_dir)["status"] == "failed")
+    assert "did not start" in summarize(run_dir).error

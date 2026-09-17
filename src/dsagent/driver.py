@@ -35,6 +35,13 @@ THREAD_PREFIX = "run:"
 a run and a question asked while it works would otherwise be two concurrent
 writers on one checkpoint."""
 
+PARK_SECONDS = 5.0
+"""How long an answer waits for a parking run before giving up on it.
+
+The gap between "the gate is announced" and "the thread has stopped" is a
+checkpoint write plus the runner closing its envs. Five seconds covers a kernel
+env shutting down; past that, the run is not parking, it is working."""
+
 
 class Driver(Protocol):
     """What the runs API needs from whatever is actually running the run."""
@@ -119,6 +126,7 @@ class GraphDriver:
         self._by_workflow = {w: c for c in cartridges for w in c.workflows}
         self._threads: dict[str, threading.Thread] = {}
         self._errors: dict[str, str] = {}
+        self._starting = threading.Lock()
 
     # ---- the Driver surface -------------------------------------------------
 
@@ -130,30 +138,66 @@ class GraphDriver:
         return run_dir
 
     def start(self, run_id: str, *, resume: bool = False) -> None:
-        if self.is_running(run_id):
-            return
-        state = RunState.load(self.runs_dir / run_id)
-        cartridge = self._by_workflow[state.workflow]
-        say = resume_message if resume else start_message
-        message = say(cartridge.workflows[state.workflow], run_id, state.inputs)
-        self._spawn(run_id, {"messages": [{"role": "user", "content": message}]})
+        # Held across the check *and* the spawn: two clicks on Start, or a retry
+        # behind a slow response, are two requests on two threads, and without
+        # the lock both pass `is_running` and both invoke the same checkpoint
+        # thread.
+        with self._starting:
+            if self.is_running(run_id):
+                return
+            state = RunState.load(self.runs_dir / run_id)
+            cartridge = self._by_workflow[state.workflow]
+            say = resume_message if resume else start_message
+            message = say(cartridge.workflows[state.workflow], run_id, state.inputs)
+            self._spawn(run_id, {"messages": [{"role": "user", "content": message}]})
 
-    def answer_gate(self, run_id: str, decision: GateDecision, note: str = "") -> bool:
+    def answer_gate(self, run_id: str, decision: GateDecision, note: str = "",
+                    timeout: float = PARK_SECONDS) -> bool:
         """Resume the run's graph with the answer. False if it is not at a gate.
 
         The interrupt lives in the checkpoint rather than in this process's
         memory, which is the whole reason the checkpointer exists: a run that was
         waiting when the server was killed is still waiting when it comes back,
         and this is the call that answers it (§7.11).
+
+        **It waits for the run to finish parking.** The runner writes the pending
+        gate to `run.json` and emits `awaiting_gate` *before* `ask_human` raises
+        the interrupt, so between the browser seeing the question and the thread
+        actually stopping there is a window — LangGraph still has to checkpoint,
+        and the runner's `finally` still has to close the envs, which with a real
+        kernel backend is seconds rather than microseconds. An operator who
+        approves quickly lands in it. Refusing them with a 409 because they were
+        fast is the wrong answer; waiting a few seconds for the thread they are
+        answering is the right one.
         """
-        if self.is_running(run_id):
+        if not self._awaiting(run_id):
             return False
+        thread = self._threads.get(run_id)
+        if thread and thread.is_alive():
+            thread.join(timeout)
+            if thread.is_alive():
+                return False  # genuinely still working, not merely parking
         if not self._interrupted(run_id):
             return False
         from langgraph.types import Command
 
-        self._spawn(run_id, Command(resume={"decision": decision.value, "note": note}))
+        with self._starting:
+            if self.is_running(run_id):
+                return False
+            self._spawn(run_id, Command(resume={"decision": decision.value, "note": note}))
         return True
+
+    def _awaiting(self, run_id: str) -> bool:
+        """Whether the run itself says it is standing at a gate.
+
+        Asked before waiting on the thread, so answering a run that is simply
+        working returns at once instead of holding the request for `timeout`.
+        """
+        try:
+            state = RunState.load(self.runs_dir / run_id)
+        except (OSError, ValueError, TypeError):
+            return False
+        return bool(state.gate) or state.status == "awaiting_gate"
 
     def is_running(self, run_id: str) -> bool:
         thread = self._threads.get(run_id)
@@ -196,10 +240,22 @@ class GraphDriver:
             self._errors[run_id] = f"{type(e).__name__}: {e}"
             self.log(f"[driver] run {run_id} failed: {e}")
             self._mark_failed(run_id, str(e))
+        else:
+            # The orchestrator answered without ever calling `run_workflow`: it
+            # asked a question, or decided the request was not one. Nothing is
+            # wrong with the *graph*, but the run the operator started never
+            # began, and a run sitting at `pending` for ever with no reason given
+            # is the worst of both — it looks like it might still start.
+            self._mark_failed(
+                run_id,
+                "The orchestrator did not start this workflow. Nothing ran; "
+                "try again, or start it from the chat.",
+                only_if_pending=True,
+            )
         finally:
             self._threads.pop(run_id, None)
 
-    def _mark_failed(self, run_id: str, error: str) -> None:
+    def _mark_failed(self, run_id: str, error: str, *, only_if_pending: bool = False) -> None:
         """A failure *outside* the runner still has to reach the run's record.
 
         The runner writes its own failures; this is for everything around it —
@@ -214,6 +270,8 @@ class GraphDriver:
             return
         if state.status in ("done", "failed"):
             return
+        if only_if_pending and state.status != "pending":
+            return  # it ran; whatever stopped it has already said so
         state.status = "failed"
         state.gate = None
         for rec in state.steps.values():

@@ -29,6 +29,10 @@ from dsagent.runner.runner import EVENT_LOG, GateDecision, GateRecord, RunState,
 DEFAULT_SPEED = 10.0
 EVENTS = "events.jsonl"
 
+PARK_SECONDS = 5.0
+"""How long an answer waits for a run that has announced a gate but not yet
+reached it. The same window, and the same answer, as `dsagent.driver`."""
+
 
 class ReplayError(RuntimeError):
     pass
@@ -95,13 +99,33 @@ class Replay:
         self._threads[run_id] = thread
         thread.start()
 
-    def answer_gate(self, run_id: str, decision: GateDecision, note: str = "") -> bool:
-        """Hand an answer to a run standing at a gate. False if none is waiting."""
-        pending = self._gates.get(run_id)
-        if pending is None:
+    def answer_gate(self, run_id: str, decision: GateDecision, note: str = "",
+                    timeout: float = PARK_SECONDS) -> bool:
+        """Hand an answer to a run standing at a gate. False if none is waiting.
+
+        Waits, briefly, for a run that is *about* to stand there: the gate is
+        written to `run.json` and announced on the event stream a moment before
+        the playback thread actually blocks on it, and an operator who approves
+        the instant the card appears lands in that gap. The live driver has the
+        same window for the same reason and answers it the same way.
+        """
+        deadline = time.time() + max(0.0, timeout)
+        while True:
+            pending = self._gates.get(run_id)
+            if pending is not None:
+                pending.answer(decision, note)
+                return True
+            if time.time() >= deadline or not self._about_to_ask(run_id):
+                return False
+            time.sleep(0.02)
+
+    def _about_to_ask(self, run_id: str) -> bool:
+        """Whether this run has announced a gate it has not yet stood at."""
+        try:
+            state = json.loads((self.runs_dir / run_id / "run.json").read_text())
+        except (OSError, ValueError):
             return False
-        pending.answer(decision, note)
-        return True
+        return bool(state.get("gate")) or state.get("status") == "awaiting_gate"
 
     def is_running(self, run_id: str) -> bool:
         thread = self._threads.get(run_id)
