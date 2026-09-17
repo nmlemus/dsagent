@@ -1,16 +1,14 @@
 "use client";
 
 import Link from "next/link";
+import dynamic from "next/dynamic";
 import { useParams } from "next/navigation";
 import { useEffect, useState } from "react";
 
-import dynamic from "next/dynamic";
-
-import { Canvas } from "../../components/canvas";
-import { Progress } from "../../components/progress";
-import { Resizer, useSplit } from "../../components/resizer";
+import { Document } from "../../components/document";
+import { Drawer, type Detail } from "../../components/drawer";
+import { Rail } from "../../components/rail";
 import { getCatalogue } from "../../lib/api";
-import { initial } from "../../lib/format";
 import { useRun } from "../../lib/use-run";
 
 /**
@@ -18,7 +16,7 @@ import { useRun } from "../../lib/use-run";
  *
  * CopilotKit is the largest thing on this page by far, and the run — the reason
  * the page exists — must not wait for it to hydrate. Reloading mid-run is in the
- * demo script (§7.6): what has to be quick is the steps and the files, not the
+ * demo script (§6.8): what has to be quick is the steps and the document, not the
  * message box.
  */
 const Chat = dynamic(() => import("../../components/chat").then((m) => m.Chat), {
@@ -26,24 +24,24 @@ const Chat = dynamic(() => import("../../components/chat").then((m) => m.Chat), 
 });
 
 /**
- * The run screen: conversation left, progress top-right, files bottom-right.
+ * The run screen: team rail, living document, detail drawer.
  *
- * Everything on it is rebuilt from the run's event log, so this page is the same
- * whether the run started thirty seconds ago in this tab, is being watched from a
- * second one, was started by the CLI, or finished last week.
+ * Three regions, in the order a person uses them. The rail is the *activity* —
+ * who is working, on what, what it costs; the document is the *work* — the
+ * report being written, section by section; the drawer is *evidence* — the raw
+ * detail behind whatever was clicked, and it stays shut until it is asked for.
+ *
+ * Everything on all three is rebuilt from the run's event log, so this page is
+ * the same whether the run started thirty seconds ago in this tab, is being
+ * watched from a second one, was started by the CLI, or finished last week.
  */
 export default function RunScreen() {
   const params = useParams<{ runId: string }>();
   const runId = decodeURIComponent(String(params.runId ?? ""));
   const run = useRun(runId);
   const replay = useReplayMode();
-  const finished = run.detail?.status === "done";
-  // Null until the operator says otherwise; the run's own state decides the
-  // default. A finished run with a report to show opens it full-width — §2.4 —
-  // and the toggle still wins the moment anyone touches it.
-  const [reportChoice, setReportChoice] = useState<boolean | null>(null);
-  const [chatWidth, setChatWidth] = useSplit("chat", 380, CHAT_RANGE);
-  const [progressHeight, setProgressHeight] = useSplit("progress", 380, PROGRESS_RANGE);
+  const [detail, setDetail] = useState<Detail>(null);
+  const [openStep, setOpenStep] = useState<string | null>(null);
 
   if (run.error) {
     return (
@@ -56,103 +54,39 @@ export default function RunScreen() {
   }
 
   return (
-    <main
-      className="run-screen"
-      style={
-        {
-          "--chat-w": `${chatWidth}px`,
-          // A waiting gate — or a failure — is the most important thing on the
-          // screen, and neither the decision nor the reason may sit below a
-          // fold. The region grows to fit and goes back to the operator's own
-          // split once the run is moving again.
-          "--progress-h": `${needsRoom(run) ? Math.max(progressHeight, STOPPED_MIN_H) : progressHeight}px`,
-        } as React.CSSProperties
-      }
-    >
-      <div className="run-pane run-pane-chat">
+    <div className={`run-screen${detail ? " has-drawer" : ""}`}>
+      <Rail
+        detail={run.detail}
+        steps={run.view.steps}
+        openStep={openStep}
+        onOpenStep={(step) => {
+          setOpenStep(step);
+          if (step) setDetail({ kind: "step", id: step });
+        }}
+      >
         <Chat runId={runId} detail={run.detail} replay={replay} />
-      </div>
-      <Resizer axis="x" label="Resize the conversation" onMove={setChatWidth} />
+      </Rail>
 
-      <div className="run-pane run-pane-work">
-        <Progress
-          detail={run.detail}
-          steps={run.view.steps}
-          onOpen={run.pin}
-          onDecide={(decision, note) => void run.decide(decision, note)}
-          deciding={run.deciding}
-          onResume={() => void run.resume()}
-          resuming={run.resuming}
-        />
-        <Resizer
-          axis="y"
-          label="Resize the progress panel"
-          onMove={(y) => setProgressHeight(y - HEADER_PX)}
-        />
-        <Canvas
-          runId={runId}
-          files={run.view.files}
-          focused={run.focused}
-          onFocus={run.pin}
-          waiting={<Waiting run={run} />}
-          finished={finished}
-          reportFull={reportChoice ?? (finished && Boolean(run.focused))}
-          onReportFull={setReportChoice}
-        />
-      </div>
-    </main>
-  );
-}
+      <Document
+        detail={run.detail}
+        view={run.view}
+        onOpen={setDetail}
+        onDecide={(decision, note) => void run.decide(decision, note)}
+        deciding={run.deciding}
+        onResume={() => void run.resume()}
+        resuming={run.resuming}
+      />
 
-/**
- * What fills the canvas before the first file exists.
- *
- * `analyze` ran for 187 seconds before its first figure in run 003. A blank pane
- * for three minutes is the difference between "working" and "broken", so this
- * says who is working and on what (§3, last paragraph).
- */
-function Waiting({ run }: { run: ReturnType<typeof useRun> }) {
-  const current = run.view.steps.find((s) => s.status === "started");
-  if (!current) {
-    return (
-      <p className="view-note dim">
-        {run.detail?.status === "pending"
-          ? "The run is about to start."
-          : "Files will appear here as the run writes them."}
-      </p>
-    );
-  }
-  const calls = Object.entries(current.tools).sort((a, b) => b[1] - a[1]);
-  return (
-    <div className="waiting">
-      <span className="waiting-mark">{initial(current.persona)}</span>
-      <p className="waiting-who">
-        {current.persona} is working on <b>{current.step}</b>
-      </p>
-      <ul className="waiting-tools">
-        {calls.map(([tool, n]) => (
-          <li key={tool} className="mono">
-            {tool} <b>{n}</b>
-          </li>
-        ))}
-        {calls.length === 0 && <li className="dim">reading the step’s instructions…</li>}
-      </ul>
+      <Drawer
+        runId={runId}
+        detail={detail}
+        view={run.view}
+        run={run.detail}
+        onClose={() => setDetail(null)}
+      />
     </div>
   );
 }
-
-/** Limits that keep a drag from making either region useless. */
-const CHAT_RANGE: [number, number] = [280, 720];
-const PROGRESS_RANGE: [number, number] = [120, 900];
-const STOPPED_MIN_H = 560;
-
-/** Whether the run is stopped and the panel has to show why, in full. */
-function needsRoom(run: ReturnType<typeof useRun>): boolean {
-  if (run.view.gateStep) return true;
-  const status = run.detail?.status;
-  return status === "failed" || (status === "awaiting_gate" && !run.detail?.live);
-}
-const HEADER_PX = 56;
 
 /** Whether this server is serving a recording; the chat has nothing behind it. */
 function useReplayMode(): boolean {

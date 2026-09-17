@@ -1,0 +1,245 @@
+"use client";
+
+import type { RunDetail } from "../lib/api";
+import { duration, initial } from "../lib/format";
+import type { RunView, StepRow } from "../lib/run-state";
+import { useClock } from "../lib/use-run";
+
+import { GateCard, GateVerdict } from "./gate-card";
+
+/**
+ * The run as a document the team writes in front of you.
+ *
+ * Not a file list and not a log: a report with a heading per step, which starts
+ * as the plan — every section greyed, in the order they will be written — and
+ * fills in as the steps finish. That is the whole idea of the milestone
+ * (`docs/ui-living-report.md` §0): when the run ends, the document *is* the
+ * deliverable, and the reader has been watching it become one.
+ *
+ * A section that has not happened yet still says what it will hold, because a
+ * greyed heading with a sentence under it is a plan, and an empty screen is a
+ * product that looks broken.
+ */
+export function Document({
+  detail,
+  view,
+  onOpen,
+  onDecide,
+  deciding,
+  onResume,
+  resuming,
+  children,
+}: {
+  detail: RunDetail | null;
+  view: RunView;
+  /** Point the drawer at something: a file, a step, a spec. */
+  onOpen: (what: { kind: "file" | "step"; id: string }) => void;
+  onDecide: (decision: "approve" | "reject", note: string) => void;
+  deciding: boolean;
+  onResume: () => void;
+  resuming: boolean;
+  /** Section bodies, keyed by step id — filled in as the milestone proceeds. */
+  children?: (step: StepRow, state: SectionState) => React.ReactNode;
+}) {
+  const now = useClock(detail?.status === "running");
+  const planned = plan(detail, view);
+
+  return (
+    <main className="doc">
+      <article className="doc-body">
+        <p className="doc-eyebrow">{finished(detail) ? "Report" : "Report in progress"}</p>
+        <h1 className="doc-title">{heading(detail)}</h1>
+        <p className="doc-meta">
+          <span>Team: {team(view).join(", ") || "—"}</span>
+          <span>
+            Dataset: <span className="mono">{dataset(detail)}</span>
+          </span>
+          <span>{position(planned)}</span>
+        </p>
+
+        {planned.map(({ step, state, section }, i) => (
+          <section key={section + i} className={`sec is-${state}`} aria-label={section}>
+            <h2 className="sec-head">
+              {i + 1}. {section}
+              <span className="sec-by">
+                {step?.persona ?? ""}
+                {state === "running" && " · writing"}
+              </span>
+            </h2>
+            {state === "pending" && <p className="sec-plan">{promise(step, section)}</p>}
+            {state === "running" && step && <AtWork step={step} now={now} />}
+            {children?.(step as StepRow, state)}
+            {state === "done" && step && (
+              <Sources step={step} onOpen={(id) => onOpen({ kind: "file", id })} />
+            )}
+            {/* The decision renders **at its own step**, under the evidence it is
+                about. A gate in a side panel is a question about something the
+                reader has to go and find; a gate here is a question about the
+                paragraph above it. */}
+            {step && step.status === "awaiting_gate" && !step.gate?.decision && (
+              <GateCard step={step} onDecide={onDecide} busy={deciding} />
+            )}
+            {step && <GateVerdict step={step} />}
+            {step && step.status === "awaiting_gate" && step.gate?.decision === "reject" && (
+              <p className="sec-resume">
+                <button
+                  type="button"
+                  className="btn btn-primary"
+                  onClick={onResume}
+                  disabled={resuming}
+                >
+                  {resuming ? "Resuming…" : "Resume the run"}
+                </button>
+                <span className="dim">
+                  {step.persona} will look at your note and ask again.
+                </span>
+              </p>
+            )}
+          </section>
+        ))}
+      </article>
+    </main>
+  );
+}
+
+export type SectionState = "pending" | "running" | "done" | "failed";
+
+/**
+ * The persona at work, in the place their section will be.
+ *
+ * `analyze` ran for three minutes before its first chart in run 003. A blank
+ * space for three minutes is the difference between "working" and "broken", so
+ * the section says who is in it and what they have called so far.
+ */
+function AtWork({ step, now }: { step: StepRow; now: number }) {
+  const calls = Object.entries(step.tools).sort((a, b) => b[1] - a[1]);
+  const said = calls.map(([tool, n]) => `${tool} × ${n}`).join(" · ");
+  return (
+    <div className="at-work">
+      <span className="at-work-av">{initial(step.persona)}</span>
+      <span className="at-work-who">
+        <b>{step.persona} is working on this section</b>
+        <span className="mono at-work-tools">
+          {said || "reading the step’s instructions…"}
+        </span>
+      </span>
+      <span className="pill is-running">
+        <i className="pill-dot" />
+        {duration(now - step.startedAt)}
+      </span>
+    </div>
+  );
+}
+
+/**
+ * What a finding came from, under the finding.
+ *
+ * Clickable sources while the run is still going is one of the 2026 patterns the
+ * research names; it is also the cheapest answer to the loudest complaint about
+ * every product in this category, which is confident output nobody can check.
+ */
+function Sources({ step, onOpen }: { step: StepRow; onOpen: (path: string) => void }) {
+  const files = Object.values(step.matched).flat();
+  if (files.length === 0) return null;
+  return (
+    <p className="sec-sources">
+      <span className="sec-sources-label">Sources</span>
+      {files.map((path) => (
+        <button key={path} type="button" className="mono sec-source" onClick={() => onOpen(path)}>
+          {path}
+        </button>
+      ))}
+    </p>
+  );
+}
+
+type Planned = { step: StepRow | undefined; state: SectionState; section: string };
+
+/**
+ * The document's outline: one entry per step the workflow declares, in order.
+ *
+ * Built from the *workflow* rather than from the events, so the plan is complete
+ * from the first second — a reader can see what is coming before anything has
+ * run. The events then fill each entry in.
+ */
+function plan(detail: RunDetail | null, view: RunView): Planned[] {
+  const declared = detail?.workflow_shape?.steps ?? [];
+  const rows = new Map(view.steps.map((s) => [s.step, s]));
+  const entries = declared.length
+    ? declared.map((s) => ({ id: s.id, section: s.section || s.id, persona: s.persona }))
+    : view.steps.map((s) => ({ id: s.step, section: s.section || s.step, persona: s.persona }));
+
+  return entries.map(({ id, section, persona }, index) => {
+    const step = rows.get(id);
+    return {
+      // A step that has not started yet still needs a row: the section it will
+      // write is on the page from the first second, and everything downstream
+      // reads a `StepRow`. A half-built object cast to one is how a pending
+      // section crashed the screen — `gates` was undefined and the verdict list
+      // read its length.
+      step: step ?? placeholder(id, persona, index, entries.length),
+      state: stateOf(step),
+      section,
+    };
+  });
+}
+
+/** A step the run has not reached: real shape, nothing in it. */
+function placeholder(step: string, persona: string, index: number, total: number): StepRow {
+  return {
+    step,
+    persona,
+    index,
+    total,
+    status: "done",
+    section: "",
+    produces: [],
+    matched: {},
+    startedAt: 0,
+    endedAt: null,
+    error: null,
+    tools: {},
+    running: 0,
+    gate: null,
+    gates: [],
+    notes: [],
+  };
+}
+
+function stateOf(step: StepRow | undefined): SectionState {
+  if (!step) return "pending";
+  if (step.status === "failed") return "failed";
+  if (step.status === "started") return "running";
+  // A step parked at its undecided gate has still written its section; the
+  // decision is about what comes *next*, and hiding the evidence behind it would
+  // be asking someone to approve something they cannot read.
+  return "done";
+}
+
+function promise(step: StepRow | undefined, section: string): string {
+  const who = step?.persona ?? "The team";
+  return `${who} will write ${section.toLowerCase()} here.`;
+}
+
+function position(planned: Planned[]): string {
+  const done = planned.filter((p) => p.state === "done").length;
+  if (done === planned.length && planned.length > 0) return "Report complete";
+  return `Section ${Math.min(done + 1, planned.length)} of ${planned.length}`;
+}
+
+function team(view: RunView): string[] {
+  return [...new Set(view.steps.map((s) => s.persona))];
+}
+
+function finished(detail: RunDetail | null): boolean {
+  return detail?.status === "done";
+}
+
+function heading(detail: RunDetail | null): string {
+  return detail?.inputs?.question || detail?.workflow || "Run";
+}
+
+function dataset(detail: RunDetail | null): string {
+  const path = detail?.inputs?.data_path;
+  return path ? path.slice(path.lastIndexOf("/") + 1) : "—";
+}

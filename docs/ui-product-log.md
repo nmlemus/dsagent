@@ -818,3 +818,52 @@ one names a run that is not on this server.
 `pytest` 272 passed / 8 skipped (22 in `tests/test_charts.py`, 3 more in
 `tests/test_replay.py` for the charted fixture) · `ruff check src tests` ·
 `dsagent cartridge validate` · `npm run build`, `typecheck`, `lint`.
+
+## Task 4 (completed) — the shell: rail, document, drawer
+
+The run screen is no longer chat-beside-a-file-list. Three regions, in the order
+a person uses them, exactly as the mockup lays them out:
+
+- **The team rail** (320 px, navy) — the *activity*. Workflow, dataset, status,
+  elapsed; cost, tokens, cached share and the human wait; then the steps as named
+  phases with their persona, their promises ticking as files land, their tool
+  counts, and a hand-off line between one step and the next. The conversation
+  sits at its foot. It is the only dark surface in the product: the document
+  beside it is a document, and the thing watching it work should not compete with
+  it for the reader's eye.
+- **The living document** (fluid) — the *work*. It opens as the plan, one greyed
+  heading per declared step with a sentence saying what will be written there,
+  and fills in as steps finish. The outline comes from the *workflow*, not from
+  the events, so it is complete from the first second. A gate renders **inline at
+  its own step**, under the evidence it is about.
+- **The drawer** (420 px, on demand) — the *evidence*. A file, or a step all the
+  way down: persona, model, tokens, cost, every tool call, what it emitted, its
+  working notes. Shut until something is clicked.
+
+Home gained a second tab, "What the team can do": one card per workflow with its
+steps, the persona on each, and which ones stop to ask you something — read off
+the loaded cartridge, so a second cartridge renders without a line changing. The
+ledger gained a Team column.
+
+CopilotKit is themed for navy the same way M2.5 themed it for cream: its own
+variables, a second block scoped to `.rail`. No component replaced.
+
+### The bug this task found
+
+A section for a step that had not started crashed the whole screen — Chrome's
+renderer, not a React boundary. The document builds a row per *declared* step so
+the plan is visible before anything runs, and the placeholder was a half-built
+object cast to `StepRow`; the gate-verdict list then read `.gates.length` on
+`undefined`. It is now a real, empty row. Casting a partial object to a full type
+is a lie the compiler cannot catch, and this is what it costs.
+
+`canvas.tsx`, `progress.tsx` and `resizer.tsx` are deleted — the layout they
+served is gone. Their CSS is still in `globals.css` and comes out in one pass at
+the end of the milestone, when what is still referenced is settled.
+
+### Verified
+
+`m26-t4-shell.jpg`: the finished replay run with all four sections, the gate
+verdict at its step ("Approved after 5m 01s" — it really did wait), the rail's
+hand-offs, and the drawer open on `data-gate.md`. `pytest` 272 / 8 skipped ·
+`ruff` · `npm run build`, `typecheck`, `lint`.

@@ -64,6 +64,9 @@ export type StepRecord = {
   tool_calls: Record<string, number>;
   usage: Record<string, number>;
   skills_read: string[];
+  /** The model the step actually ran on, and what its tokens cost by `prices.yaml`. */
+  model: string;
+  cost_usd: number | null;
 };
 
 export type WorkflowStep = {
@@ -72,6 +75,8 @@ export type WorkflowStep = {
   env: string;
   needs: string[];
   produces: string[];
+  /** The report section this step writes, if the workflow names one. */
+  section: string;
   gate: { kind: string; prompt: string | null } | null;
 };
 
