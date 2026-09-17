@@ -147,3 +147,70 @@ def test_inputs_from_the_launcher_win_over_the_recording(replay):
     assert state["inputs"]["question"] == "Why is it always raining?"
     assert state["inputs"]["data_path"] == "data/seattle-weather.csv"
     assert state["status"] == "pending"
+
+
+# ---- the M2.6 fixture: the same run, with charts in it ----------------------
+
+CHARTS = Path(__file__).resolve().parents[1] / "ui" / "fixtures" / "run-eda-charts"
+
+
+@pytest.fixture
+def charted(tmp_path):
+    return Replay(CHARTS, tmp_path / "runs", speed=FAST)
+
+
+def test_the_chart_fixture_is_a_real_run_that_emitted_charts(charted):
+    """Recorded, not reconstructed: this run wrote its own log, charts and all."""
+    names = {e["name"] for e in charted.events}
+    assert "dsagent.chart" in names
+    charts = [e["value"] for e in charted.events if e["name"] == "dsagent.chart"]
+    assert len(charts) == 7
+    assert {c["kind"] for c in charts} == {"chart", "table"}
+    # Five figures and two tables, every one of them its own card.
+    figures = {c["chart_id"] for c in charts if c["kind"] == "chart"}
+    assert len(figures) == 5
+    # Every spec references its data rather than carrying it.
+    assert all(c["spec"]["data"] == {"name": "table"} for c in charts if c["kind"] == "chart")
+
+
+def test_a_replayed_chart_points_at_the_run_replaying_it(charted):
+    run_dir = charted.create("replayed", {})
+    charted.start("replayed")
+    assert wait_for(lambda: charted.answer_gate("replayed", GateDecision.APPROVE)), "no gate"
+    assert wait_for(lambda: read_state(run_dir)["status"] == "done")
+
+    state = read_state(run_dir)
+    assert len(state["charts"]) == 7
+    for chart_id, card in state["charts"].items():
+        # The recorded URL named the run it was recorded in; this is a different
+        # run, reading the same file out of its own directory.
+        assert card["data_url"] == f"/runs/replayed/preview/{card['data_ref']}"
+        assert card["run_id"] == "replayed"
+        assert card["chart_id"] == chart_id
+
+    # And the file each one draws from is actually there to be read.
+    for card in state["charts"].values():
+        assert (run_dir / "workspace" / card["data_ref"]).is_file(), card["data_ref"]
+
+    events = [e for e in read_events(run_dir) if e["name"] == "dsagent.chart"]
+    assert len(events) == 7
+
+
+def test_every_chart_in_the_fixture_is_one_vega_lite_would_draw(charted):
+    """The fixture is evidence, so it may not contain a chart that draws nothing.
+
+    Run 1 of this milestone emitted two specs that satisfied the schema and then
+    failed in the browser with `Duplicate signal name`. Validation gained a
+    render smoke test because of it; this is that smoke test, pointed at the
+    recording the screens are developed against.
+    """
+    pytest.importorskip("vl_convert")
+    from dsagent.runner.charts import validate_spec
+
+    charts = [e["value"] for e in charted.events if e["name"] == "dsagent.chart"]
+    broken = {
+        c["chart_id"]: validate_spec(c["spec"])
+        for c in charts
+        if c["kind"] == "chart" and validate_spec(c["spec"])
+    }
+    assert broken == {}

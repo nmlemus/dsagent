@@ -314,3 +314,44 @@ def test_a_run_the_orchestrator_never_started_is_failed_not_pending(driver, tmp_
 
     assert wait_for(lambda: read_state(run_dir)["status"] == "failed")
     assert "did not start" in summarize(run_dir).error
+
+
+def test_a_resumed_run_walks_past_a_gate_it_has_already_passed(tmp_path):
+    """Retrying a failed step must not stall on a question nobody is asking.
+
+    A resumed run re-raises the `interrupt()` for every gate it has already
+    passed — it has to, or the next gate receives the previous one's answer. Each
+    of those parks the graph. `state.gate` is `None` throughout, because nobody
+    is being asked; the driver answers from the record and the run moves on.
+
+    Found by pressing "Retry from analyze" on a real failed run: it read
+    `running`, no thread was behind it, and the step never moved again.
+    """
+    from dsagent.driver import _standing_decision
+    from dsagent.runner import GateDecision, GateRecord, RunState, StepRecord
+
+    approved = RunState(
+        workflow="w", cartridge="c", inputs={},
+        steps={
+            "gate-step": StepRecord(
+                id="gate-step", status="done",
+                gate=GateRecord(decision="approve", note="", ts=1.0, asked_at=0.0),
+            ),
+            "next": StepRecord(id="next", status="failed"),
+        },
+    )
+    assert _standing_decision(approved) is GateDecision.APPROVE
+
+    # A rejection leaves its step `pending`; that gate is asked for real, and the
+    # driver must not answer it on the person's behalf.
+    sent_back = RunState(
+        workflow="w", cartridge="c", inputs={},
+        steps={
+            "gate-step": StepRecord(
+                id="gate-step", status="pending",
+                gate=GateRecord(decision="reject", note="no", ts=1.0, asked_at=0.0),
+            ),
+        },
+    )
+    assert _standing_decision(sent_back) is None
+    assert _standing_decision(RunState(workflow="w", cartridge="c", inputs={}, steps={})) is None

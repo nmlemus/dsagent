@@ -36,6 +36,16 @@
   --wait: #9a6b00;
   --wait-wash: rgba(154, 107, 0, 0.1);
 
+  /* the rail: the one dark surface, so its ink needs its own names. The status
+     colours are lifted for contrast on navy — the same hues, legible on a ground
+     they were not chosen against. */
+  --rail-ink: #edeff5;
+  --rail-dim: rgba(237, 239, 245, 0.62);
+  --rail-rule: rgba(237, 239, 245, 0.16);
+  --rail-wait: #e0b14c;
+  --ok-bright: #38b48b;
+  --fail-bright: #e86a57;
+
   /* type */
   --ui: "Satoshi", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
   --display: "Instrument Serif", "Iowan Old Style", Georgia, serif;

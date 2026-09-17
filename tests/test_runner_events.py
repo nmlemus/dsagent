@@ -312,10 +312,10 @@ def test_a_step_that_dies_before_streaming_claims_no_files(events_runner, monkey
     runner, events = events_runner()
     real = WorkflowRunner._task_message
 
-    def boom(self, wf, step, inputs):
+    def boom(self, wf, step, inputs, sent_back=None):
         if step.id == "analyze":
             raise RuntimeError("instructions went missing")
-        return real(self, wf, step, inputs)
+        return real(self, wf, step, inputs, sent_back)
 
     monkeypatch.setattr(WorkflowRunner, "_task_message", boom)
     runner.run("eda-to-report", {"data_path": "x.csv"})

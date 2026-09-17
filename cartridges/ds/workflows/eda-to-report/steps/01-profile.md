@@ -24,6 +24,16 @@ is a date column, distribution notes, anything a reader needs to interpret the n
 the verdict; if you pre-empt it, it does the work twice. Flagging something as worth a
 closer look is fine; deciding pass or fail is not yours.
 
+**Show the reader the profile.** Write the per-column table to
+`artifacts/scratch/column-profile.csv` and emit it with `show_table` — the reader gets a
+table they can sort and filter, rather than a markdown grid that does not move. One call,
+after the script has run:
+
+```
+show_table(data_ref="artifacts/scratch/column-profile.csv",
+           title="Column profile — nulls, distinct values and ranges")
+```
+
 `data/` holds the run's inputs — do not write there unless a `produces` path says so.
 Working files go under `artifacts/scratch/`.
 

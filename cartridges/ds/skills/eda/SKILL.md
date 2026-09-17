@@ -33,3 +33,22 @@ description: Exploratory data analysis and data quality gates — profiling chec
 `artifacts/data-gate.md`: one table with check / value / threshold / result, then
 a single final line — `GATE: PASS` or `GATE: FAIL — <reason>`. Workflow gates read
 that line.
+
+## Showing what you found
+
+A profile and a gate report are both tables a reader wants to look *through*.
+Write the table to a file and emit it with `show_table`, so the reader can sort
+and filter it instead of reading a markdown table that does not move:
+
+```python
+prof.to_csv("artifacts/scratch/column-profile.csv", index=False)
+```
+
+```python
+show_table(data_ref="artifacts/scratch/column-profile.csv",
+           title="Column profile — nulls, distinct values and ranges")
+```
+
+The markdown artifact is still the record; `show_table` is how it reaches the
+person reading the run. Distributions and comparisons are charts — see the
+`reports` skill's "Emitting a chart".

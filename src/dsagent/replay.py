@@ -24,6 +24,7 @@ from pathlib import Path
 from typing import Any
 
 from dsagent.models import default_model
+from dsagent.runner.charts import CHART_EVENT
 from dsagent.runner.runner import EVENT_LOG, GateDecision, GateRecord, RunState, StepRecord
 
 DEFAULT_SPEED = 10.0
@@ -220,6 +221,14 @@ class Replay:
             self._copy_file(run_dir, value["path"])
         if name == "dsagent.step":
             self._record_step(state, value)
+            state.save(run_dir)
+        if name == CHART_EVENT:
+            # `data_url` names the run the chart was recorded in. This is a
+            # different run, reading the same file out of its own directory, so
+            # the recorded URL would send the browser to a run that is not on
+            # this server.
+            value = {**value, "data_url": f"/runs/{run_id}/preview/{value.get('data_ref', '')}"}
+            state.charts[value["chart_id"]] = {**value, "run_id": run_id}
             state.save(run_dir)
         self._write(run_dir, run_id, name, value)
 

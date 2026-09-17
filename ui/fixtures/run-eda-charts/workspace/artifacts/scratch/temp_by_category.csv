@@ -1,0 +1,11 @@
+weather,n,metric,temp_c
+drizzle,53,mean daily max temp,15.926
+drizzle,53,mean daily min temp,7.111
+fog,101,mean daily max temp,16.757
+fog,101,mean daily min temp,7.979
+rain,641,mean daily max temp,13.455
+rain,641,mean daily min temp,7.589
+snow,26,mean daily max temp,5.573
+snow,26,mean daily min temp,0.146
+sun,640,mean daily max temp,19.862
+sun,640,mean daily min temp,9.344

@@ -11,7 +11,14 @@
 
 export const API = "/dsa";
 
-export type RunStatus = "pending" | "running" | "awaiting_gate" | "done" | "failed";
+export type RunStatus =
+  | "pending"
+  | "running"
+  | "awaiting_gate"
+  | "done"
+  | "failed"
+  /** Somebody pressed stop; the run finished the step it was in and halted. */
+  | "stopped";
 
 /** The gate a run is standing at right now — `RunState.gate` in `run.json`. */
 export type PendingGate = {
@@ -64,6 +71,9 @@ export type StepRecord = {
   tool_calls: Record<string, number>;
   usage: Record<string, number>;
   skills_read: string[];
+  /** The model the step actually ran on, and what its tokens cost by `prices.yaml`. */
+  model: string;
+  cost_usd: number | null;
 };
 
 export type WorkflowStep = {
@@ -72,6 +82,8 @@ export type WorkflowStep = {
   env: string;
   needs: string[];
   produces: string[];
+  /** The report section this step writes, if the workflow names one. */
+  section: string;
   gate: { kind: string; prompt: string | null } | null;
 };
 
@@ -95,6 +107,8 @@ export type WorkflowShape = {
 export type RunDetail = RunSummary & {
   steps: Record<string, StepRecord>;
   workflow_shape: WorkflowShape | null;
+  /** The proposal it was started from, if it was started from one. */
+  plan: RunPlan | null;
   driver_error: string | null;
 };
 
@@ -183,3 +197,43 @@ export function fileUrl(runId: string, path: string): string {
 }
 
 export const eventsUrl = (runId: string) => `${API}/runs/${encodeURIComponent(runId)}/events`;
+
+/** What a run will do, before it does any of it — see `plan_run`. */
+export type RunPlan = {
+  workflow: string;
+  description: string;
+  inputs: Record<string, string>;
+  steps: WorkflowStep[];
+  personas: string[];
+  gates: string[];
+  profile: {
+    input: string;
+    path: string;
+    bytes: number;
+    rows: number;
+    columns: { name: string; type: string; distinct: number; empty: number; sample: string }[];
+    preview: unknown[][];
+    preview_columns: string[];
+  } | null;
+  guesses: Record<string, { value: string; why: string }>;
+  estimate: { runs: number; cost_usd: number | null; seconds: number | null };
+};
+
+/**
+ * Ask what a run will do — and, with `inputs`, tell it what you changed first.
+ *
+ * The plan is editable by design: the key-column guess is a guess. A form whose
+ * edits the run never sees is a form that lies, so the values go back with the
+ * request that asks for the plan again, and the run keeps them.
+ */
+export const planRun = (runId: string, inputs?: Record<string, string>) =>
+  json<RunPlan>(`/runs/${encodeURIComponent(runId)}/plan`, {
+    method: "POST",
+    ...(inputs ? { body: JSON.stringify({ inputs }) } : {}),
+  });
+
+/** Ask a run to stop. It stops between steps — see `stop_run`. */
+export const stopRun = (runId: string) =>
+  json<{ stopping: boolean; status: string }>(`/runs/${encodeURIComponent(runId)}/stop`, {
+    method: "POST",
+  });

@@ -36,6 +36,23 @@ ui = [
     # Without it `dsagent serve` still runs, in memory — a gate then cannot be
     # answered after a restart (docs/ui-product.md §4.3).
     "langgraph-checkpoint-sqlite>=3.1",
+    # What validates a persona's Vega-Lite spec before it reaches a browser.
+    # Pinned below 6 on purpose: altair 6 carries the Vega-Lite **v6** schema,
+    # and the UI bundles vega-lite 5. A server that validates against a grammar
+    # the renderer does not speak would pass a spec the reader cannot see, which
+    # is worse than no validation. altair 5.5 ships v5.20.1; the UI is on the
+    # same line. Move both together or neither.
+    "altair>=5.5,<6",
+    "jsonschema>=4",
+    # The other half of validating a chart: `altair` checks the schema,
+    # `vl-convert` compiles and draws it once. A spec can satisfy the schema and
+    # still not be a chart — see `charts.validate_spec`. It is also what renders
+    # PNG/SVG for a PDF export.
+    "vl-convert-python>=1.7",
+    # What turns a persona's markdown into the exported report's HTML. The
+    # cartridge's kernel env happens to install it too, which is why the venv
+    # that tested this only ever exercised the `<pre>` fallback.
+    "markdown>=3.5",
 ]
 anthropic = ["langchain-anthropic"]
 openai = ["langchain-openai"]

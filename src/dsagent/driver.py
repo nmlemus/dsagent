@@ -55,6 +55,19 @@ class Driver(Protocol):
     def is_running(self, run_id: str) -> bool: ...
 
 
+def _standing_decision(state: RunState) -> GateDecision | None:
+    """The decision a re-raised gate is waiting to be told about.
+
+    The first step whose work is done and whose gate is already answered: that is
+    the one the runner is walking back through. Approvals only — a rejection
+    leaves its step `pending`, and the runner asks that gate for real.
+    """
+    for rec in state.steps.values():
+        if rec.status == "done" and rec.gate and rec.gate.decision == GateDecision.APPROVE.value:
+            return GateDecision.APPROVE
+    return None
+
+
 def pending_state(workflow: Workflow, cartridge: Cartridge, inputs: dict[str, Any]) -> RunState:
     """A run that exists but has not started.
 
@@ -138,6 +151,20 @@ class GraphDriver:
         return run_dir
 
     def start(self, run_id: str, *, resume: bool = False) -> None:
+        """Drive the run. `resume` re-enters one that stopped.
+
+        A resumed run walks back through every gate it has already passed, and
+        under `dsagent serve` each of those is an `interrupt()` that has to be
+        raised again — dropping it would hand the next gate the previous one's
+        answer (`docs/ui-slice.md` §2). So the graph parks on a question nobody
+        is being asked, and `_walk_past_decided_gates` is what answers it: from
+        the run's own record, which is where the decision has been all along.
+
+        Without it a retry stalls silently. The run reads `running`, no thread is
+        behind it, and the screen shows a step that will never move — which is
+        what "Retry from analyze" did the first time it was pressed on a real
+        failed run.
+        """
         # Held across the check *and* the spawn: two clicks on Start, or a retry
         # behind a slow response, are two requests on two threads, and without
         # the lock both pass `is_running` and both invoke the same checkpoint
@@ -150,6 +177,11 @@ class GraphDriver:
             say = resume_message if resume else start_message
             message = say(cartridge.workflows[state.workflow], run_id, state.inputs)
             self._spawn(run_id, {"messages": [{"role": "user", "content": message}]})
+        if resume:
+            threading.Thread(
+                target=self._walk_past_decided_gates, args=(run_id,), daemon=True,
+                name=f"gates-{run_id}",
+            ).start()
 
     def answer_gate(self, run_id: str, decision: GateDecision, note: str = "",
                     timeout: float = PARK_SECONDS) -> bool:
@@ -186,6 +218,39 @@ class GraphDriver:
                 return False
             self._spawn(run_id, Command(resume={"decision": decision.value, "note": note}))
         return True
+
+    def _walk_past_decided_gates(self, run_id: str, rounds: int = 12) -> None:
+        """Answer the interrupts a resumed run raises for gates already decided.
+
+        The run's record is the authority: `state.gate` holds the question a
+        person is actually being asked, and it is `None` while the runner is
+        merely re-raising a decision it already has. So an interrupt with no
+        pending gate behind it is answered here, with the decision on the record,
+        and the run carries on to wherever it was really going.
+
+        Bounded, because this is a loop that talks to a graph: a workflow has a
+        handful of gates, and a dozen rounds is more than any of them needs.
+        """
+        for _ in range(rounds):
+            time.sleep(PARK_SECONDS / 5)
+            if self.is_running(run_id) or not self._interrupted(run_id):
+                continue
+            try:
+                state = RunState.load(self.runs_dir / run_id)
+            except (OSError, ValueError, TypeError):
+                return
+            if state.gate or state.status in ("done", "failed", "stopped"):
+                return  # a person is being asked, or there is nothing to ask about
+            decided = _standing_decision(state)
+            if decided is None:
+                return
+            self.log(f"[driver] {run_id}: walking past a gate already {decided.value}d")
+            from langgraph.types import Command
+
+            with self._starting:
+                if self.is_running(run_id):
+                    continue
+                self._spawn(run_id, Command(resume={"decision": decided.value, "note": ""}))
 
     def _awaiting(self, run_id: str) -> bool:
         """Whether the run itself says it is standing at a gate.

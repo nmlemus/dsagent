@@ -87,8 +87,12 @@ def test_cartridges_describes_every_workflow_the_launcher_can_offer(client):
     eda = next(w for w in body["workflows"] if w["name"] == "eda-to-report")
 
     assert eda["inputs"]["data_path"] == {
-        "type": "path", "required": True, "default": None, "options": None,
+        "type": "path", "required": True, "default": None, "options": None, "guess": None,
     }
+    # The workflow says which input is the title and which is the table, so no
+    # screen has to recognise the words "question" or "data_path" (invariant 1).
+    assert (eda["title_input"], eda["data_input"]) == ("question", "data_path")
+    assert eda["inputs"]["key_column"]["guess"] == "unique_column"
     # `question` has a default, so the form can prefill it and not demand it;
     # `key_column` is optional. §7.2 is exactly this rendered.
     assert eda["inputs"]["question"]["required"] is False
@@ -100,7 +104,10 @@ def test_cartridges_describes_every_workflow_the_launcher_can_offer(client):
     gated = [s for s in eda["steps"] if s["gate"]]
     assert [s["id"] for s in gated] == ["data-gate"]
     assert gated[0]["gate"]["kind"] == "human"
-    assert eda["steps"][2]["produces"] == ["artifacts/findings.md", "artifacts/figures/*.png"]
+    assert eda["steps"][2]["produces"] == ["artifacts/findings.md"]
+    assert [s["section"] for s in eda["steps"]] == [
+        "The data", "Data quality", "Findings", "Report",
+    ]
 
 
 def test_an_unknown_workflow_is_refused_rather_than_started(client):
@@ -443,3 +450,164 @@ def test_a_run_that_happened_is_not_deletable(client):
     assert r.status_code == 409
     assert "not deletable" in r.json()["detail"]
     assert client.get(f"/runs/{run_id}").status_code == 200
+
+
+# ---- the plan, and stopping -------------------------------------------------
+
+
+def test_a_plan_describes_the_run_without_running_any_of_it(client):
+    """Everything in it is derivable, so nothing in it can be hallucinated."""
+    created = client.post("/runs", json={"workflow": "eda-to-report", "inputs": {}}).json()
+    run_id = created["run_id"]
+    client.put(
+        f"/runs/{run_id}/data/data_path?filename=weather.csv",
+        content=b"date,temp,weather\n2012-01-01,12.8,drizzle\n2012-01-02,10.6,rain\n",
+    )
+
+    plan = client.post(f"/runs/{run_id}/plan").json()
+
+    assert plan["workflow"] == "eda-to-report"
+    assert plan["personas"] == ["marie", "noel"]
+    assert plan["gates"] == ["data-gate"]
+    assert [s["id"] for s in plan["steps"]] == ["profile", "data-gate", "analyze", "report"]
+    # The file's shape, read where it landed.
+    assert plan["profile"]["rows"] == 2
+    assert [c["name"] for c in plan["profile"]["columns"]] == ["date", "temp", "weather"]
+    assert [c["type"] for c in plan["profile"]["columns"]] == ["text", "number", "text"]
+    assert len(plan["profile"]["preview"]) == 2
+    # And nothing ran.
+    assert client.get(f"/runs/{run_id}").json()["status"] == "pending"
+
+
+def test_the_plan_guesses_a_key_from_the_column_that_has_no_repeats():
+    """The harness does not know what a key is; it knows which column repeats."""
+    from dsagent.api import _guesses
+
+    shape = {"inputs": {
+        "data_path": {"type": "path", "guess": None},
+        "question": {"type": "string", "guess": None},
+        "key_column": {"type": "string", "guess": "unique_column"},
+    }}
+    profile = {
+        "rows": 3,
+        "columns": [
+            {"name": "date", "type": "text", "distinct": 3, "empty": 0},
+            {"name": "weather", "type": "text", "distinct": 2, "empty": 0},
+        ],
+    }
+
+    guesses = _guesses(shape, {"data_path": "data/w.csv"}, profile)
+
+    assert guesses["key_column"]["value"] == "date"
+    assert "unique" in guesses["key_column"]["why"]
+    # `weather` repeats, so it is not offered. `question` asked for no guess, and
+    # the harness does not look at what an input is *called* to decide.
+    assert "weather" not in str(guesses)
+    assert "question" not in guesses
+
+
+def test_a_value_the_operator_already_gave_is_not_guessed_over():
+    from dsagent.api import _guesses
+
+    shape = {"inputs": {"key_column": {"type": "string", "guess": "unique_column"}}}
+    profile = {"rows": 2, "columns": [{"name": "id", "distinct": 2, "empty": 0}]}
+
+    assert _guesses(shape, {"key_column": "date"}, profile) == {}
+    # …but the ds cartridge's literal "None" default means *unfilled*.
+    assert _guesses(shape, {"key_column": "None"}, profile)["key_column"]["value"] == "id"
+
+
+def test_a_plan_with_nothing_to_compare_says_so_rather_than_inventing_a_price(client):
+    created = client.post("/runs", json={"workflow": "eda-to-report", "inputs": {}}).json()
+    plan = client.post(f"/runs/{created['run_id']}/plan").json()
+
+    assert plan["estimate"] == {"runs": 0, "cost_usd": None, "seconds": None}
+
+
+def test_the_plan_is_kept_on_the_run(client):
+    created = client.post("/runs", json={"workflow": "eda-to-report", "inputs": {}}).json()
+    run_id = created["run_id"]
+    client.post(f"/runs/{run_id}/plan")
+
+    # It is the first entry in the run's audit trail: what was offered.
+    assert client.get(f"/runs/{run_id}").json()["plan"]["workflow"] == "eda-to-report"
+
+
+def test_stopping_a_run_nobody_is_driving_marks_it_stopped(client):
+    created = client.post("/runs", json={"workflow": "eda-to-report", "inputs": {}}).json()
+    run_id = created["run_id"]
+
+    answer = client.post(f"/runs/{run_id}/stop").json()
+
+    assert answer == {"stopping": False, "status": "stopped"}
+    assert client.get(f"/runs/{run_id}").json()["status"] == "stopped"
+
+
+def test_stopping_a_finished_run_changes_nothing(client, tmp_path):
+    runs_dir = tmp_path / "runs"
+    created = client.post("/runs", json={"workflow": "eda-to-report", "inputs": {}}).json()
+    run_id = created["run_id"]
+    state = json.loads((runs_dir / run_id / "run.json").read_text())
+    state["status"] = "done"
+    (runs_dir / run_id / "run.json").write_text(json.dumps(state))
+
+    assert client.post(f"/runs/{run_id}/stop").json() == {"stopping": False, "status": "done"}
+    assert client.get(f"/runs/{run_id}").json()["status"] == "done"
+
+
+def test_the_plan_carries_the_operator_s_edits_back_to_the_run(client):
+    """A plan you can change but whose changes the run never sees is a lie."""
+    created = client.post("/runs", json={"workflow": "eda-to-report", "inputs": {}}).json()
+    run_id = created["run_id"]
+
+    client.post(f"/runs/{run_id}/plan", json={"inputs": {"key_column": "date"}})
+
+    assert client.get(f"/runs/{run_id}").json()["inputs"]["key_column"] == "date"
+
+
+def test_a_run_that_has_started_keeps_the_inputs_it_began_with(client, tmp_path):
+    created = client.post("/runs", json={"workflow": "eda-to-report", "inputs": {}}).json()
+    run_id = created["run_id"]
+    runs_dir = tmp_path / "runs"
+    state = json.loads((runs_dir / run_id / "run.json").read_text())
+    state["status"] = "running"
+    (runs_dir / run_id / "run.json").write_text(json.dumps(state))
+
+    refused = client.post(f"/runs/{run_id}/plan", json={"inputs": {"key_column": "date"}})
+
+    assert refused.status_code == 409
+    assert "already started" in refused.json()["detail"]
+
+
+def test_stopping_a_live_run_leaves_a_request_the_runner_will_find(client, tmp_path):
+    """The request is a file, not a field: `run.json` has another writer."""
+    from dsagent.runner.runner import STOP_FILE
+
+    created = client.post("/runs", json={"workflow": "eda-to-report", "inputs": {}}).json()
+    run_id = created["run_id"]
+    runs_dir = tmp_path / "runs"
+    state = json.loads((runs_dir / run_id / "run.json").read_text())
+    state["status"] = "running"
+    (runs_dir / run_id / "run.json").write_text(json.dumps(state))
+
+    class Driving:
+        def is_running(self, _run_id: str) -> bool:
+            return True
+
+        def error_for(self, _run_id: str) -> None:
+            return None
+
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+
+    from dsagent.api import add_runs_routes
+    from dsagent.cartridge import load_cartridge
+
+    app = FastAPI()
+    add_runs_routes(app, [load_cartridge(DS)], runs_dir, driver=Driving())
+    answer = TestClient(app).post(f"/runs/{run_id}/stop").json()
+
+    assert answer["stopping"] is True
+    assert (runs_dir / run_id / STOP_FILE).exists()
+    # And the run still reads `running` — it stops when the runner gets there.
+    assert json.loads((runs_dir / run_id / "run.json").read_text())["status"] == "running"

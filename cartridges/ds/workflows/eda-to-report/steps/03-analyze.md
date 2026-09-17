@@ -1,9 +1,18 @@
 Answer this question with the data: **{question}**
 
 Read `artifacts/data-profile.md` and `artifacts/data-gate.md` first so you know what to
-trust. Use `run_python` (state persists) for the analysis. Produce between one and five figures
-under `artifacts/figures/` following the chart rules in the `reports` skill — every
-finding in *Evidence* rests on one, so a run with no figure has nothing to show.
+trust. Use `run_python` (state persists) for the analysis.
+
+**Produce between three and five charts with `show_chart`** — read "Emitting a chart" in
+the `reports` skill first. Every finding in *Evidence* rests on one, so a run with no
+chart has nothing to show. Do not write PNGs: a figure here is a Vega-Lite spec plus the
+aggregate it draws, which is what lets the reader hover it, zoom it and ask you to change
+it. For each chart: aggregate with `run_python`, write the aggregate under
+`artifacts/scratch/`, then call `show_chart` naming that file.
+
+At least one chart carries an interaction the reader would actually use — pan and zoom on
+a time axis, or a brush over a range. Refer to charts in `findings.md` by their title, not
+by a file path; they are not files.
 
 Write `artifacts/findings.md` with exactly three sections, in this order:
 

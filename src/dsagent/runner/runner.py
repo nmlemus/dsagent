@@ -30,7 +30,9 @@ from __future__ import annotations
 import json
 import os
 import re
+import shutil
 import subprocess
+import threading
 import time
 from collections.abc import Callable
 from dataclasses import asdict, dataclass, field
@@ -41,6 +43,12 @@ from typing import Any
 from dsagent.cartridge.models import Cartridge, Step, Workflow
 from dsagent.envs.base import Env, make_env
 from dsagent.models import default_model
+from dsagent.runner.charts import (
+    CHART_EVENT,
+    ChartRecord,
+    StepContext,
+    chart_tools,
+)
 
 
 class GateDecision(str, Enum):
@@ -60,6 +68,24 @@ nothing on the wire says who is talking (`docs/ui-slice.md` §4). The runner doe
 know, so it says so: attribution by construction rather than by clock, and it
 survives a reload, a second tab and a run nobody was watching, none of which a
 message stream does.
+"""
+
+STOP_FILE = "stop"
+"""Where a stop request waits, in the run directory.
+
+A file rather than a field, because a field in `run.json` is a field the runner
+overwrites: it saves its own state at the end of every step, and the flag an
+HTTP handler had just written went with it. Two writers, one document, and the
+one who does not own the value wins — the same shape of bug as the shared temp
+file, found the same way.
+"""
+
+GATE_VERSIONS = "gate-versions"
+"""Where a rejected gate's artifacts are kept, inside the run directory.
+
+Deliberately *outside* `workspace/`: the workspace is what the run produced and
+what its zip contains, and a copy kept so a person can see what changed is
+neither. Read back through `GET /runs/{id}/gate-version/...`.
 """
 
 EVENT_LOG = "events.jsonl"
@@ -202,6 +228,22 @@ class RunState:
     keeps only its *standing* decision: a gate sent back and later approved would
     otherwise report the second wait and forget the first, and the first is the
     one where somebody read the report and said no."""
+    charts: dict[str, dict[str, Any]] = field(default_factory=dict)
+    """Every chart and table the run has emitted, by `chart_id`, latest version.
+
+    Kept on the run rather than only in the event log because a resumed run has
+    to know that `precipitation-by-category` already exists at version 1 — that
+    is what makes a persona's correction a *second version of that chart* rather
+    than a second chart with the same title. The log keeps every version; this
+    keeps the standing one.
+    """
+    plan: dict[str, Any] | None = None
+    """The proposal this run was started from, if it was started from one.
+
+    Kept on the run because it is the *audit trail's* first entry: what was
+    offered, what it was expected to cost, and — once the run has happened —
+    what it actually did. A plan the operator edited is the edited one.
+    """
     gate: dict[str, Any] | None = None
     """The gate being asked right now: step, persona, prompt, produces, asked_at.
 
@@ -220,15 +262,23 @@ class RunState:
         return cls(**d)
 
     def save(self, run_dir: Path) -> None:
-        """Write `run.json`, atomically.
+        """Write `run.json`, atomically, from any thread.
 
         A run is written while it is being read: the runs API reads this file on
         every list and every poll, and a plain overwrite has a window where the
         reader gets a truncated — or empty — file. Same-directory temp plus
         `os.replace`, which is atomic on POSIX and on Windows.
+
+        The temp name carries the thread id because a run is also written from
+        **two** threads: the runner's, and whichever one a tool call lands on —
+        `show_chart` records itself the moment it is called. With one shared temp
+        path the two collide, the first `os.replace` consumes it, and the second
+        dies with `No such file or directory: .run.json.tmp`. That killed
+        `analyze` five minutes into a real run, after eleven `run_python` calls,
+        with nothing wrong with the analysis at all.
         """
         path = run_dir / "run.json"
-        tmp = path.with_name(f".{path.name}.tmp")
+        tmp = path.with_name(f".{path.name}.{os.getpid()}.{threading.get_ident()}.tmp")
         tmp.write_text(json.dumps(asdict(self), indent=2), encoding="utf-8")
         os.replace(tmp, path)
 
@@ -278,6 +328,12 @@ class WorkflowRunner:
         self._envs: dict[str, Env] = {}
         self._reported: dict[str, float] = {}
         """Workspace mtimes already announced via `dsagent.file` for the running step."""
+        self._here = StepContext()
+        """Which step the chart tools should attribute an emission to. One runner
+        drives every step of a workflow through one set of tools, so the answer
+        has to be read when a tool is called, not when it is built."""
+        self._state: RunState | None = None
+        """The run being driven, so a chart emitted mid-step is saved with it."""
 
     # ---- events -------------------------------------------------------------
 
@@ -334,6 +390,7 @@ class WorkflowRunner:
                 "env": step.env or wf.env,
                 "index": order.index(step.id),
                 "total": len(order),
+                "section": step.section or "",
                 "status": status,
                 "needs": list(step.needs),
                 "produces": list(step.produces),
@@ -407,6 +464,39 @@ class WorkflowRunner:
 
     # ---- envs ---------------------------------------------------------------
 
+    def charts(self) -> list[Any]:
+        """The chart tools, bound to this run.
+
+        Handed to every persona, in every env: emitting a chart is not something
+        a kernel does, it is something the *run* records, and a persona working
+        in a Docker env has the same report to write into.
+        """
+        return chart_tools(
+            self.workspace,
+            self.run_id,
+            on_chart=self._on_chart,
+            context=lambda: self._here,
+            known=self._known_chart,
+        )
+
+    def _known_chart(self, chart_id: str) -> ChartRecord | None:
+        stored = (self._state.charts if self._state else {}).get(chart_id)
+        return ChartRecord(**stored) if stored else None
+
+    def _on_chart(self, rec: ChartRecord) -> None:
+        """Record one emission: on the run, then in the log, then to the screen.
+
+        Order matters on a resume. `run.json` is what a re-entering runner reads
+        to decide whether this is version 1 or version 2; the event log is what
+        the document is rebuilt from; the live consumer is a browser that may not
+        be there. Writing the run first means an interrupted emission is still
+        counted.
+        """
+        if self._state is not None:
+            self._state.charts[rec.chart_id] = asdict(rec)
+            self._state.save(self.run_dir)
+        self.emit(CHART_EVENT, rec.as_event())
+
     def env_for(self, name: str) -> Env:
         if name not in self._envs:
             spec = self.cartridge.envs[name]
@@ -419,11 +509,11 @@ class WorkflowRunner:
             e.close()
         self._envs.clear()
 
-    @staticmethod
-    def _default_factory(cartridge: Cartridge, persona: str, env: Env, workspace: Path):
+    def _default_factory(self, cartridge: Cartridge, persona: str, env: Env, workspace: Path):
         from dsagent.host.build import build_persona_agent
 
-        return build_persona_agent(cartridge, persona, env, workspace)
+        return build_persona_agent(cartridge, persona, env, workspace,
+                                   extra_tools=self.charts())
 
     # ---- run ----------------------------------------------------------------
 
@@ -448,10 +538,13 @@ class WorkflowRunner:
             state = RunState(workflow=wf.name, cartridge=self.cartridge.name, inputs=inputs,
                              steps={s.id: StepRecord(id=s.id) for s in wf.steps})
         state.status = "running"
+        self._state = state
         state.save(self.run_dir)
 
         try:
             for step in wf.ordered_steps():
+                if self._stopped(state):
+                    return state
                 rec = state.steps[step.id]
                 # The work is skipped once it is done; the gate never is. A gate
                 # is a `interrupt()` call under `dsagent serve`, and LangGraph
@@ -463,6 +556,12 @@ class WorkflowRunner:
                         state.status = "failed"
                         state.save(self.run_dir)
                         return state
+                # Before the gate, not after it: a stop pressed while a gated
+                # step was running would otherwise stop the run *by way of*
+                # asking somebody a question first, which is the one thing a
+                # stopped run should not do.
+                if self._stopped(state):
+                    return state
                 if step.gate and not self._gate(wf, step, rec, state, dry_run):
                     return state
             state.status = "done"
@@ -471,6 +570,29 @@ class WorkflowRunner:
         finally:
             if not dry_run:
                 self.close()
+
+    def _stopped(self, state: RunState) -> bool:
+        """Whether somebody asked this run to stop, and honouring it if so.
+
+        Checked between steps, never inside one: a step is a persona holding a
+        kernel and half a written file, and ending it there leaves a workspace
+        nothing can describe. The step in flight finishes and the run halts
+        before the next one — which is the only point at which "stopping never
+        costs more than what already ran" is a promise the runner can keep.
+
+        It does **not** cancel work already in flight: a `run_python` call that
+        is executing keeps executing, and the kernel closes the ordinary way as
+        the run unwinds. Stop means "do not start the next thing", and the
+        button says so before it is pressed.
+        """
+        flag = self.run_dir / STOP_FILE
+        if not flag.exists():
+            return False
+        flag.unlink(missing_ok=True)
+        state.status = "stopped"
+        state.save(self.run_dir)
+        self.log("[run] stopped between steps, as asked")
+        return True
 
     def _resolve_inputs(self, wf: Workflow, given: dict[str, Any]) -> dict[str, Any]:
         out = dict(given)
@@ -487,7 +609,8 @@ class WorkflowRunner:
             raise ValueError(f"workflow '{wf.name}' missing required inputs: {', '.join(missing)}")
         return out
 
-    def _task_message(self, wf: Workflow, step: Step, inputs: dict[str, Any]) -> str:
+    def _task_message(self, wf: Workflow, step: Step, inputs: dict[str, Any],
+                      sent_back: GateRecord | None = None) -> str:
         raw = (wf.path / step.instructions).read_text(encoding="utf-8")
         visible = _visible_inputs(step, raw, inputs)
         instructions = _fill(raw, visible)
@@ -496,9 +619,21 @@ class WorkflowRunner:
             for p in step.produces
         ) or "- (nothing mandatory)"
         inputs_md = "\n".join(f"- {k}: {v}" for k, v in visible.items()) or "- (none)"
+        review = ""
+        if sent_back is not None:
+            note = sent_back.note.strip() or "(no note was given)"
+            review = (
+                f"## This work was sent back\n"
+                f"A person reviewed what you produced here and did not approve it. "
+                f"They said:\n\n> {note}\n\n"
+                f"Read what is already on disk, address what they raised, and rewrite the "
+                f"files below. Do not start from scratch and do not argue the point; if you "
+                f"disagree, say so in the file and change what you can.\n\n"
+            )
         return (
             f"# Workflow `{wf.name}` — step `{step.id}`\n\n"
             f"## Inputs\n{inputs_md}\n\n"
+            f"{review}"
             f"## Instructions\n{instructions}\n\n"
             f"## You must produce these files (workspace-relative)\n{produces}\n\n"
             f"Finish with a short summary of what you did and any concerns for the next step."
@@ -506,6 +641,7 @@ class WorkflowRunner:
 
     def _run_step(self, wf: Workflow, step: Step, rec: StepRecord, state: RunState, inputs: dict[str, Any], dry_run: bool) -> None:
         env_name = step.env or wf.env
+        self._here = StepContext(step=step.id, persona=step.persona, section=step.section or "")
         rec.status, rec.started_at = "running", time.time()
         state.save(self.run_dir)
         # The step event carries this and more; `log` keeps the lines it owns
@@ -526,7 +662,8 @@ class WorkflowRunner:
             # `_reported`. A stale baseline would blame this step for the last
             # step's files.
             self._reported = dict(before)
-            result = self._drive(agent, self._task_message(wf, step, inputs), step)
+            sent_back = rec.gate if rec.gate and rec.gate.decision == "reject" else None
+            result = self._drive(agent, self._task_message(wf, step, inputs, sent_back), step)
             rec.output = _last_text(result)
             # Before the produces check: a step that failed is the one worth reading.
             _record_telemetry(rec, result)
@@ -534,6 +671,8 @@ class WorkflowRunner:
             missing = [entry for entry in step.produces if not self.matched(entry)]
             if missing:
                 raise RuntimeError(f"step '{step.id}' did not produce: {', '.join(missing)}")
+            if sent_back is not None:
+                self._verify_rewritten(step, sent_back)
             rec.status = "done"
         except Exception as e:  # noqa: BLE001 — recorded, not swallowed
             rec.status, rec.error = "failed", str(e)
@@ -548,6 +687,31 @@ class WorkflowRunner:
             rec.finished_at = time.time()
             state.save(self.run_dir)
             self._emit_step(wf, step, rec.status, rec.error)
+
+    def _verify_rewritten(self, step: Step, sent_back: GateRecord) -> None:
+        """A step that was sent back has to have rewritten something.
+
+        Existence is not enough here: the files it promised are still on disk
+        from the pass that was refused, so a persona that reads the note and
+        does nothing passes the ordinary `produces` check untouched. At least
+        one of them must be newer than the decision.
+
+        *One*, not all: a step that promises a report and a machine-readable
+        twin may legitimately need to change only one of them, and demanding
+        both would fail a step that did exactly what was asked. What this
+        catches is the case worth catching — nothing changed at all.
+        """
+        promised = [p for entry in step.produces for p in self.matched(entry)]
+        rewritten = [
+            rel for rel in promised
+            if (self.workspace / rel).is_file()
+            and (self.workspace / rel).stat().st_mtime > sent_back.ts
+        ]
+        if promised and not rewritten:
+            raise RuntimeError(
+                f"step '{step.id}' was sent back but rewrote none of "
+                f"{', '.join(promised)} — the note was not addressed"
+            )
 
     def _record_cost(self, rec: StepRecord, step: Step) -> None:
         """Price the step's tokens, if this run was given a price list.
@@ -711,10 +875,53 @@ class WorkflowRunner:
             self._emit_step(wf, step, rec.status, gate=_gate_event(gate.kind, prompt, rec.gate))
             return True
         state.status = "awaiting_gate"
+        superseded = self._keep_version(step)
+        # **A rejection sends the step back.** It used to leave the step `done`
+        # and simply re-ask on resume, which made "send back with a note" a
+        # pause: the persona never saw the note, nothing was rewritten, and the
+        # only way forward was to approve the same artifact you had just
+        # refused. A gate that cannot change anything is not a gate.
+        #
+        # The cost is stated rather than hidden: resuming re-runs the step, and
+        # re-running a step costs what the step costs. That is the trade a person
+        # makes when they say no.
+        rec.status = "pending"
         state.save(self.run_dir)
-        self._emit_step(wf, step, "awaiting_gate", gate=_gate_event(gate.kind, prompt, rec.gate))
+        self._emit_step(wf, step, "awaiting_gate",
+                        gate={**_gate_event(gate.kind, prompt, rec.gate),
+                              "superseded": superseded})
         self.log(f"[gate] run paused at '{step.id}'. Resume with --resume once approved.")
         return False
+
+    def _keep_version(self, step: Step) -> list[str]:
+        """Copy what the reader was looking at when they sent this gate back.
+
+        A rejection is the one moment a run has two versions of the same
+        artifact: the one that was refused, and the one the persona writes next.
+        Nothing else in the run keeps the first, so without this the question
+        "what did they change?" can only be answered by reading the new file and
+        remembering the old one. Returns the paths kept, for the gate event.
+        """
+        kept: list[str] = []
+        # Numbered by how many versions are already kept, so a gate sent back
+        # twice keeps both and neither overwrites the other.
+        base = self.run_dir / GATE_VERSIONS / step.id
+        version = len(list(base.glob("v*"))) + 1 if base.is_dir() else 1
+        root = base / f"v{version}"
+        for entry in step.produces:
+            for rel in self.matched(entry):
+                source = self.workspace / rel
+                if not source.is_file():
+                    continue
+                dest = root / rel
+                dest.parent.mkdir(parents=True, exist_ok=True)
+                try:
+                    shutil.copy2(source, dest)
+                except OSError as e:  # a copy that fails is not a run that fails
+                    self._log(f"[gate] could not keep {rel}: {e}")
+                    continue
+                kept.append(rel)
+        return kept
 
     def _auto_gate(self, wf: Workflow, step: Step, rec: StepRecord, state: RunState,
                    dry_run: bool, decided: str | None) -> bool:

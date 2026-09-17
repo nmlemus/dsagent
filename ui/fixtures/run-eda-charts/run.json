@@ -1,0 +1,780 @@
+{
+  "workflow": "eda-to-report",
+  "cartridge": "ds",
+  "inputs": {
+    "data_path": "data/seattle-weather.csv",
+    "key_column": "date",
+    "question": "How do precipitation and temperature differ across the weather categories, and how did they change between 2012 and 2015?"
+  },
+  "status": "done",
+  "steps": {
+    "profile": {
+      "id": "profile",
+      "status": "done",
+      "gate": null,
+      "started_at": 1789661200.187221,
+      "finished_at": 1789661249.011476,
+      "output": "Both deliverables are in place.\n\n## Summary\n\nI profiled `data/seattle-weather.csv` with the `eda` skill's `scripts/profile.py` (keyed on `date`), producing `artifacts/data-profile.json` (untouched, schema-conformant) and extending `artifacts/data-profile.md` with prose the script doesn't cover. I also wrote `artifacts/scratch/column-profile.csv` and displayed it via `show_table`.\n\n**Key facts:**\n- 1,461 rows \u00d7 6 columns, **zero nulls anywhere**, 0% exact duplicates, `date` unique at daily grain.\n- Full daily coverage 2012-01-01 \u2192 2015-12-31 with **no missing days** (1,461 expected = 1,461 observed, including the 2012 leap day).\n- `precipitation` is right-skewed (206 rows, 14.1%, beyond 1.5\u00d7IQR) \u2014 mean (3.03) is not representative alone.\n- `wind` has 34 outlier rows (2.3%); `temp_max`/`temp_min` have none, and `temp_max \u2265 temp_min` holds for every row.\n- `weather` is a clean 5-level categorical (rain, sun, fog, drizzle, snow), no unexpected labels.\n\n**Flags for the next step (not gate calls, just noted):**\n- Cross-column oddity: `precipitation` is exactly 0.0 for every `drizzle`, `fog`, and `sun` day (794 rows) \u2014 those labels carry no measured rain in this dataset. Also, 44 of 641 `rain` days (6.9%) have `precipitation == 0.0`. Worth knowing if downstream analysis treats `weather` and `precipitation` as interchangeable signals.\n- Units for `wind`, `temp_max/min`, `precipitation` are inferred (m/s, \u00b0C, mm) from typical ranges, not documented in source \u2014 flagged under \"what this data cannot answer.\"\n- No location/station field to confirm this is a single Seattle site.\n\nNo duplicate or null issues, so I expect the data-gate step to pass on those checks; the precipitation outlier share is a distributional characteristic, not a defect, but I've surfaced it for the gate owner to weigh if relevant.",
+      "error": "",
+      "tool_calls": {
+        "read_file": 4,
+        "ls": 3,
+        "run_skill_script": 1,
+        "run_python": 4,
+        "show_table": 1,
+        "edit_file": 1
+      },
+      "usage": {
+        "input_tokens": 144665,
+        "output_tokens": 3968,
+        "cache_read": 128291,
+        "cache_creation": 0,
+        "ephemeral_5m_input_tokens": 16350,
+        "ephemeral_1h_input_tokens": 0
+      },
+      "skills_read": [
+        "/skills/marie/eda/SKILL.md"
+      ],
+      "files": [
+        {
+          "path": "artifacts/data-profile.json",
+          "mtime": 1789661206.5153306
+        },
+        {
+          "path": "artifacts/scratch/column-profile.csv",
+          "mtime": 1789661216.535669
+        },
+        {
+          "path": "artifacts/data-profile.md",
+          "mtime": 1789661237.3567793
+        }
+      ],
+      "model": "anthropic:claude-sonnet-5",
+      "cost_usd": 0.098086
+    },
+    "data-gate": {
+      "id": "data-gate",
+      "status": "done",
+      "gate": {
+        "decision": "approve",
+        "note": "",
+        "ts": 1789661299.835624,
+        "asked_at": 1789661299.834843
+      },
+      "started_at": 1789661249.012668,
+      "finished_at": 1789661299.832611,
+      "output": "## Summary\n\nI evaluated `artifacts/data-profile.json` against the `eda` skill's gate thresholds without recomputing anything, and wrote `artifacts/data-gate.md`.\n\n**Result: `GATE: PASS`** \u2014 all 9 checks pass:\n- Null share on all 6 columns: 0.0% (threshold: fail if > 20%)\n- Exact duplicate rows: 0.0% (threshold: fail if > 1%)\n- Key uniqueness on `date`: `unique: true`, 0 duplicates (a real check \u2014 `key_uniqueness.column` was not null)\n- Time coverage: 0 missing days across 1,461/1,461 expected daily periods, 2012-01-01 to 2015-12-31\n\n**Flags carried forward for the analysis step** (none breach a threshold, but affect interpretation):\n- `precipitation` is heavily right-skewed with 14.1% IQR outliers \u2014 report median alongside any mean.\n- `wind` has 2.3% IQR outliers (minor).\n- `precipitation` and `weather` disagree on some rows (all `drizzle`/`fog`/`sun` days show zero precipitation, and 6.9% of `rain` days also show zero) \u2014 don't assume the two columns are always consistent.\n- Units for `wind`, `temp_max`/`temp_min`, `precipitation` are inferred (m/s, \u00b0C, mm), not documented in source.\n- No station/location field confirming this is a single Seattle station.\n\nWrote `artifacts/scratch/gate-checks.csv` and emitted it via `show_table` (9 rows) so the gate decision is made against the actual check table, not the prose.\n\nNo concerns for the next step beyond carrying the flags above as caveats \u2014 the data is clean enough to proceed to analysis.",
+      "error": "",
+      "tool_calls": {
+        "read_file": 3,
+        "ls": 3,
+        "run_python": 1,
+        "write_file": 1,
+        "show_table": 1
+      },
+      "usage": {
+        "input_tokens": 93529,
+        "output_tokens": 3555,
+        "cache_read": 85817,
+        "cache_creation": 0,
+        "ephemeral_5m_input_tokens": 7696,
+        "ephemeral_1h_input_tokens": 0
+      },
+      "skills_read": [
+        "/skills/marie/eda/SKILL.md"
+      ],
+      "files": [
+        {
+          "path": "artifacts/scratch/gate-checks.csv",
+          "mtime": 1789661279.6280878
+        },
+        {
+          "path": "artifacts/data-gate.md",
+          "mtime": 1789661291.4265819
+        }
+      ],
+      "model": "anthropic:claude-sonnet-5",
+      "cost_usd": 0.068137
+    },
+    "analyze": {
+      "id": "analyze",
+      "status": "done",
+      "gate": null,
+      "started_at": 1789661299.836869,
+      "finished_at": 1789661468.125373,
+      "output": "Done. Summary of what I did and handoff notes for the report step:\n\n**What I did**\n- Read the gate report (`GATE: PASS`, no nulls/dupes/gaps, 1,461 daily rows, 2012\u20132015) and the profile before touching the data, so I knew precipitation is right-skewed and `precipitation`/`weather` disagree on some rows.\n- Computed category-level stats (precipitation median/IQR, mean temp_max/temp_min) across `drizzle`, `fog`, `rain`, `snow`, `sun`.\n- For the 2012\u21922015 change, fit OLS trends (with 95% CIs, n=4 annual points, df=2) on annual mean temp_max, temp_min, mean precipitation, and category-share series \u2014 reporting \"no clear trend\" wherever the CI crossed zero (precipitation, rain share, snow share) rather than asserting a direction, and only calling out temperature and fog share as real trends since those CIs stayed on one side of zero.\n- Produced 5 Vega-Lite charts from small aggregates under `artifacts/scratch/`: precipitation-by-category (bar+IQR rule), temperature-by-category (grouped bars), annual temperature trend (pan/zoom line), annual precipitation trend (pan/zoom line), and category-share-by-year (interactive line with hover).\n- Wrote `artifacts/findings.md` with exactly the three required sections (3 headline findings, evidence tied to chart titles with denominators, caveats sourced only from the gate report).\n\n**Concerns for the report step**\n- The rain/snow \"decline\" is visually obvious but statistically unconfirmed at 4 years of data (p=0.085 and 0.152) \u2014 the report should keep that hedge rather than upgrading it to a clean trend.\n- Snow's yearly counts (21, 3, 2, 0) are small; I kept it out of any headline claim of magnitude and only used it descriptively.\n- Units (\u00b0C, mm, m/s for wind) are inferred, not documented in source \u2014 flagged as a caveat, worth a footnote if the report cites them externally.",
+      "error": "",
+      "tool_calls": {
+        "read_file": 5,
+        "ls": 2,
+        "run_python": 11,
+        "execute": 1,
+        "show_chart": 6
+      },
+      "usage": {
+        "input_tokens": 516450,
+        "output_tokens": 14523,
+        "cache_read": 484526,
+        "cache_creation": 0,
+        "ephemeral_5m_input_tokens": 31882,
+        "ephemeral_1h_input_tokens": 0
+      },
+      "skills_read": [
+        "/skills/noel/eda/SKILL.md",
+        "/skills/noel/reports/SKILL.md"
+      ],
+      "files": [
+        {
+          "path": "artifacts/scratch/precip_by_category.csv",
+          "mtime": 1789661368.9424245
+        },
+        {
+          "path": "artifacts/scratch/temp_by_category.csv",
+          "mtime": 1789661385.7454405
+        },
+        {
+          "path": "artifacts/scratch/temp_trend_yearly.csv",
+          "mtime": 1789661394.6380055
+        },
+        {
+          "path": "artifacts/scratch/precip_trend_yearly.csv",
+          "mtime": 1789661394.6410217
+        },
+        {
+          "path": "artifacts/scratch/category_share_yearly.csv",
+          "mtime": 1789661404.047207
+        },
+        {
+          "path": "artifacts/findings.md",
+          "mtime": 1789661457.0550897
+        }
+      ],
+      "model": "anthropic:claude-sonnet-5",
+      "cost_usd": 0.305983
+    },
+    "report": {
+      "id": "report",
+      "status": "done",
+      "gate": null,
+      "started_at": 1789661468.127955,
+      "finished_at": 1789661579.494286,
+      "output": "HTML rendered correctly and contains all three headline findings verbatim. Both files exist and are non-empty.\n\n## Summary\n\nI wrote `report/findings.md` following the `reports` skill's structure (headline findings \u2192 context \u2192 evidence \u2192 data quality notes \u2192 next steps), then rendered it to `report/findings.html` with `render_html.py`.\n\nKey decisions:\n- **Headline findings** copied unchanged from `artifacts/findings.md` \u2014 the gate report shows all 9 checks passing (PASS verdict), so nothing there contradicts the findings.\n- **Context** section states the question, data source/grain/period/row count, and the gate verdict up front.\n- **\"What this data cannot answer\"** (mine to write) pulls from the gate's five flags plus the profile's coverage notes: inconclusive trend tests beyond the 4-year window, the `weather`/`precipitation` disagreement with no explanation available, unconfirmed units and station identity, and the absence of any missing-data signal to diagnose.\n- **Evidence** section refers to the four charts by the exact titles `analyze` gave them via `show_chart` \u2014 I did not re-draw or embed any of them.\n- **Data quality notes** carries forward the gate's flags (precipitation skew, wind outliers, weather/precipitation mismatch, undocumented units, no station field) plus the small-sample caveat on the 4-point trend regressions.\n- **Next steps** (mine to write): get a longer time series before acting on the rain/snow trend, reconcile `weather` vs `precipitation` with the data source, confirm units/station, and use median/IQR rather than a bare mean for any precipitation headline number.\n\nVerified: both output files exist, the HTML is non-empty (10.7 KB) and contains all three headline findings verbatim.\n\n**Concern for the next step:** the report leans on the gate's PASS verdict and treats the five flags as caveats, not blockers \u2014 that's consistent with the gate report itself, but downstream consumers should not treat \"PASS\" as \"no caveats.\" Also, the four-year trend statistics (Findings 2\u20133) have only 2 degrees of freedom; anyone using them for forecasting should be pointed back to that limitation before extrapolating past 2015.",
+      "error": "",
+      "tool_calls": {
+        "read_file": 4,
+        "ls": 2,
+        "write_file": 1,
+        "run_skill_script": 1,
+        "execute": 1,
+        "grep": 2
+      },
+      "usage": {
+        "input_tokens": 116101,
+        "output_tokens": 5210,
+        "cache_read": 103454,
+        "cache_creation": 0,
+        "ephemeral_5m_input_tokens": 12633,
+        "ephemeral_1h_input_tokens": 0
+      },
+      "skills_read": [
+        "/skills/marie/reports/SKILL.md"
+      ],
+      "files": [
+        {
+          "path": "report/findings.md",
+          "mtime": 1789661546.0480375
+        },
+        {
+          "path": "report/findings.html",
+          "mtime": 1789661554.4471316
+        }
+      ],
+      "model": "anthropic:claude-sonnet-5",
+      "cost_usd": 0.098085
+    }
+  },
+  "gate_wait": 0.001,
+  "charts": {
+    "column-profile-nulls-distinct-values-and-ranges": {
+      "chart_id": "column-profile-nulls-distinct-values-and-ranges",
+      "kind": "table",
+      "title": "Column profile \u2014 nulls, distinct values and ranges",
+      "data_ref": "artifacts/scratch/column-profile.csv",
+      "step": "profile",
+      "persona": "marie",
+      "section": "The data",
+      "data_url": "/runs/eda-charts2-20260917-110638/preview/artifacts/scratch/column-profile.csv",
+      "spec": null,
+      "columns": [
+        "column",
+        "dtype",
+        "null_pct",
+        "distinct",
+        "min",
+        "max",
+        "mean",
+        "outliers_iqr",
+        "top_values"
+      ],
+      "rows": 6,
+      "version": 1,
+      "ts": 1789661222.859807
+    },
+    "data-gate-9-of-9-checks-pass": {
+      "chart_id": "data-gate-9-of-9-checks-pass",
+      "kind": "table",
+      "title": "Data gate \u2014 9 of 9 checks pass",
+      "data_ref": "artifacts/scratch/gate-checks.csv",
+      "step": "data-gate",
+      "persona": "marie",
+      "section": "Data quality",
+      "data_url": "/runs/eda-charts2-20260917-110638/preview/artifacts/scratch/gate-checks.csv",
+      "spec": null,
+      "columns": [
+        "check",
+        "value",
+        "threshold",
+        "result"
+      ],
+      "rows": 9,
+      "version": 1,
+      "ts": 1789661293.465852
+    },
+    "only-rain-and-snow-days-record-any-precipitation": {
+      "chart_id": "only-rain-and-snow-days-record-any-precipitation",
+      "kind": "chart",
+      "title": "Only rain and snow days record any precipitation; snow is the wettest per day",
+      "data_ref": "artifacts/scratch/precip_by_category.csv",
+      "step": "analyze",
+      "persona": "noel",
+      "section": "Findings",
+      "data_url": "/runs/eda-charts2-20260917-110638/preview/artifacts/scratch/precip_by_category.csv",
+      "spec": {
+        "$schema": "https://vega.github.io/schema/vega-lite/v5.json",
+        "width": "container",
+        "height": 260,
+        "data": {
+          "name": "table"
+        },
+        "layer": [
+          {
+            "params": [
+              {
+                "name": "hover",
+                "select": {
+                  "type": "point",
+                  "on": "pointerover",
+                  "fields": [
+                    "weather"
+                  ]
+                }
+              }
+            ],
+            "mark": {
+              "type": "bar",
+              "color": "#4C78A8"
+            },
+            "encoding": {
+              "x": {
+                "field": "weather",
+                "type": "nominal",
+                "sort": "-y",
+                "axis": {
+                  "labelAngle": 0
+                },
+                "title": "weather category"
+              },
+              "y": {
+                "field": "precip_median",
+                "type": "quantitative",
+                "title": "precipitation (mm/day)"
+              },
+              "opacity": {
+                "condition": {
+                  "param": "hover",
+                  "value": 1
+                },
+                "value": 0.85
+              },
+              "tooltip": [
+                {
+                  "field": "weather",
+                  "title": "category"
+                },
+                {
+                  "field": "n",
+                  "title": "days"
+                },
+                {
+                  "field": "precip_median",
+                  "title": "median mm/day"
+                },
+                {
+                  "field": "precip_p25",
+                  "title": "p25 mm/day"
+                },
+                {
+                  "field": "precip_p75",
+                  "title": "p75 mm/day"
+                },
+                {
+                  "field": "precip_mean",
+                  "title": "mean mm/day"
+                }
+              ]
+            }
+          },
+          {
+            "mark": {
+              "type": "rule",
+              "color": "black",
+              "strokeWidth": 1.5
+            },
+            "encoding": {
+              "x": {
+                "field": "weather",
+                "type": "nominal",
+                "sort": "-y"
+              },
+              "y": {
+                "field": "precip_p25",
+                "type": "quantitative"
+              },
+              "y2": {
+                "field": "precip_p75"
+              },
+              "tooltip": [
+                {
+                  "field": "weather",
+                  "title": "category"
+                },
+                {
+                  "field": "precip_p25",
+                  "title": "p25 mm/day"
+                },
+                {
+                  "field": "precip_p75",
+                  "title": "p75 mm/day"
+                }
+              ]
+            }
+          }
+        ]
+      },
+      "columns": [
+        "weather",
+        "n",
+        "precip_mean",
+        "precip_median",
+        "precip_p25",
+        "precip_p75",
+        "temp_max_mean",
+        "temp_min_mean",
+        "wind_mean"
+      ],
+      "rows": 5,
+      "version": 1,
+      "ts": 1789661382.364235
+    },
+    "snow-days-are-far-colder-and-sun-days-far-warmer": {
+      "chart_id": "snow-days-are-far-colder-and-sun-days-far-warmer",
+      "kind": "chart",
+      "title": "Snow days are far colder and sun days far warmer than any other category",
+      "data_ref": "artifacts/scratch/temp_by_category.csv",
+      "step": "analyze",
+      "persona": "noel",
+      "section": "Findings",
+      "data_url": "/runs/eda-charts2-20260917-110638/preview/artifacts/scratch/temp_by_category.csv",
+      "spec": {
+        "$schema": "https://vega.github.io/schema/vega-lite/v5.json",
+        "width": "container",
+        "height": 260,
+        "data": {
+          "name": "table"
+        },
+        "params": [
+          {
+            "name": "hover",
+            "select": {
+              "type": "point",
+              "on": "pointerover",
+              "fields": [
+                "weather",
+                "metric"
+              ]
+            }
+          }
+        ],
+        "mark": {
+          "type": "bar"
+        },
+        "encoding": {
+          "x": {
+            "field": "weather",
+            "type": "nominal",
+            "sort": {
+              "field": "temp_c",
+              "op": "max",
+              "order": "descending"
+            },
+            "axis": {
+              "labelAngle": 0
+            },
+            "title": "weather category"
+          },
+          "xOffset": {
+            "field": "metric"
+          },
+          "y": {
+            "field": "temp_c",
+            "type": "quantitative",
+            "title": "temperature (\u00b0C)"
+          },
+          "color": {
+            "field": "metric",
+            "type": "nominal",
+            "title": "",
+            "scale": {
+              "scheme": "tableau10"
+            }
+          },
+          "opacity": {
+            "condition": {
+              "param": "hover",
+              "value": 1
+            },
+            "value": 0.85
+          },
+          "tooltip": [
+            {
+              "field": "weather",
+              "title": "category"
+            },
+            {
+              "field": "n",
+              "title": "days"
+            },
+            {
+              "field": "metric",
+              "title": "metric"
+            },
+            {
+              "field": "temp_c",
+              "title": "\u00b0C"
+            }
+          ]
+        }
+      },
+      "columns": [
+        "weather",
+        "n",
+        "metric",
+        "temp_c"
+      ],
+      "rows": 10,
+      "version": 1,
+      "ts": 1789661390.9040582
+    },
+    "mean-annual-temperature-rose-every-year-from-201": {
+      "chart_id": "mean-annual-temperature-rose-every-year-from-201",
+      "kind": "chart",
+      "title": "Mean annual temperature rose every year from 2012 to 2015",
+      "data_ref": "artifacts/scratch/temp_trend_yearly.csv",
+      "step": "analyze",
+      "persona": "noel",
+      "section": "Findings",
+      "data_url": "/runs/eda-charts2-20260917-110638/preview/artifacts/scratch/temp_trend_yearly.csv",
+      "spec": {
+        "$schema": "https://vega.github.io/schema/vega-lite/v5.json",
+        "width": "container",
+        "height": 260,
+        "data": {
+          "name": "table"
+        },
+        "layer": [
+          {
+            "params": [
+              {
+                "name": "zoom",
+                "select": {
+                  "type": "interval",
+                  "encodings": [
+                    "x"
+                  ]
+                },
+                "bind": "scales"
+              },
+              {
+                "name": "hover",
+                "select": {
+                  "type": "point",
+                  "on": "pointerover",
+                  "fields": [
+                    "year",
+                    "metric"
+                  ]
+                }
+              }
+            ],
+            "mark": {
+              "type": "line",
+              "point": true
+            },
+            "encoding": {
+              "x": {
+                "field": "year",
+                "type": "ordinal",
+                "title": "year"
+              },
+              "y": {
+                "field": "temp_c",
+                "type": "quantitative",
+                "title": "mean annual temperature (\u00b0C)",
+                "scale": {
+                  "zero": false
+                }
+              },
+              "color": {
+                "field": "metric",
+                "type": "nominal",
+                "title": "",
+                "scale": {
+                  "scheme": "tableau10"
+                }
+              },
+              "opacity": {
+                "condition": {
+                  "param": "hover",
+                  "value": 1
+                },
+                "value": 0.9
+              },
+              "tooltip": [
+                {
+                  "field": "year",
+                  "title": "year"
+                },
+                {
+                  "field": "n",
+                  "title": "days"
+                },
+                {
+                  "field": "metric",
+                  "title": "metric"
+                },
+                {
+                  "field": "temp_c",
+                  "title": "\u00b0C"
+                }
+              ]
+            }
+          }
+        ]
+      },
+      "columns": [
+        "year",
+        "n",
+        "metric",
+        "temp_c"
+      ],
+      "rows": 8,
+      "version": 1,
+      "ts": 1789661400.365422
+    },
+    "fog-s-share-of-days-rose-every-year-while-snow-n": {
+      "chart_id": "fog-s-share-of-days-rose-every-year-while-snow-n",
+      "kind": "chart",
+      "title": "Fog's share of days rose every year while snow nearly disappeared",
+      "data_ref": "artifacts/scratch/category_share_yearly.csv",
+      "step": "analyze",
+      "persona": "noel",
+      "section": "Findings",
+      "data_url": "/runs/eda-charts2-20260917-110638/preview/artifacts/scratch/category_share_yearly.csv",
+      "spec": {
+        "$schema": "https://vega.github.io/schema/vega-lite/v5.json",
+        "width": "container",
+        "height": 260,
+        "data": {
+          "name": "table"
+        },
+        "layer": [
+          {
+            "params": [
+              {
+                "name": "hover",
+                "select": {
+                  "type": "point",
+                  "on": "pointerover",
+                  "fields": [
+                    "weather"
+                  ]
+                }
+              }
+            ],
+            "mark": {
+              "type": "line",
+              "point": true
+            },
+            "encoding": {
+              "x": {
+                "field": "year",
+                "type": "ordinal",
+                "title": "year"
+              },
+              "y": {
+                "field": "share",
+                "type": "quantitative",
+                "title": "share of days",
+                "axis": {
+                  "format": "%"
+                }
+              },
+              "color": {
+                "field": "weather",
+                "type": "nominal",
+                "title": "category",
+                "scale": {
+                  "scheme": "tableau10"
+                }
+              },
+              "opacity": {
+                "condition": {
+                  "param": "hover",
+                  "value": 1
+                },
+                "value": 0.85
+              },
+              "tooltip": [
+                {
+                  "field": "year",
+                  "title": "year"
+                },
+                {
+                  "field": "weather",
+                  "title": "category"
+                },
+                {
+                  "field": "count",
+                  "title": "days"
+                },
+                {
+                  "field": "share",
+                  "title": "share",
+                  "format": ".1%"
+                }
+              ]
+            }
+          }
+        ]
+      },
+      "columns": [
+        "year",
+        "weather",
+        "count",
+        "share"
+      ],
+      "rows": 20,
+      "version": 1,
+      "ts": 1789661408.936678
+    },
+    "mean-daily-precipitation-shows-no-clear-trend-fr": {
+      "chart_id": "mean-daily-precipitation-shows-no-clear-trend-fr",
+      "kind": "chart",
+      "title": "Mean daily precipitation shows no clear trend from 2012 to 2015",
+      "data_ref": "artifacts/scratch/precip_trend_yearly.csv",
+      "step": "analyze",
+      "persona": "noel",
+      "section": "Findings",
+      "data_url": "/runs/eda-charts2-20260917-110638/preview/artifacts/scratch/precip_trend_yearly.csv",
+      "spec": {
+        "$schema": "https://vega.github.io/schema/vega-lite/v5.json",
+        "width": "container",
+        "height": 240,
+        "data": {
+          "name": "table"
+        },
+        "layer": [
+          {
+            "params": [
+              {
+                "name": "zoom",
+                "select": {
+                  "type": "interval",
+                  "encodings": [
+                    "x"
+                  ]
+                },
+                "bind": "scales"
+              },
+              {
+                "name": "hover",
+                "select": {
+                  "type": "point",
+                  "on": "pointerover",
+                  "fields": [
+                    "year"
+                  ]
+                }
+              }
+            ],
+            "mark": {
+              "type": "line",
+              "point": true,
+              "color": "#4C78A8"
+            },
+            "encoding": {
+              "x": {
+                "field": "year",
+                "type": "ordinal",
+                "title": "year"
+              },
+              "y": {
+                "field": "precip_mean",
+                "type": "quantitative",
+                "title": "mean daily precipitation (mm)",
+                "scale": {
+                  "zero": true
+                }
+              },
+              "opacity": {
+                "condition": {
+                  "param": "hover",
+                  "value": 1
+                },
+                "value": 0.9
+              },
+              "tooltip": [
+                {
+                  "field": "year",
+                  "title": "year"
+                },
+                {
+                  "field": "n",
+                  "title": "days"
+                },
+                {
+                  "field": "precip_mean",
+                  "title": "mean mm/day"
+                },
+                {
+                  "field": "precip_median",
+                  "title": "median mm/day"
+                }
+              ]
+            }
+          }
+        ]
+      },
+      "columns": [
+        "year",
+        "n",
+        "precip_mean",
+        "precip_median"
+      ],
+      "rows": 4,
+      "version": 1,
+      "ts": 1789661419.466333
+    }
+  },
+  "gate": null
+}

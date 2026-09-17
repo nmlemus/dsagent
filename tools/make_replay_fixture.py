@@ -55,6 +55,44 @@ def matched(entry: str, paths: list[str]) -> list[str]:
 
 
 def build(run_dir: Path, out: Path, cartridge_path: Path = CARTRIDGE) -> int:
+    """The fixture for one run: its event log, its workspace, its record.
+
+    A run that wrote its own `events.jsonl` needs nothing reconstructed — the log
+    *is* the recording, charts and all, and copying it is both simpler and more
+    faithful than rebuilding it from `run.json`. The reconstruction below stays
+    for run 003, which predates the event log and is still the M2.5 fixture.
+    """
+    real = run_dir / "events.jsonl"
+    if real.is_file() and real.stat().st_size:
+        return _copy(run_dir, out)
+    return _reconstruct(run_dir, out, cartridge_path)
+
+
+def _copy(run_dir: Path, out: Path) -> int:
+    events = [line for line in real_lines(run_dir) if line.strip()]
+    _write_out(run_dir, out, "".join(events))
+    return len(events)
+
+
+def real_lines(run_dir: Path) -> list[str]:
+    return (run_dir / "events.jsonl").read_text(encoding="utf-8").splitlines(keepends=True)
+
+
+def _write_out(run_dir: Path, out: Path, events: str) -> None:
+    if out.exists():
+        shutil.rmtree(out)
+    out.mkdir(parents=True)
+    (out / "events.jsonl").write_text(events, encoding="utf-8")
+    shutil.copytree(
+        run_dir / "workspace", out / "workspace",
+        # `.dsagent/` is the harness's materialized skills, not the run's output,
+        # and the files endpoint refuses to serve it anyway.
+        ignore=shutil.ignore_patterns(".dsagent", "__pycache__"),
+    )
+    shutil.copy2(run_dir / "run.json", out / "run.json")
+
+
+def _reconstruct(run_dir: Path, out: Path, cartridge_path: Path = CARTRIDGE) -> int:
     state = json.loads((run_dir / "run.json").read_text())
     cartridge = load_cartridge(cartridge_path)
     wf = cartridge.workflows[state["workflow"]]
@@ -135,20 +173,7 @@ def build(run_dir: Path, out: Path, cartridge_path: Path = CARTRIDGE) -> int:
             })
 
     events.sort(key=lambda e: e["value"]["ts"])
-
-    if out.exists():
-        shutil.rmtree(out)
-    out.mkdir(parents=True)
-    (out / "events.jsonl").write_text(
-        "".join(json.dumps(e) + "\n" for e in events), encoding="utf-8"
-    )
-    shutil.copytree(
-        run_dir / "workspace", out / "workspace",
-        # `.dsagent/` is the harness's materialized skills, not the run's output,
-        # and the files endpoint refuses to serve it anyway.
-        ignore=shutil.ignore_patterns(".dsagent", "__pycache__"),
-    )
-    shutil.copy2(run_dir / "run.json", out / "run.json")
+    _write_out(run_dir, out, "".join(json.dumps(e) + "\n" for e in events))
     return len(events)
 
 

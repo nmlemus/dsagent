@@ -721,3 +721,580 @@ Not touched, as instructed: ruff 0.16 flags four pre-existing issues in
 
 `pytest` 247 passed / 8 skipped · `ruff check src tests` · `npm run build`,
 `typecheck`, `lint` · `dsagent cartridge validate cartridges/ds`.
+
+---
+
+# M2.6 — the living report
+
+Spec: `docs/ui-living-report.md`. Visual and behavioural reference:
+`docs/mockups/living-report.html`, played end to end before a line was written —
+home, the workflows tab, the plan proposal, the document filling section by
+section, the gate card, the chart toolbar, "ask Noel to change this" (which
+returns a *second version of the same chart*, not a new one), and the drawer.
+Tasks 1–2 were delivered by M2.5; this starts at 3.
+
+## Task 3 (completed) — a figure is an object, not an image
+
+`show_chart` and `show_table`, in the harness, handed to every persona in every
+env. A persona aggregates with `run_python`, writes the aggregate to a file, and
+emits a **Vega-Lite spec plus the path of that file**. What that buys is the rest
+of the milestone: the reader can hover it, zoom it, change its mark, brush a
+range, and ask the persona who made it to change it — none of which a PNG can do.
+
+**The rows never travel through the model.** `spec["data"]` is rewritten to
+`{"name": "table"}` on the way in, and the card reads its rows from the run's own
+preview endpoint. A model that pastes 1,400 rows into a tool call is paying to
+retype a file it just wrote, and getting some of the numbers wrong on the way.
+
+**Validation is a loop.** altair carries the published Vega-Lite schema and
+compiles the spec into its object model — stricter than the schema alone, so a
+mark that does not exist fails here rather than in the reader's browser. A
+failure comes back as the validator's own message, trimmed to its first lines
+(altair prints the offending sub-schema in full, which for a chart is hundreds of
+lines of grammar read back to a model paying by the token). After three attempts
+the tool stops asking and says to write a PNG instead — research part B's
+schema-validate-then-repair result, with a budget.
+
+**Emitting the same `chart_id` twice is version 2 of that chart**, in place. The
+standing version lives in `RunState.charts` so a resumed run knows the chart
+already exists; every version lives in the event log. A *repair* is not a
+revision — nothing was shown to a reader — so a spec that failed and was fixed is
+still v1.
+
+### Decisions
+
+- **altair pinned `>=5.5,<6`.** altair 6 ships the Vega-Lite *v6* schema; the UI
+  bundles vega-lite 5. A server validating against a grammar the renderer does
+  not speak passes specs the reader cannot see. Declared in the `[ui]` extra
+  *and* in the cartridge's default env, so a CLI run — which has no `[ui]` —
+  still validates.
+- **`Step.section` is a label.** It rides on `dsagent.step` events and nothing
+  reads it. A workflow that declares no section still runs. That is the entire
+  cartridge-format change this milestone needed (spec §3.2).
+- **`analyze` no longer promises `artifacts/figures/*.png`.** Promising a PNG
+  would force every run to write one, which is the thing this task removes. The
+  eleven glob tests that used that entry as their fixture now build a one-persona
+  cartridge of their own (`tests/fakes.tiny_cartridge`): a glob is a *harness*
+  feature, and a test of the runner should not fail because a cartridge changed
+  its mind about writing images.
+- **`READERS` moved to `dsagent.tabular`.** `/preview` and `show_chart` both need
+  to read a table by extension, and the runner cannot import the FastAPI module
+  to get it.
+- **The event reducer no longer treats an unknown event as a note.** It fell
+  through to `applyNote`, so the first `dsagent.chart` of a run would have become
+  a note with no text — a screen quietly wrong rather than one missing something.
+
+### Real run 1 of 10 — `eda-charts-20260917-103207`, $0.605, 5 m 42 s
+
+`eda-to-report` on `tests/data/seattle-weather.csv`, CLI, gate auto-approved (the
+replay discards a recorded wait and stands there for a real person, so buying a
+wait here would have bought nothing). **Seven `show_*` calls, seven chart events,
+zero validation failures** — the personas got Vega-Lite right first time, which is
+the VegaChat result holding on a real cartridge rather than a benchmark.
+
+| | what |
+|---|---|
+| tables | `column-profile` (profile, 6 rows), `data-gate-9-of-9-checks-pass` (9 rows) |
+| charts | precipitation by category (bar, hover) · temperature by category (bar, hover) · deseasonalised max-temp trend (layered) · category share by year (layered) |
+| versions | one chart emitted twice — the persona improved its own title and labels, and it came back as **v2 of that chart**, in place, unprompted |
+| cost | profile $0.101 · data-gate $0.074 · analyze $0.328 · report $0.101 |
+
+Every spec carries `params` (hover, pan-zoom or brush) and every one references
+its data rather than inlining it. `artifacts/figures/` is empty: no PNG was
+written, and nothing asked for one.
+
+The fixture is `ui/fixtures/run-eda-charts` — 160 events over 340 s, 208 kB,
+including the five scratch aggregates the charts read. `make_replay_fixture.py`
+now **copies a run's own `events.jsonl`** when it has one instead of rebuilding
+it from `run.json`: every run writes a log since M2.5, and copying it is both
+simpler and more faithful. The reconstruction stays for run 003, which predates
+the log and is still the M2.5 fixture.
+
+A replayed chart's `data_url` is rewritten to the run replaying it — the recorded
+one names a run that is not on this server.
+
+### Verified
+
+`pytest` 272 passed / 8 skipped (22 in `tests/test_charts.py`, 3 more in
+`tests/test_replay.py` for the charted fixture) · `ruff check src tests` ·
+`dsagent cartridge validate` · `npm run build`, `typecheck`, `lint`.
+
+## Task 4 (completed) — the shell: rail, document, drawer
+
+The run screen is no longer chat-beside-a-file-list. Three regions, in the order
+a person uses them, exactly as the mockup lays them out:
+
+- **The team rail** (320 px, navy) — the *activity*. Workflow, dataset, status,
+  elapsed; cost, tokens, cached share and the human wait; then the steps as named
+  phases with their persona, their promises ticking as files land, their tool
+  counts, and a hand-off line between one step and the next. The conversation
+  sits at its foot. It is the only dark surface in the product: the document
+  beside it is a document, and the thing watching it work should not compete with
+  it for the reader's eye.
+- **The living document** (fluid) — the *work*. It opens as the plan, one greyed
+  heading per declared step with a sentence saying what will be written there,
+  and fills in as steps finish. The outline comes from the *workflow*, not from
+  the events, so it is complete from the first second. A gate renders **inline at
+  its own step**, under the evidence it is about.
+- **The drawer** (420 px, on demand) — the *evidence*. A file, or a step all the
+  way down: persona, model, tokens, cost, every tool call, what it emitted, its
+  working notes. Shut until something is clicked.
+
+Home gained a second tab, "What the team can do": one card per workflow with its
+steps, the persona on each, and which ones stop to ask you something — read off
+the loaded cartridge, so a second cartridge renders without a line changing. The
+ledger gained a Team column.
+
+CopilotKit is themed for navy the same way M2.5 themed it for cream: its own
+variables, a second block scoped to `.rail`. No component replaced.
+
+### The bug this task found
+
+A section for a step that had not started crashed the whole screen — Chrome's
+renderer, not a React boundary. The document builds a row per *declared* step so
+the plan is visible before anything runs, and the placeholder was a half-built
+object cast to `StepRow`; the gate-verdict list then read `.gates.length` on
+`undefined`. It is now a real, empty row. Casting a partial object to a full type
+is a lie the compiler cannot catch, and this is what it costs.
+
+`canvas.tsx`, `progress.tsx` and `resizer.tsx` are deleted — the layout they
+served is gone. Their CSS is still in `globals.css` and comes out in one pass at
+the end of the milestone, when what is still referenced is settled.
+
+### Verified
+
+`m26-t4-shell.jpg`: the finished replay run with all four sections, the gate
+verdict at its step ("Approved after 5m 01s" — it really did wait), the rail's
+hand-offs, and the drawer open on `data-gate.md`. `pytest` 272 / 8 skipped ·
+`ruff` · `npm run build`, `typecheck`, `lint`.
+
+## Task 5 (completed) — the document says what the run wrote
+
+A section's body is **the artifact the step produced**, rendered in place: the
+first markdown file its `produces` names. `profile` wrote `data-profile.md`, the
+gate wrote `data-gate.md`, `analyze` wrote `findings.md`, `report` wrote
+`report/findings.md` — so the document is not a summary of the run written by the
+UI, it *is* the run's own words laid out as one document. The "Sources" strip
+under each section names the same path, and clicking it opens that file in the
+drawer. **Nothing on this screen says anything a persona did not write.**
+
+Which file is "the point" is the step's answer, not the UI's: `produces` is
+declared in order, and the first markdown entry is the one the cartridge put
+first. The artifact's own `#` title is dropped, because the section already has a
+heading and repeating it two lines down reads as a mistake.
+
+**Asking about a section** goes through one channel. `AskProvider` now wraps the
+whole run screen rather than just the chat panel — the document and (next task)
+its charts ask questions too, and every answer has to land in the one
+conversation at the foot of the rail. `useAsk()` returns `null` when nothing is
+listening, and every caller uses that to hide the affordance rather than offer a
+button that quietly drops what was asked: under `--replay` there are no chips at
+all, which is why `m26-t5-document.jpg` has none.
+
+Two follow-up chips per finished section. They are not decoration: an empty input
+next to a finished report is a box most people never type in, and a chip is how
+the chat says what it is for.
+
+### Verified
+
+`m26-t5-document.jpg`: the replayed run's own profile — row counts, the column
+table, time coverage, the leap-day check — rendered as section 1 of the document.
+Four sections, four prose bodies, zero ask-rows (replay). `npm run build`,
+`typecheck`, `lint`.
+
+## Task 6 (completed) — the cards, and three bugs between a spec and a pixel
+
+`<ChartCard>` and `<TableCard>`, in the document, under the paragraph that
+describes them. Vega and Perspective are bundled from `node_modules` and loaded
+on demand — never a CDN, because client data is on this screen and a script
+request is a request to somebody else's server with this page's URL on it.
+
+**ChartCard**: hover tooltips and pan-zoom straight from the persona's own
+`params`; a mark-type toggle that patches the spec on the client (bar → point →
+line, with the mark's own options replaced rather than merged, because
+`cornerRadiusEnd` means nothing on a line); a brush that becomes *context* rather
+than a filter — "selected month 2013-04 → 2014-02, of 48 rows" travels with the
+next question, which is the thing a person points at with a finger and cannot
+type; **Spec**, which opens the Vega-Lite the persona wrote, unedited, in the
+drawer; and **Ask &lt;persona&gt; to change this**, which asks for a new version
+*under the same `chart_id`* so the answer replaces the chart rather than adding
+one below it.
+
+**TableCard**: sort, filter, and **Pivot** — Perspective, from its *inline*
+builds, where the WebAssembly travels inside the JavaScript. The default entry
+points fetch a `.wasm` beside themselves, which this app does not serve and which
+may not come from a CDN; the inline bundles need no asset route and no network.
+They cost about 7 MB, so nothing loads them until the button is pressed, and
+Perspective's own light theme comes with them rather than with the app.
+
+### Three bugs between a valid spec and a visible chart
+
+Each of these produced a *silent* wrong picture, which is the failure mode this
+milestone is supposed to remove:
+
+1. **`Duplicate signal name: "zoom_tuple"`.** Two of run 1's charts drew
+   nothing. A selection `param` at the top level of a **layered** spec is copied
+   by Vega-Lite into every layer, and Vega then refuses the duplicate. Both specs
+   satisfied the schema. **The schema was never enough**: `validate_spec` now
+   also *draws* the chart once, headless, through `vl-convert` — with no rows and
+   `allowed_base_urls=[]`, because validating a persona's spec is not a reason for
+   this server to make a request — and hands back the compiler's own complaint,
+   stripped of its JavaScript stack. The `reports` skill gained the rule. Pinned
+   to `v5.21`, the line the browser renders: validating against a grammar the
+   reader's browser does not speak is theatre.
+2. **`width="0"` with 41 marks inside it.** Personas write `"width":
+   "container"`, which is right; vega-embed resolves it by measuring, and the
+   first measurement lands before layout. The card measures the host itself,
+   re-measures on resize (the drawer opening is exactly when a chart must redraw
+   narrower), and substitutes the number with `autosize: fit` stated rather than
+   inferred.
+3. **A plot squeezed to nothing beside a full-size legend.** A band scale takes
+   its width from the data, and the view was laid out before `view.insert` — with
+   zero categories, a discrete axis is zero wide and `fit` honours it. The
+   continuous-axis charts on the same screen were perfect, which is what made it
+   look like a spec problem. One `view.resize()` after the rows land.
+
+And one layout bug the cards exposed rather than caused: **nothing on the run
+screen scrolled.** `.run-screen` had both `flex: 1` and a height, and on a flex
+item `flex-grow` decides the main size — so the grid stretched to its content and
+neither the document nor the page could scroll. A grid item's `min-height` is
+`auto`, so `.doc` needed `min-height: 0` as well. Everything below the fold was
+simply unreachable.
+
+### Real run 2 of 10 — $0.570, 6 m 21 s
+
+Recorded with the smoke test in place and the layered-params rule in the skill:
+**8 `show_chart` calls, 7 cards, 1 repair.** The rejected call came back with the
+validator's message and the persona fixed it — and because the repaired chart
+kept its title, and the id is derived from the title, it landed as **v1, not v2**:
+a repair is not a revision, exactly as intended. Five charts, two tables, every
+spec valid against the compiler. `ui/fixtures/run-eda-charts` is that run.
+
+Spent so far: **$1.175 of a ten-run budget.**
+
+### Verified
+
+`m26-t6-charts.jpg`: five charts drawn from the run's own aggregates, the mark
+toggle switched to `point`, and the drawer showing the spec that produced it.
+`m26-t6-pivot.jpg`: Perspective grouping the column profile, in the light theme,
+with no network. `pytest` 276 / 8 skipped · `ruff` · `dsagent cartridge validate`
+· `npm run build`, `typecheck`, `lint`.
+
+## Task 7 (completed) — the rail, and a gate that can actually change something
+
+The rail gained the two things §1.3 still owed it: each step's **working note**,
+folded away behind a summary (hiding reasoning entirely and dumping the whole
+trace are both listed as anti-patterns; a summary that opens is the third
+option), and its **cost and tokens**, read off the run record rather than the
+event log, because neither is an event.
+
+The gate card now says **exactly what is being approved**, which the research
+found nobody doing well: not "continue?", but *"that noel starts analyze on this
+data as it stands"*, with the step's own checks table rendered directly above it,
+plus *"$0.17 so far — 8 finished runs of this workflow cost $0.54 in total on
+average"*. The estimate comes from past runs of the same workflow and says so;
+with no finished run to average it says that instead of inventing a number.
+"Cheap until it isn't" is the complaint the research records about every platform
+in this category, and a made-up estimate is how you earn it.
+
+### The finding: a rejected gate was a pause, not a rejection
+
+Building the "diff on re-entry" (§1.5, §6.11) turned up the reason it could not
+exist: **a rejected gate left its step `done` and simply re-asked on resume.**
+The persona never saw the note, nothing was rewritten, and the only way forward
+was to approve the very artifact you had just refused. There was never a second
+version, because nothing produced one.
+
+So the runner changed, and this is the one behaviour change M2.6 makes to it:
+
+- **A rejection sends the step back.** `rec.status` returns to `pending`, and
+  resuming re-runs that step — and only that step; approved work is untouched.
+- **The note reaches the persona.** The step's prompt gains a *"This work was
+  sent back"* section carrying the reviewer's words, with instructions to read
+  what is on disk and address it rather than start over.
+- **The refused version is kept.** At the moment of rejection the runner copies
+  the step's delivered artifacts to `<run_dir>/gate-versions/<step>/v<n>/` —
+  outside `workspace/`, because a copy kept for a person to look at is not
+  something the run produced and does not belong in its zip. The gate event names
+  what it kept; `GET /runs/{id}/gate-version/{step}/{n}/{path}` reads it back.
+
+The cost is stated rather than hidden, on the card and in the code: resuming
+re-runs the step, and re-running a step costs what the step costs. That is the
+trade a person makes when they say no. Nothing about the runner's *contract*
+moved — the DAG, `produces`, and what a gate is are unchanged — but four existing
+tests asserted the old behaviour and now assert the new one, which is the honest
+signal that this was a real change and not a tidy-up.
+
+### Verified
+
+`m26-t7-gate.jpg`: the gate inline at `data-gate`, the nine checks above it as a
+sortable table, what is approved, what it has cost, what past runs cost, and the
+wait counting up. `pytest` 283 / 8 skipped — six new in `tests/test_gate_versions.py`
+covering the snapshot, the re-run, two rejections in a row, and a path that tries
+to climb out of the version directory · `ruff` · `dsagent cartridge validate` ·
+`npm run build`, `typecheck`, `lint`.
+
+The diff itself cannot be shown against the replay — a recording does not re-run
+a step — so it is demonstrated on a real run in §6.11.
+
+## Task 8 (completed) — a plan you can read before anything runs
+
+New run is one surface: drop a file, say what you want to know, read the plan,
+press Start. Between the file and the button there is exactly one thing, and it
+is not a wizard — it is **a proposal**, which is the pattern the research puts at
+the top of what a new entrant can own: approval *before* execution rather than
+review after it.
+
+`POST /runs/{id}/plan` executes nothing and costs nothing. Everything in it is
+derivable and so nothing in it can be hallucinated:
+
+| | where it comes from |
+|---|---|
+| the steps, their personas, their sections, which one stops for you | the workflow the cartridge declares |
+| rows, columns, types, what repeats | the file already uploaded into this run, read by the server the operator is running |
+| the likely cost and time | past runs of **this workflow** that actually finished |
+| `key_column` | a *guess*, labelled as one, from the column with no repeats and nothing missing — editable before Start |
+
+**It is deliberately not a model call.** A proposal a person is about to approve
+should not itself be a thing that can hallucinate, and there is nothing here a
+model could add that the cartridge and the file do not already say. When no run
+of this workflow has ever finished, the estimate says *"no past run"* rather than
+inventing a number — "cheap until it isn't" is the complaint the research records
+about every platform in this category, and a made-up estimate is how you earn it.
+
+The plan is stored on the run: it is the first entry in the audit trail — what
+was offered, and what it was expected to cost.
+
+**Stop is a first-class button**, on the rail beside the run's own state.
+`POST /runs/{id}/stop` asks; the runner honours it *between steps*. Not a kill: a
+step is a persona holding a kernel and half a written file, and ending it there
+leaves a workspace nothing can describe. The step in flight finishes and the run
+halts before the next one — which is what makes §1.7's "stopping never costs more
+than what already ran" true rather than nearly true. `stopped` is a status of its
+own, because a run somebody stopped is not a run that failed.
+
+### Verified
+
+`m26-t8-plan.jpg`: seattle-weather read in place — 1,461 rows × 6 columns, 47.1 kB,
+its column names — the four steps with `data-gate` marked *"then it asks you"*, and
+**$0.54 · 4m 35s · 1 decision · based on 8 runs**. `pytest` 290 / 8 skipped (seven
+new, including the key guess, the "None" default that means unfilled, and a plan
+with nothing to compare against) · `ruff` · `npm run build`, `typecheck`, `lint`.
+
+## Task 9 (completed) — a finished run is a deliverable
+
+When the run ends the top of the document changes: the four numbers a
+stakeholder asks about, a row of ways to take it away, and **the report's own
+opening paragraph lifted to the top** — lifted, not written. If a report does not
+open with its point, the screen shows that rather than inventing one; the fix
+belongs in the `reports` skill.
+
+- **Copy link.** The URL *is* the share, because everything on the screen is
+  rebuilt from the run's own log: anyone who can reach this server sees the same
+  document, and there is no second published copy to drift out of date. There is
+  also no permission model, which the button's title says rather than implies.
+- **Export report** — `GET /runs/{id}/export.html`: **one self-contained file
+  whose charts are still charts.** Vega travels inside it (the bundle
+  `vl-convert` produces, extracted once and reused for every chart), each spec
+  travels with it, and so do the rows each chart draws. It opens from a `file://`
+  URL, offline. Measured in the browser: **zero external requests.**
+- **Download artifacts** (the M2.5 zip) and **Run log** (`events.json`).
+- **Replay this run**, and a scrubber under the three regions. It rewinds the
+  *whole screen* — rail, sections, cards, counters — by re-reducing the event log
+  up to a moment, at 10×. It is not a second implementation of the document: the
+  reducer that draws the live screen is the one that draws this.
+- **Versions**: other finished runs of the same workflow on the same dataset,
+  numbered, with the one you are reading marked.
+
+The export hit the same two traps the run screen did — `"container"` measured
+before layout, and a band scale sized before its data arrived — and takes the
+same two answers. Two bugs in one milestone, in two codebases, from one cause:
+worth the comment it now carries in both.
+
+### Deferred, with the reason
+
+- **PDF.** `vl-convert` renders a chart to PDF in one call, but a *report* PDF is
+  pagination, page furniture and a second layout engine — a piece of work, not a
+  button. The interactive HTML is the export that makes the milestone's point,
+  and it is the one people asked for; PDF is the one people ask for afterwards.
+- **A findings diff between two versions.** Listing versions is cheap and
+  genuinely useful; diffing two runs' *findings* means deciding what a finding is
+  and how two of them correspond, which is a product question about content, not
+  a UI affordance. Comparing artifacts line by line — which the gate card already
+  does — would be a diff of two files, not of two conclusions, and dressing that
+  up as "compare versions" would be worse than not having it.
+
+### Verified
+
+`m26-t9-finished.jpg` (summary, actions, the lifted paragraph),
+`m26-t9-export.jpg` (the exported file rendering its charts with zero external
+requests), `m26-t9-replay.jpg` (the same screen rewound: the gate open again,
+sections 3 and 4 back to pending, two cards instead of seven, v8 of 8 marked).
+`pytest` 297 / 8 skipped — seven new in `tests/test_export.py`, including "no
+CDN appears anywhere in the document" · `ruff` · `npm run build`, `typecheck`,
+`lint`.
+
+One bug this task exposed: the rail's step list had no `overflow`, so with four
+steps open it painted straight over the conversation below it. A flex item
+shrunk by `flex: 1` still draws its whole content.
+
+## Task 10 (completed) — the demo, with a real model
+
+Five runs, **$2.88 of a ten-run budget**, all thirteen §6 lines verified:
+`docs/runs/ui-product/DEMO.md` walks them one by one with the evidence.
+
+| run | for | wall | cost | cards |
+|---|---|---|---|---|
+| 1 `…103207` | the first run with `show_chart` at all | 5 m 40 s | $0.605 | 6 |
+| 2 `…110638` | the fixture, after validation gained its render check | 6 m 19 s | $0.570 | 7 |
+| 3 `…120426` | the demo run — §6.2–§6.10, §6.13 | 14 m 04 s | $0.603 | 9 |
+| 4 `…123802` | sent back, redone, approved — §6.11 | 7 m 31 s | $0.560 | 7 |
+| 5 `…124606` | killed at its gate and restarted — §6.12 | 6 m 28 s | $0.544 | 6 |
+
+### Five bugs only a real run could find
+
+1. **`run.json` was written from two threads with one temp file.** `show_chart`
+   records itself on whichever thread the tool call lands on, while the runner
+   writes the same file from its own. The first `os.replace` consumed
+   `.run.json.tmp`; the second died with `No such file or directory` — and
+   killed `analyze` five minutes into run 3, after eleven `run_python` calls,
+   with nothing wrong with the analysis. The temp name now carries the thread id.
+   A test hammers `save()` from eight threads.
+2. **"Retry from analyze" stalled silently.** A resumed run re-raises the
+   `interrupt()` for every gate it has already passed — it must, or the next gate
+   receives the previous one's answer — so the graph parks on a question nobody
+   is being asked. The run read `running` with no thread behind it and the step
+   never moved. The driver now answers those from `run.json`, which is where the
+   decision has been all along, and only when `state.gate` shows nobody is
+   actually being asked. Retried from the screen, run 3 then completed.
+3. **A rejected gate was a pause, not a rejection** — the finding that changed
+   the runner, written up under task 7.
+4. **The plan's edits never reached the run.** The key column was guessed,
+   accepted, shown in the field — and the run started without it: *"Key column:
+   not declared"*, on screen, in run 3. `POST /runs/{id}/plan` now takes the
+   edited inputs and writes them back, refused once the run has started.
+5. **"Ask <persona> to change this" asked nothing.** The button sent "please
+   change it", which is not a request anybody can act on; the model answered with
+   silence. It now opens a line to say what should change — and the orchestrator
+   gained `read_chart`, because it was told to read a spec out of `run.json`, a
+   file no file tool can reach, and spent a minute failing to find it.
+
+And two the cards themselves exposed: **a brush reported nothing** (a selection
+signal declared inside a layer belongs to that layer's group, so
+`addSignalListener` raised and was swallowed — the store dataset is top-level
+whatever the spec's shape, and that is what it listens to now); and **an amended
+chart vanished off the page** instead of changing on it, because it was
+attributed to the step `chat`. A revision now inherits the step, section and
+persona of the chart it replaces, and the document puts a card it cannot place in
+the last section rather than dropping it.
+
+### Verified
+
+`pytest` 306 passed / 8 skipped · `ruff check src tests` · `dsagent cartridge
+validate cartridges/ds` · `npm run build`, `typecheck`, `lint`.
+
+## Review round — PR #76
+
+Mergeable with small fixes. Fifteen items, all applied on this branch.
+
+### The three that mattered
+
+**The export was a script running on the API's own origin.** `json.dumps` inside
+a `<script>` is not safe: an HTML parser ends a script at the first `</`,
+whatever the JavaScript around it thinks, so a chart title or a data cell
+containing `</script>` closed the block and everything after it became markup.
+And `markdown.markdown` passes raw HTML through by design. Every word in an
+export was written by a persona, and a persona's words come from a model that
+read the operator's data — that is the whole threat model, and it was open. Now:
+`</` is written `<\/` in every embedded JSON; `<` is neutered before the markdown
+is rendered, so no tag can form from a persona's text; and the response carries
+`Content-Disposition: attachment`, a CSP of `sandbox allow-scripts`, and
+`nosniff`, so a browser that renders it anyway does so with an opaque origin.
+Tested with a title of `</script><img src=x onerror=…>` and a data cell to match.
+
+**The chat owned the rail.** `.rail-steps` and `.chat` both asked for `flex: 1`,
+and in every live screenshot the run's steps were crushed to one row beside an
+empty message box. The chat is a footer now — a fixed strip that grows when
+somebody is typing in it — the steps take the rest, CopilotKit's inspector and
+its disclaimer are off, and its reply text is legible on navy instead of navy
+on navy.
+
+**The charts were somebody else's product.** Vega's stock Tableau palette, Vega's
+stock font, and the spec's `title` drawn *inside* the SVG under a card header
+that already said it. There is now one Vega config — the Aiuda typefaces, axis
+and grid inks, and a categorical range that starts with the document's own navy
+— defined in `dsagent.export` and served at `GET /chart-theme`, so the screen and
+the exported file read from one copy and cannot drift. The card strips the
+spec-level title; so does the export.
+
+A spec that names its own colours still wins, and the personas had been naming
+them (`scheme: tableau10`, `color: "#e67e22"`). That is fixed where it is decided
+— the `reports` skill now says not to choose colours — rather than by overriding
+a persona's spec from the renderer, because sometimes a colour is a statement.
+
+### Correctness
+
+- **Every visible card refetched its rows ten times a second while scrubbing.**
+  `useRows` depended on the whole `card` object, and the reducer builds a fresh
+  one each pass. It depends on the file, the run and the version now.
+- **The finished-run header stayed on screen during a replay**, quoting the total
+  cost and the final summary above a document rewound to minute two. It is hidden
+  while scrubbing; the scrubber is how you come back.
+- **A mark change could change the aggregation.** `withMark` deleted the
+  persona's `x.timeUnit` whenever the new mark was not a bar. It is only ever
+  *added*, and only to an axis the persona left ungrouped.
+- **"sent as context" was not true.** The brush fed the card's own ask form and
+  nothing else. It now lives in a selection the chat's `useAgentContext` reads,
+  so it rides with whatever is asked next — checked by brushing a range and
+  typing a question that named nothing; the answer came back with the dates.
+- **The repair budget did not hold.** `attempts` was keyed by chart alone and
+  lived for the runner's life, while `amend_tools` rebuilt its tools per call so
+  an amend could be retried for ever. Keyed by `(step, chart_id)`, with one
+  ledger shared across amends.
+- **A step sent back could pass by doing nothing**: the refused files were still
+  on disk, so `produces` was satisfied by the very artifact that was refused. At
+  least one promised file must now be newer than the decision. *One*, not all —
+  a step that owes a report and its machine-readable twin may legitimately need
+  to change only one, and failing that would be a false alarm.
+- **Stop asked the human first.** The check sat after the gate, so a stop pressed
+  during a gated step stopped the run by way of putting a question to somebody.
+  It runs before the gate now — and writing the test found that **the stop
+  request never survived at all**: it was a field in `run.json`, which the runner
+  rewrites at the end of every step, so the flag an HTTP handler had just written
+  went with it. Two writers, one document, and the one who does not own the value
+  wins — the same shape as the shared temp file, found the same way. It is a file
+  in the run directory now. That stop does not cancel work already in flight is
+  written down, in the runner and on the button.
+
+### Invariant 1
+
+The harness had learned three things about the ds cartridge: a docstring naming
+`key_column`, `endswith("column")` as a way to decide what to guess, and
+`inputs["question"]` / `inputs["data_path"]` read by name in the export. All
+three are now the cartridge's to say: `workflow.yaml` declares `title_input`,
+`data_input`, and `guess: unique_column` on the input that wants it. The harness
+knows what "a column with no repeats" is; it does not know what a key is, and it
+never reads the *name* of an input to decide anything.
+
+### Small
+
+`markdown` declared in the `[ui]` extra — it was used by the export and only ever
+installed as a side effect of the cartridge's kernel env, so the venv that tested
+it exercised the `<pre>` fallback. The one-paragraph summary ends on a word with
+an ellipsis and keeps its numbering. Workspace paths are encoded segment by
+segment in two more places. Pivot opens on a column that actually repeats, and
+Perspective's "configure" button takes the tokens through a stylesheet its shadow
+root adopts. The dead `.resizer` rules are gone, and a description list is
+written `dt` then `dd`, with the value put first visually rather than in the
+markup. The ask button names the persona who drew the chart.
+
+### Verified
+
+`pytest` 316 passed / 8 skipped — thirteen new, including the `</script>` title,
+raw HTML in a persona's markdown, the download headers, one theme for both
+renderers, a step sent back that rewrites nothing, and a stop that must not ask
+anybody anything · `ruff check src tests` · `dsagent cartridge validate` ·
+`npm run build`, `typecheck`, `lint`. Re-checked in the browser against
+`next build && next start`: four steps visible in the rail, no disclaimer, no
+duplicate chart titles, the pivot grouped by `dtype`, and the brush answered by
+the model.

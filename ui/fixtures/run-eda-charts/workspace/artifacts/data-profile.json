@@ -1,0 +1,80 @@
+{
+  "schema_version": 1,
+  "source": "data/seattle-weather.csv",
+  "rows": 1461,
+  "columns": 6,
+  "exact_duplicates_pct": 0.0,
+  "key_uniqueness": {
+    "column": "date",
+    "unique": true,
+    "duplicates": 0
+  },
+  "columns_detail": [
+    {
+      "column": "date",
+      "dtype": "str",
+      "null_pct": 0.0,
+      "distinct": 1461,
+      "top": {
+        "2012-01-01": 1,
+        "2012-01-02": 1,
+        "2012-01-03": 1,
+        "2012-01-04": 1,
+        "2012-01-05": 1
+      }
+    },
+    {
+      "column": "precipitation",
+      "dtype": "float64",
+      "null_pct": 0.0,
+      "distinct": 111,
+      "min": 0.0,
+      "max": 55.9,
+      "mean": 3.02943189596167,
+      "outliers_iqr": 206
+    },
+    {
+      "column": "temp_max",
+      "dtype": "float64",
+      "null_pct": 0.0,
+      "distinct": 67,
+      "min": -1.6,
+      "max": 35.6,
+      "mean": 16.43908281998631,
+      "outliers_iqr": 0
+    },
+    {
+      "column": "temp_min",
+      "dtype": "float64",
+      "null_pct": 0.0,
+      "distinct": 55,
+      "min": -7.1,
+      "max": 18.3,
+      "mean": 8.234770704996578,
+      "outliers_iqr": 0
+    },
+    {
+      "column": "wind",
+      "dtype": "float64",
+      "null_pct": 0.0,
+      "distinct": 79,
+      "min": 0.4,
+      "max": 9.5,
+      "mean": 3.24113620807666,
+      "outliers_iqr": 34
+    },
+    {
+      "column": "weather",
+      "dtype": "str",
+      "null_pct": 0.0,
+      "distinct": 5,
+      "top": {
+        "rain": 641,
+        "sun": 640,
+        "fog": 101,
+        "drizzle": 53,
+        "snow": 26
+      }
+    }
+  ]
+}

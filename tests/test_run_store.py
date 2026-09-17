@@ -116,7 +116,9 @@ def test_a_rejected_run_reads_as_awaiting_gate_with_its_note(runs_dir):
     )
     s = summarize(run_dir)
     assert s.status == "awaiting_gate"
-    assert s.steps_done == 2
+    # One step is done. The gated step is back to `pending`: a rejection sends
+    # its work round again, so counting it as finished would be a lie.
+    assert s.steps_done == 1
     assert is_live(run_dir), "a paused run is not finished"
     assert s.awaiting is None, "nobody is being asked until it is resumed"
     from dsagent.runs import read_state
@@ -174,8 +176,6 @@ def test_deliverables_are_the_declared_files_in_the_order_they_landed(runs_dir):
         "artifacts/data-profile.json",
         "artifacts/data-gate.md",
         "artifacts/findings.md",
-        "artifacts/figures/01.png",
-        "artifacts/figures/02.png",
         "report/findings.md",
         "report/findings.html",
     ]

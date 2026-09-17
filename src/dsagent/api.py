@@ -33,7 +33,6 @@ from __future__ import annotations
 import asyncio
 import io
 import json
-import math
 import re
 import shutil
 import time
@@ -45,6 +44,9 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import PlainTextResponse, Response, StreamingResponse
 
 from dsagent.cartridge.models import Cartridge
+from dsagent.export import CHART_CONFIG, export_html
+from dsagent.runner.charts import VEGA_LITE
+from dsagent.runner.runner import GATE_VERSIONS, STOP_FILE
 from dsagent.runs import (
     deliverables,
     is_live,
@@ -55,6 +57,7 @@ from dsagent.runs import (
     summarize,
 )
 from dsagent.serve import decision_of, resolve_run_file
+from dsagent.tabular import READERS, TableUnreadable, read_table
 
 POLL_SECONDS = 0.25
 """How often the SSE stream looks for new lines in a run's event log.
@@ -71,6 +74,24 @@ working; a closed connection in the middle of that is a screen that stops."""
 
 PREVIEW_ROWS = 200
 PREVIEW_MAX_ROWS = 2000
+PROFILE_ROWS = 500
+"""How much of an uploaded file the plan reads to describe its shape.
+
+Enough for "is this column unique" to mean something and cheap enough to answer
+while the operator is still looking at the drop zone. The row *count* is the
+file's real one; the column descriptions are of this head, and the screen says
+so."""
+PREVIEW_PROFILE_ROWS = 20
+EMPTY_VALUES = {"", "none", "null", "nil"}
+"""Declared defaults that mean "nothing".
+
+A workflow may give an optional input a default of the literal string "None" —
+YAML has no other way to say "unset" for a string — and a screen offering a guess
+has to read that as unfilled rather than as a value somebody chose."""
+UNIQUE_COLUMN = "unique_column"
+"""The one kind of guess the harness can make: a column with no repeats and
+nothing missing. What that is *for* is the cartridge's business; it asks for it
+per input with `guess:` in `workflow.yaml`."""
 """How much of a table is a preview. 200 is what `docs/ui-product.md` §4.4 asks
 for; the ceiling is there because the parameter arrives from a URL."""
 
@@ -89,12 +110,15 @@ def workflow_shape(cartridge: Cartridge, name: str) -> dict[str, Any]:
         "cartridge": cartridge.name,
         "description": wf.description,
         "env": wf.env,
+        "title_input": wf.title_input,
+        "data_input": wf.data_input,
         "inputs": {
             key: {
                 "type": spec.type,
                 "required": spec.required and spec.default is None,
                 "default": spec.default,
                 "options": spec.options,
+                "guess": spec.guess,
             }
             for key, spec in wf.inputs.items()
         },
@@ -106,6 +130,7 @@ def workflow_shape(cartridge: Cartridge, name: str) -> dict[str, Any]:
                 "env": s.env or wf.env,
                 "needs": list(s.needs),
                 "produces": list(s.produces),
+                "section": s.section or "",
                 "gate": {"kind": s.gate.kind, "prompt": s.gate.prompt} if s.gate else None,
             }
             for s in steps
@@ -170,6 +195,7 @@ def add_runs_routes(
             **summary.dict(),
             "steps": state.get("steps", {}),
             "workflow_shape": workflow_shape(cartridge, workflow) if cartridge else None,
+            "plan": state.get("plan"),
             "driver_error": getattr(driver, "error_for", lambda _: None)(run_id),
         }
 
@@ -263,6 +289,90 @@ def add_runs_routes(
         resume = state.get("status") not in ("pending",)
         driver.start(run_id, resume=resume)
         return {"started": True, "resumed": resume}
+
+    @app.post("/runs/{run_id}/plan")
+    async def plan_run(run_id: str, request: Request) -> dict[str, Any]:
+        """What this run will do, before it does any of it.
+
+        The plan-first gate the research puts at the top of what a new entrant
+        can own (part C: plan-as-artifact with one Start gate). It executes
+        nothing and costs nothing: every part of it is derivable — the steps and
+        their gates from the workflow the cartridge declares, the shape of the
+        data from the file already uploaded into this run, and the money from
+        what past runs of the same workflow actually cost.
+
+        It is deliberately not a model call. A proposal a person is about to
+        approve should not itself be a thing that can hallucinate, and there is
+        nothing here for a model to add that the cartridge and the file do not
+        already say. The one judgement in it — which column is the key — is
+        offered as a *guess*, named as one, and editable before Start.
+
+        Stored on the run, because it is the first entry in its audit trail:
+        what was offered, and what it was expected to cost.
+
+        A body of `{"inputs": {...}}` is how the operator's edits get there. The
+        plan is editable by design — the guess is a guess — and a plan you can
+        change but whose changes the run never sees is a form that lies. Refused
+        once the run has started: a run keeps the inputs it began with.
+        """
+        run_dir = run_dir_of(run_id)
+        state = read_state(run_dir)
+        edited = (await _json_body(request)).get("inputs") if await request.body() else None
+        if edited:
+            if state.get("status") != "pending":
+                raise HTTPException(status_code=409, detail="this run has already started")
+            if not isinstance(edited, dict):
+                raise HTTPException(status_code=400, detail="inputs must be a JSON object")
+            state["inputs"] = {**(state.get("inputs") or {}), **edited}
+            _rewrite_state(run_dir, state)
+        workflow = state.get("workflow", "")
+        cartridge = by_workflow.get(workflow)
+        if cartridge is None:
+            raise HTTPException(status_code=400, detail=f"unknown workflow {workflow!r}")
+
+        shape = workflow_shape(cartridge, workflow)
+        inputs = dict(state.get("inputs") or {})
+        profile = _profile_inputs(runs_dir, run_id, inputs)
+        plan = {
+            "workflow": workflow,
+            "description": shape["description"],
+            "inputs": inputs,
+            "steps": shape["steps"],
+            "personas": shape["personas"],
+            "gates": [s["id"] for s in shape["steps"] if s["gate"]],
+            "profile": profile,
+            "guesses": _guesses(shape, inputs, profile),
+            "estimate": _estimate(runs_dir, workflow),
+        }
+        state["plan"] = plan
+        _rewrite_state(run_dir, state)
+        return plan
+
+    @app.post("/runs/{run_id}/stop")
+    def stop_run(run_id: str) -> dict[str, Any]:
+        """Ask a run to stop. It stops between steps, and says so.
+
+        Not a kill: a step is a persona holding a kernel and half a written
+        file, and ending it there leaves a workspace nothing can describe. The
+        step in flight finishes and the run stops before the next one — which is
+        also what makes "stopping never costs more than what already ran" true
+        rather than approximately true (§1.7).
+
+        A run nobody is driving is simply marked stopped.
+        """
+        run_dir = run_dir_of(run_id)
+        state = read_state(run_dir)
+        if state.get("status") in ("done", "failed", "stopped"):
+            return {"stopping": False, "status": state.get("status")}
+        if driver.is_running(run_id):
+            # A file, not a field in `run.json`: the runner rewrites that file
+            # at the end of every step and would erase a flag it does not own.
+            (run_dir / STOP_FILE).write_text("", encoding="utf-8")
+            return {"stopping": True, "status": state.get("status")}
+        state["status"] = "stopped"
+        state["gate"] = None
+        _rewrite_state(run_dir, state)
+        return {"stopping": False, "status": "stopped"}
 
     @app.post("/runs/{run_id}/gate")
     async def answer_gate(run_id: str, request: Request) -> dict[str, Any]:
@@ -358,18 +468,15 @@ def add_runs_routes(
             raise HTTPException(status_code=404, detail="not found")
 
         wanted = max(1, min(rows, PREVIEW_MAX_ROWS))
-        reader = READERS.get(target.suffix.lower())
-        if reader is None:
+        if target.suffix.lower() not in READERS:
             raise HTTPException(
                 status_code=415,
                 detail=f"no preview for {target.suffix or 'a file with no extension'}",
             )
         try:
-            columns, table, total = reader(target, wanted)
-        except HTTPException:
-            raise
-        except Exception as e:
-            raise HTTPException(status_code=415, detail=f"cannot read {path}: {e}") from e
+            columns, table, total = read_table(target, wanted)
+        except TableUnreadable as e:
+            raise HTTPException(status_code=415, detail=str(e)) from e
 
         return {
             "path": path,
@@ -379,6 +486,80 @@ def add_runs_routes(
             "total_rows": total,
             "shown_rows": len(table),
         }
+
+    @app.get("/runs/{run_id}/gate-version/{step}/{version}/{path:path}",
+             response_class=PlainTextResponse)
+    def gate_version(run_id: str, step: str, version: int, path: str) -> str:
+        """An artifact as it was when a gate was sent back.
+
+        The one thing a re-asked gate owes the person answering it: not "here is
+        the report again", but "here is what changed since you refused it". The
+        runner keeps a copy at the moment of rejection — outside the workspace,
+        because it is not something the run produced — and this is how the screen
+        reads it back to diff against what is there now.
+        """
+        run_dir = run_dir_of(run_id)
+        root = (run_dir / GATE_VERSIONS).resolve()
+        try:
+            target = (root / step / f"v{version}" / path).resolve()
+        except OSError:
+            raise HTTPException(status_code=404, detail="not found") from None
+        if not target.is_relative_to(root) or not target.is_file():
+            raise HTTPException(status_code=404, detail="not found")
+        try:
+            return target.read_text(encoding="utf-8", errors="replace")
+        except OSError as e:
+            raise HTTPException(status_code=404, detail=str(e)) from e
+
+    @app.get("/chart-theme")
+    def chart_theme() -> dict[str, Any]:
+        """The Vega config every chart is drawn with, here and in an export.
+
+        One copy, served: the screen and the exported file must look the same,
+        and two hand-kept palettes drift the first time one of them is edited.
+        """
+        return CHART_CONFIG
+
+    @app.get("/runs/{run_id}/export.html")
+    def export_report(run_id: str) -> Response:
+        """The run as one file somebody else can open, charts still alive.
+
+        Self-contained: the Vega bundle, every spec, and a snapshot of the rows
+        each chart draws. It works from a `file://` URL with no network and no
+        server behind it, which is the difference between sending someone a
+        report and sending them a screenshot.
+
+        **Served as a download, and sandboxed if anything renders it anyway.**
+        Every word in it was written by a persona, and a persona's words come
+        from a model that read the operator's data; the export escapes and strips
+        on the way in, but it must not *also* be a script running on this API's
+        own origin. So: `Content-Disposition: attachment`, and a CSP that would
+        give it an opaque origin with no same-origin access if a browser ever
+        showed it inline.
+        """
+        run_dir = run_dir_of(run_id)
+        state = read_state(run_dir)
+        cartridge = by_workflow.get(state.get("workflow", ""))
+        workflow = cartridge.workflows[state["workflow"]] if cartridge else None
+        try:
+            document = export_html(
+                run_dir, state, vl_version=VEGA_LITE,
+                title_input=workflow.title_input if workflow else None,
+            )
+        except ImportError:
+            raise HTTPException(
+                status_code=501,
+                detail="this server has no vl-convert, so it cannot bundle an interactive report",
+            ) from None
+        return Response(
+            content=document,
+            media_type="text/html",
+            headers={
+                "Content-Disposition": f'attachment; filename="{run_dir.name}.html"',
+                "Content-Security-Policy": "sandbox allow-scripts allow-downloads",
+                "X-Content-Type-Options": "nosniff",
+            },
+        )
 
     @app.get("/runs/{run_id}/download")
     def download_all(run_id: str, everything: bool = False):
@@ -409,57 +590,112 @@ def add_runs_routes(
         )
 
 
-def _read_parquet(target: Path, rows: int) -> tuple[list[str], list[list[Any]], int]:
-    """Parquet, through pandas — the reader the cartridge's kernel env installs.
+def _profile_inputs(runs_dir: Path, run_id: str, inputs: dict[str, Any]) -> dict[str, Any] | None:
+    """The shape of whatever table this run was given, read where it landed.
 
-    A server without pandas answers 415 rather than guessing; the file is still
-    downloadable, and "this server cannot read that" is a true thing to say.
+    Domain-agnostic on purpose: rows, columns, how many distinct values each
+    holds and how many are empty, plus a few rows to look at. What those columns
+    *mean* is the cartridge's business — the harness reports the shape of a file
+    and nothing about its subject.
+
+    Local in the sense that matters: the file is read by the server the operator
+    is already running, and nothing about it leaves this process.
     """
+    for name, value in inputs.items():
+        if not isinstance(value, str):
+            continue
+        target = resolve_run_file(runs_dir, run_id, value)
+        if target is None or target.suffix.lower() not in READERS:
+            continue
+        try:
+            columns, rows, total = read_table(target, PROFILE_ROWS)
+        except TableUnreadable:
+            continue
+        return {
+            "input": name,
+            "path": value,
+            "bytes": target.stat().st_size,
+            "rows": total,
+            "columns": [_column(columns[i], [r[i] for r in rows]) for i in range(len(columns))],
+            "preview": rows[:PREVIEW_PROFILE_ROWS],
+            "preview_columns": columns,
+        }
+    return None
+
+
+def _column(name: str, values: list[Any]) -> dict[str, Any]:
+    """One column, described by what is in it rather than by what it is called."""
+    present = [v for v in values if v not in (None, "")]
+    numeric = bool(present) and all(_numberish(v) for v in present)
+    return {
+        "name": name,
+        "type": "number" if numeric else "text",
+        "distinct": len({str(v) for v in present}),
+        "empty": len(values) - len(present),
+        "sample": str(present[0]) if present else "",
+    }
+
+
+def _numberish(value: Any) -> bool:
+    if isinstance(value, bool):
+        return False
+    if isinstance(value, int | float):
+        return True
     try:
-        import pandas as pd
-    except ImportError:
-        raise HTTPException(
-            status_code=415, detail="this server has no pandas, so it cannot read parquet"
-        ) from None
-
-    frame = pd.read_parquet(target)
-    head = frame.head(rows)
-    return (
-        [str(c) for c in head.columns],
-        [[_jsonable(v) for v in record] for record in head.itertuples(index=False)],
-        int(frame.shape[0]),
-    )
+        float(str(value))
+    except ValueError:
+        return False
+    return True
 
 
-def _read_delimited(target: Path, rows: int) -> tuple[list[str], list[list[Any]], int]:
-    """Delimited text, through the stdlib, so a preview needs no dependency.
+def _guesses(shape: dict[str, Any], inputs: dict[str, Any], profile: dict[str, Any] | None
+             ) -> dict[str, dict[str, str]]:
+    """Values the operator has not given, offered as guesses and labelled as such.
 
-    `csv` understands quoted fields containing the delimiter, which the browser's
-    own split-on-comma does not — and it counts the remaining rows without
-    holding the file in memory.
+    Only one kind of guess is made, and only from the file's own shape: a column
+    that is unique across every row it was shown, offered for an input whose
+    workflow asked for exactly that with `guess: unique_column`. The harness does
+    not know what a "key" is and never reads the *name* of an input to decide —
+    a harness that looks for something ending in "column" has learned a
+    cartridge's naming convention, which is invariant 1 going quietly.
     """
-    import csv
+    if not profile:
+        return {}
+    unique = [
+        c["name"] for c in profile["columns"]
+        if c["distinct"] and c["distinct"] == min(profile["rows"], PROFILE_ROWS) and not c["empty"]
+    ]
+    out: dict[str, dict[str, str]] = {}
+    for key, spec in shape["inputs"].items():
+        given = str(inputs.get(key) or "").strip()
+        if given and given.lower() not in EMPTY_VALUES:
+            continue
+        if spec.get("guess") == UNIQUE_COLUMN and unique:
+            out[key] = {
+                "value": unique[0],
+                "why": f"unique across all {profile['rows']} rows, with nothing missing",
+            }
+    return out
 
-    delimiter = "\t" if target.suffix.lower() == ".tsv" else ","
-    with target.open(newline="", encoding="utf-8", errors="replace") as fh:
-        reader = csv.reader(fh, delimiter=delimiter)
-        header = next(reader, [])
-        table: list[list[Any]] = []
-        total = 0
-        for row in reader:
-            total += 1
-            if len(table) < rows:
-                table.append(list(row))
-    return [str(c) for c in header], table, total
 
+def _estimate(runs_dir: Path, workflow: str) -> dict[str, Any]:
+    """What this has cost before. The only honest source there is.
 
-READERS: dict[str, Any] = {
-    ".parquet": _read_parquet,
-    ".pq": _read_parquet,
-    ".csv": _read_delimited,
-    ".tsv": _read_delimited,
-}
-"""Extension → reader. The harness knows formats, not what they contain."""
+    Not a price list and not a guess from token counts: the same workflow, on
+    this machine, finished. When it has never finished, the estimate says so —
+    an invented number is how a product earns "cheap until it isn't".
+    """
+    past = [
+        s for s in list_runs(runs_dir, limit=50)
+        if s.workflow == workflow and s.status == "done" and s.cost_usd
+    ]
+    if not past:
+        return {"runs": 0, "cost_usd": None, "seconds": None}
+    return {
+        "runs": len(past),
+        "cost_usd": round(sum(s.cost_usd or 0 for s in past) / len(past), 3),
+        "seconds": round(sum(s.duration or 0 for s in past) / len(past)),
+    }
 
 
 def _archive_members(run_dir: Path, workspace: Path, *, everything: bool) -> list[str]:
@@ -471,19 +707,6 @@ def _archive_members(run_dir: Path, workspace: Path, *, everything: bool) -> lis
             if f.is_file() and ".dsagent" not in f.relative_to(workspace).parts
         )
     return [rel for rel in deliverables(run_dir) if (workspace / rel).is_file()]
-
-
-def _jsonable(value: Any) -> Any:
-    """One cell, as JSON. Anything exotic becomes its own repr rather than a 500."""
-    if value is None:
-        return None
-    if isinstance(value, bool | int | str):
-        return value
-    if isinstance(value, float):
-        # NaN and infinities are not JSON, and a table full of them is exactly
-        # what a data-quality preview is for.
-        return value if math.isfinite(value) else None
-    return str(value)
 
 
 def _is_replay(driver: Any) -> bool:
@@ -527,11 +750,17 @@ async def _json_body(request: Request) -> dict[str, Any]:
 
 
 def _rewrite_state(run_dir: Path, state: dict[str, Any]) -> None:
-    """Write `run.json` back atomically, the way the runner writes it."""
+    """Write `run.json` back atomically, the way the runner writes it.
+
+    Including the per-thread temp name: this process writes the file from a
+    request handler while the run's own threads write it too, and a shared temp
+    path is a crash waiting for the two to coincide.
+    """
     import os
+    import threading
 
     path = run_dir / "run.json"
-    tmp = path.with_name(".run.json.tmp")
+    tmp = path.with_name(f".run.json.{os.getpid()}.{threading.get_ident()}.tmp")
     tmp.write_text(json.dumps(state, indent=2), encoding="utf-8")
     os.replace(tmp, path)
 

@@ -417,80 +417,738 @@ button {
 
 /* ----------------------------------------------------------- run screen ---- */
 
+/* Three regions: the activity, the work, and the evidence.
+   The rail is fixed because it is a list of steps, not a document; the drawer is
+   fixed because it is a detail pane; the document takes what is left, which is
+   what a document should do. Below 1100px the three stack and the page scrolls —
+   the run screen is usable at 1024, not laid out for it. */
 .run-screen {
-  flex: 1;
+  /* A row for the scrubber, which is `display: none` until there is one to
+     draw; an empty `auto` row costs nothing. */
+  grid-template-rows: minmax(0, 1fr) auto;
+  /* No `flex: 1` here. `.app` is a column flex container, and on a flex item
+     `flex-grow` decides the main size — the `height` below is ignored, the grid
+     stretches to its own content, and then *nothing* scrolls: not the document,
+     not the page. An explicit height is what makes the three regions panes. */
   min-height: 0;
   display: grid;
-  /* The split is the operator's, kept in `--chat-w` / `--progress-h`. */
-  grid-template-columns: var(--chat-w, 380px) 1px minmax(0, 1fr);
-}
-
-.run-pane {
-  min-width: 0;
-  min-height: 0;
-  display: flex;
-  flex-direction: column;
+  grid-template-columns: 320px minmax(0, 1fr);
   height: calc(100vh - var(--header));
 }
 
-.run-pane-chat {
-  border-right: 1px solid var(--rule);
-  background: var(--surface);
+.run-screen.has-drawer {
+  grid-template-columns: 320px minmax(0, 1fr) 420px;
 }
 
-.run-pane-work {
-  display: grid;
-  grid-template-rows: var(--progress-h, 380px) 1px minmax(0, 1fr);
+@media (max-width: 1100px) {
+  .run-screen,
+  .run-screen.has-drawer {
+    grid-template-columns: 1fr;
+    height: auto;
+  }
 }
 
-.progress {
+/* --- the team rail --------------------------------------------------------- */
+
+/* The one dark surface in the product. The document beside it is a document;
+   the thing watching it work does not compete with it for the reader's eye. */
+.rail {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
   overflow: auto;
-  padding: var(--gap-4);
+  background: var(--ink);
+  color: var(--rail-ink);
+}
+
+.rail-head {
+  padding: var(--gap-3) var(--gap-3) var(--gap-2);
+  border-bottom: 1px solid var(--rail-rule);
+}
+
+.rail-eyebrow {
+  margin: 0;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--rail-dim);
+}
+
+.rail-eyebrow .mono {
+  text-transform: none;
+  letter-spacing: 0;
+}
+
+.rail-title {
+  font-family: var(--display);
+  font-weight: 400;
+  font-size: 21px;
+  line-height: 1.15;
+  margin: var(--gap-1) 0 2px;
+  color: #fff;
+}
+
+.rail-sub,
+.rail-empty {
+  margin: 0;
+  font-size: 12px;
+  color: var(--rail-dim);
+}
+
+.rail-empty {
+  padding: var(--gap-3);
+}
+
+.rail-status {
+  display: flex;
+  align-items: center;
+  gap: var(--gap-2);
+  margin: var(--gap-2) 0 0;
+}
+
+.rail-elapsed {
+  font-size: 11px;
+  color: var(--rail-dim);
+}
+
+/* Cost first: unattributable spend arriving late is the loudest complaint in
+   the research about every product in this category. */
+.rail-metrics {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: var(--gap-1);
+  margin: var(--gap-2) 0 var(--gap-2);
+}
+
+/* `dt` then `dd` in the markup, because that is what a description list is;
+   reversed here, because the number is what the eye wants first. */
+.rail-metric {
+  display: flex;
+  flex-direction: column-reverse;
+  background: rgba(255, 255, 255, 0.05);
+  border-radius: var(--radius);
+  padding: 6px 7px;
+}
+
+.rail-metric dd {
+  margin: 0;
+  font-size: 13px;
+  color: #fff;
+}
+
+.rail-metric dt {
+  font-size: 9.5px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--rail-dim);
+  font-weight: 700;
+}
+
+.rail-steps {
+  flex: 1;
+  padding: var(--gap-2);
+  /* The list scrolls inside the rail rather than spilling out of it: without
+     `overflow`, a flex item shrunk to `flex: 1` still paints its full content,
+     and the last step was drawn straight over the conversation below it. */
+  min-height: 0;
+  overflow: auto;
+}
+
+.rail-step {
+  border: 1px solid transparent;
+  border-radius: var(--radius-lg);
+  padding: var(--gap-2);
+  margin-bottom: 2px;
+}
+
+.rail-step.is-running {
+  background: rgba(255, 255, 255, 0.06);
+  border-color: rgba(232, 68, 10, 0.55);
+}
+
+.rail-step.is-waiting {
+  background: rgba(255, 255, 255, 0.06);
+  border-color: rgba(224, 177, 76, 0.55);
+}
+
+.rail-step-row {
+  display: flex;
+  align-items: center;
+  gap: var(--gap-2);
+  width: 100%;
+  background: none;
+  border: 0;
+  padding: 0;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+  text-align: left;
+}
+
+.rail-step-name {
+  flex: 1;
+  font-weight: 700;
+  color: #fff;
+}
+
+.rail-step-elapsed {
+  font-size: 11px;
+  color: var(--rail-dim);
+}
+
+.rail-mark {
+  width: 20px;
+  height: 20px;
+  flex: none;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  font-size: 11px;
+  font-weight: 700;
+  border: 1.5px solid var(--rail-rule);
+  color: var(--rail-dim);
+}
+
+.rail-step.is-done .rail-mark {
+  background: var(--ok);
+  border-color: var(--ok);
+  color: #fff;
+}
+
+.rail-step.is-failed .rail-mark {
+  background: var(--fail);
+  border-color: var(--fail);
+  color: #fff;
+}
+
+.rail-step.is-waiting .rail-mark {
+  border-color: var(--rail-wait);
+  color: var(--rail-wait);
+}
+
+.rail-step.is-running .rail-mark {
+  border-color: var(--accent);
+}
+
+.rail-step.is-running .rail-mark::after {
+  content: "";
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--accent);
+  animation: pulse 1.2s ease-in-out infinite;
+}
+
+@keyframes pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.3;
+  }
+}
+
+.rail-who {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: var(--gap-1) 0 0 28px;
+  font-size: 12px;
+  color: var(--rail-dim);
+}
+
+.rail-av {
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  font-size: 8px;
+  font-weight: 900;
+  background: rgba(255, 255, 255, 0.16);
+  color: #fff;
+}
+
+.rail-detail {
+  margin: var(--gap-2) 0 0 28px;
+}
+
+.rail-promise {
+  display: flex;
+  gap: 6px;
+  align-items: baseline;
+  margin: 2px 0;
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--rail-dim);
+}
+
+.rail-promise i {
+  font-style: normal;
+  width: 10px;
+}
+
+.rail-promise.is-ok i {
+  color: var(--ok-bright);
+}
+
+.rail-promise.is-bad i {
+  color: var(--fail-bright);
+}
+
+.rail-tools {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px var(--gap-2);
+  margin: var(--gap-1) 0 0;
+  font-size: 11px;
+  color: var(--rail-dim);
+}
+
+.rail-tools b {
+  color: #fff;
+  font-weight: 500;
+}
+
+.rail-error {
+  margin: var(--gap-1) 0 0;
+  font-size: 12px;
+  color: var(--fail-bright);
+}
+
+/* The moment one persona's work becomes what the next starts from — the thing
+   no product in the research showed at all. */
+.rail-handoff {
+  margin: 0 0 var(--gap-1) 38px;
+  font-size: 11px;
+  color: var(--rail-dim);
+}
+
+.rail-handoff::before {
+  content: "↓ ";
+  color: var(--ok-bright);
+}
+
+/* --- the living document --------------------------------------------------- */
+
+.doc {
+  min-width: 0;
+  /* A grid item's `min-height` is `auto`, so without this the document grows to
+     its own content and nothing scrolls — not the pane, not the page. Everything
+     below the fold was simply unreachable. */
+  min-height: 0;
+  overflow: auto;
+  background: var(--cream);
+}
+
+.doc-body {
+  max-width: 820px;
+  margin: 0 auto;
+  padding: var(--gap-5) var(--gap-5) var(--gap-6);
+}
+
+.doc-eyebrow {
+  margin: 0;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+}
+
+.doc-title {
+  font-family: var(--display);
+  font-weight: 400;
+  font-size: 34px;
+  line-height: 1.12;
+  margin: 6px 0;
+  text-wrap: balance;
+}
+
+.doc-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--gap-3);
+  margin: 0 0 var(--gap-5);
+  font-size: 12.5px;
+  color: var(--ink-faint);
+}
+
+/* A section arrives; it does not blink into place. 200ms is the spec's number
+   (§2), and a reader whose scroll is mid-section must not be thrown by it. */
+.sec {
+  margin: 0 0 var(--gap-5);
+  animation: sec-in 200ms ease both;
+}
+
+.sec.is-pending {
+  opacity: 0.45;
+  animation: none;
+}
+
+@keyframes sec-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+}
+
+.sec-head {
+  display: flex;
+  align-items: baseline;
+  gap: var(--gap-2);
+  font-family: var(--display);
+  font-weight: 400;
+  font-size: 25px;
+  margin: 0 0 var(--gap-2);
+}
+
+.sec-by {
+  font-family: var(--ui);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+}
+
+.sec-plan {
+  margin: 0;
+  color: var(--ink-dim);
+  max-width: var(--measure);
+}
+
+.sec-sources {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--gap-2);
+  margin: var(--gap-2) 0 0;
+  font-size: 12px;
+}
+
+.sec-sources-label {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+}
+
+.sec-source {
+  background: none;
+  border: 0;
+  border-bottom: 1px dotted var(--rule-strong);
+  padding: 0;
+  font-family: var(--mono);
+  font-size: 11.5px;
+  color: var(--ink-dim);
+  cursor: pointer;
+}
+
+.sec-source:hover {
+  color: var(--accent);
+  border-bottom-color: var(--accent);
+}
+
+.at-work {
+  display: flex;
+  align-items: center;
+  gap: var(--gap-3);
+  padding: var(--gap-3);
+  background: var(--surface);
+  border: 1px dashed var(--rule-strong);
+  border-radius: var(--radius-lg);
+}
+
+.at-work-av {
+  width: 32px;
+  height: 32px;
+  flex: none;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  font-weight: 900;
+  font-size: 13px;
+  background: var(--ink);
+  color: var(--cream);
+}
+
+.at-work-who {
+  flex: 1;
+  min-width: 0;
+}
+
+.at-work-who b {
+  display: block;
+}
+
+.at-work-tools {
+  font-size: 12px;
+  color: var(--ink-faint);
+}
+
+/* --- the drawer ------------------------------------------------------------ */
+
+.drawer {
+  min-width: 0;
+  min-height: 0;
+  overflow: auto;
+  background: var(--surface);
+  border-left: 1px solid var(--rule);
+}
+
+.drawer-head {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  gap: var(--gap-2);
+  padding: var(--gap-2) var(--gap-3);
+  background: var(--surface);
   border-bottom: 1px solid var(--rule);
 }
 
-/* The run's own header: identity on the left, the numbers a stakeholder asks
-   about on the right, in one row that stays readable at 1024px. */
-.run-header {
+.drawer-title {
+  flex: 1;
+  min-width: 0;
+  font-family: var(--mono);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.drawer-body {
+  padding: var(--gap-3);
+}
+
+.drawer-facts {
+  display: grid;
+  grid-template-columns: 90px 1fr;
+  gap: var(--gap-1) var(--gap-2);
+  margin: 0 0 var(--gap-3);
+  font-size: 12.5px;
+}
+
+.drawer-fact {
+  display: contents;
+}
+
+.drawer-fact dt {
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+  padding-top: 2px;
+}
+
+.drawer-fact dd {
+  margin: 0;
+}
+
+.drawer-block {
+  margin-bottom: var(--gap-3);
+}
+
+.drawer-block-head {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+  margin-bottom: var(--gap-1);
+}
+
+.drawer-pre {
+  margin: 0;
+  padding: var(--gap-2);
+  background: var(--surface-sunk);
+  border-radius: var(--radius);
+  font-family: var(--mono);
+  font-size: 11.5px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-x: auto;
+}
+
+.drawer-note {
+  margin: 0 0 var(--gap-2);
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--ink-dim);
+}
+
+.drawer-error {
+  margin: 0;
+  font-size: 13px;
+  color: var(--fail);
+}
+
+/* --- shared: pills and avatars --------------------------------------------- */
+
+.pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 9px;
+  border-radius: 999px;
+  font-size: 11.5px;
+  font-weight: 700;
+  background: rgba(255, 255, 255, 0.1);
+  color: var(--rail-ink);
+}
+
+.pill-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: currentColor;
+}
+
+.pill.is-running {
+  background: var(--accent-wash);
+  color: var(--accent);
+}
+
+.pill.is-running .pill-dot {
+  animation: pulse 1.2s ease-in-out infinite;
+}
+
+.pill.is-done {
+  background: var(--ok-wash);
+  color: var(--ok-bright);
+}
+
+.pill.is-failed {
+  background: var(--fail-wash);
+  color: var(--fail-bright);
+}
+
+.pill.is-awaiting_gate {
+  background: var(--wait-wash);
+  color: var(--rail-wait);
+}
+
+.pill.is-stale,
+.pill.is-pending {
+  background: rgba(255, 255, 255, 0.1);
+  color: var(--rail-dim);
+}
+
+.avatars {
+  display: inline-flex;
+}
+
+.avatar {
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  display: inline-grid;
+  place-items: center;
+  font-size: 10px;
+  font-weight: 900;
+  background: var(--ink);
+  color: var(--cream);
+  border: 2px solid var(--cream);
+  margin-left: -6px;
+}
+
+.avatar:first-child {
+  margin-left: 0;
+}
+
+.avatar.is-tiny {
+  width: 15px;
+  height: 15px;
+  font-size: 8px;
+  border: 0;
+  margin: 0;
+}
+
+/* --- home: tabs and the workflow cards ------------------------------------- */
+
+.tabs {
   display: flex;
-  flex-wrap: wrap;
-  align-items: flex-end;
-  justify-content: space-between;
-  gap: var(--gap-3);
-  padding-bottom: var(--gap-3);
+  gap: var(--gap-4);
   border-bottom: 1px solid var(--rule);
   margin-bottom: var(--gap-4);
 }
 
-.run-title {
-  font-size: 30px;
-  line-height: 1;
+.tabs button {
+  background: none;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -1px;
+  padding: var(--gap-2) 2px;
+  font: inherit;
+  font-weight: 700;
+  color: var(--ink-faint);
+  cursor: pointer;
 }
 
-.run-id .mono {
-  font-size: 11px;
+.tabs button.is-on {
+  color: var(--ink);
+  border-bottom-color: var(--accent);
 }
 
-.metrics {
-  display: flex;
-  gap: var(--gap-4);
-  margin: 0;
+.wf-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+  gap: var(--gap-3);
 }
 
-.metric dt {
-  font-size: 11px;
+.wf-card {
+  background: var(--surface);
+  border: 1px solid var(--rule);
+  border-radius: var(--radius-lg);
+  padding: var(--gap-3) var(--gap-4);
+}
+
+.wf-name {
+  font-size: 17px;
+  margin-bottom: var(--gap-1);
+}
+
+.wf-desc {
   color: var(--ink-dim);
+  margin-bottom: var(--gap-3);
+}
+
+.wf-steps {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: var(--gap-2);
+}
+
+.wf-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 9px;
+  border-radius: var(--radius);
+  background: var(--surface-sunk);
+  font-size: 12px;
   font-weight: 700;
 }
 
-.metric dd {
-  margin: 2px 0 0;
-  font-size: 16px;
-  font-weight: 500;
+.wf-chip-gate {
+  color: var(--wait);
+  font-size: 11px;
 }
 
-.metric dd.is-live {
-  color: var(--accent);
+.wf-foot,
+.wf-note {
+  font-size: 11.5px;
+  color: var(--ink-faint);
+  margin: 0;
+}
+
+.wf-note {
+  margin-top: var(--gap-4);
 }
 
 /* --- the stepper ----------------------------------------------------------- */
@@ -1094,10 +1752,6 @@ button.promise:hover {
 }
 
 @media (max-width: 1100px) {
-  .run-screen {
-    grid-template-columns: minmax(280px, 0.8fr) 1px minmax(0, 1.4fr);
-  }
-
   .metrics {
     gap: var(--gap-3);
   }
@@ -1327,46 +1981,6 @@ select.control {
   }
 }
 
-/* ------------------------------------------------------------ resizers ---- */
-
-.resizer {
-  background: var(--rule);
-  position: relative;
-  z-index: 5;
-}
-
-.resizer::after {
-  /* A 1px line is the thing seen; 9px is the thing grabbed. */
-  content: "";
-  position: absolute;
-  inset: -4px;
-}
-
-.resizer-x {
-  width: 1px;
-  cursor: col-resize;
-}
-
-.resizer-y {
-  height: 1px;
-  cursor: row-resize;
-}
-
-.resizer:hover,
-.resizer:focus-visible {
-  background: var(--accent);
-}
-
-body.is-resizing {
-  cursor: col-resize;
-  user-select: none;
-}
-
-body.is-resizing iframe {
-  /* A drag must not be swallowed by the report the operator is dragging past. */
-  pointer-events: none;
-}
-
 /* --------------------------------------------------- the chat, restyled ---- */
 
 /**
@@ -1484,4 +2098,960 @@ body.is-resizing iframe {
 
 .banner p {
   margin: 0;
+}
+
+/* --- the chat, on the rail ------------------------------------------------- */
+
+/**
+ * The conversation sits at the foot of the rail, on navy, so the document beside
+ * it stays a document. CopilotKit is themed the same way it is themed anywhere —
+ * by its own variables, no component replaced and no class reached into — with
+ * the dark values it needs on this ground.
+ */
+/* The chat is the *foot* of the rail, not its body. Both it and the step list
+   asked for `flex: 1`, and the chat won: in every live screenshot the run's
+   steps were crushed to one row while an empty message box owned the rail.
+   Collapsed it takes a fixed strip, and it grows when somebody is actually
+   typing in it. */
+.rail .chat {
+  flex: 0 0 auto;
+  border-top: 1px solid var(--rail-rule);
+  border-right: 0;
+  background: transparent;
+  color: var(--rail-ink);
+  max-height: 170px;
+  transition: max-height 160ms ease;
+}
+
+.rail .chat:focus-within,
+.rail .chat:hover {
+  max-height: 52vh;
+}
+
+/* CopilotKit renders assistant text in its own muted colour, which on navy is
+   very nearly the navy. These are the two that carry words. */
+.rail .chat [data-testid="copilot-message-list"],
+.rail .chat [data-testid="copilot-message-list"] * {
+  color: var(--rail-ink);
+}
+
+.rail .chat [data-testid="copilot-chat-textarea"] {
+  color: #fff;
+}
+
+/* The disclaimer's text is emptied through `labels`; this is the strip it
+   leaves behind. The same sentence is on the home screen, once. */
+.rail .chat [data-testid="copilot-input-overlay"] + div,
+.rail .chat [data-testid="copilot-input-overlay"] ~ div:empty {
+  display: none;
+}
+
+.rail .chat.is-replay,
+.rail .chat .dim {
+  color: var(--rail-dim);
+}
+
+.rail .chat-invite h2 {
+  color: #fff;
+}
+
+.rail [data-copilotkit] {
+  --background: transparent;
+  --foreground: var(--rail-ink);
+  --card: rgba(255, 255, 255, 0.06);
+  --card-foreground: var(--rail-ink);
+  --popover: var(--ink);
+  --popover-foreground: var(--rail-ink);
+  --primary: var(--accent);
+  --primary-foreground: #fff;
+  --secondary: rgba(255, 255, 255, 0.08);
+  --secondary-foreground: var(--rail-ink);
+  --muted: rgba(255, 255, 255, 0.06);
+  --muted-foreground: var(--rail-dim);
+  --accent: rgba(255, 255, 255, 0.1);
+  --accent-foreground: #fff;
+  --border: var(--rail-rule);
+  --input: var(--rail-rule);
+  --ring: var(--accent);
+}
+
+.sec-resume {
+  display: flex;
+  align-items: center;
+  gap: var(--gap-3);
+  margin: var(--gap-3) 0 0;
+  font-size: 13px;
+}
+
+/* --- the section's own words ----------------------------------------------- */
+
+/* The artifact the step wrote, rendered in place. Its headings step down: the
+   section already has one, and a report's `##` must not compete with it. */
+.sec-prose {
+  max-width: var(--measure);
+}
+
+.sec-prose > :first-child {
+  margin-top: 0;
+}
+
+.sec-prose h1,
+.sec-prose h2 {
+  font-size: 17px;
+  font-weight: 700;
+  margin: var(--gap-4) 0 var(--gap-2);
+}
+
+.sec-prose h3,
+.sec-prose h4 {
+  font-size: 14px;
+  font-weight: 700;
+  margin: var(--gap-3) 0 var(--gap-1);
+}
+
+.sec-prose p,
+.sec-prose li {
+  color: var(--ink-dim);
+}
+
+.sec-prose li {
+  margin-bottom: var(--gap-1);
+}
+
+.sec-prose strong {
+  color: var(--ink);
+}
+
+.sec-prose code {
+  font-family: var(--mono);
+  font-size: 12.5px;
+  background: var(--surface-sunk);
+  padding: 1px 4px;
+  border-radius: var(--radius);
+}
+
+.sec-prose table {
+  border-collapse: collapse;
+  font-size: 12.5px;
+  margin: var(--gap-2) 0 var(--gap-3);
+  display: block;
+  overflow-x: auto;
+}
+
+.sec-prose th,
+.sec-prose td {
+  border-bottom: 1px solid var(--rule);
+  padding: 5px 10px;
+  text-align: left;
+  white-space: nowrap;
+}
+
+.sec-prose th {
+  font-size: 10.5px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+}
+
+.sec-prose blockquote {
+  margin: var(--gap-2) 0;
+  padding-left: var(--gap-3);
+  border-left: 2px solid var(--rule-strong);
+  color: var(--ink-dim);
+}
+
+/* Follow-up chips: they teach what the chat is for. An empty input next to a
+   finished report is a box most people never type in. */
+.ask-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--gap-2);
+  margin: var(--gap-3) 0 0;
+}
+
+.ask-row button {
+  background: none;
+  border: 1px solid var(--rule);
+  border-radius: 999px;
+  padding: 4px 11px;
+  font: inherit;
+  font-size: 12px;
+  color: var(--ink-dim);
+  cursor: pointer;
+}
+
+.ask-row button:hover {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+/* --- chart and table cards -------------------------------------------------- */
+
+/* A card is an object in the document, not a picture pasted into it: the toolbar
+   is part of it, and so is the line under it saying where the rows came from. */
+.card {
+  margin: var(--gap-3) 0 var(--gap-4);
+  background: var(--surface);
+  border: 1px solid var(--rule);
+  border-radius: var(--radius-lg);
+  overflow: hidden;
+}
+
+.card-head {
+  display: flex;
+  align-items: center;
+  gap: var(--gap-2);
+  padding: var(--gap-2) var(--gap-3);
+  border-bottom: 1px solid var(--rule);
+}
+
+.card-head b {
+  flex: 1;
+  min-width: 0;
+  font-size: 13.5px;
+  line-height: 1.35;
+}
+
+.card-tools {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  flex: none;
+}
+
+.card-tools button,
+.card-tools select {
+  font: inherit;
+  font-size: 12px;
+  color: var(--ink-dim);
+  background: none;
+  border: 1px solid transparent;
+  border-radius: var(--radius);
+  padding: 3px 8px;
+  cursor: pointer;
+}
+
+.card-tools button:hover,
+.card-tools select:hover {
+  background: var(--surface-sunk);
+  color: var(--ink);
+}
+
+.card-tools .card-ask {
+  color: var(--accent);
+  font-weight: 700;
+}
+
+.card-filter {
+  font: inherit;
+  font-size: 12px;
+  width: 9ch;
+  padding: 3px 8px;
+  border: 1px solid var(--rule);
+  border-radius: var(--radius);
+  background: var(--cream);
+  color: var(--ink);
+}
+
+.card-filter:focus {
+  width: 16ch;
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.card-body {
+  padding: var(--gap-2) var(--gap-3);
+}
+
+.card-body.is-flush {
+  padding: 0;
+}
+
+.vega {
+  width: 100%;
+}
+
+/* Vega's own `details` disclosure would be a second, unstyled control. */
+.vega summary {
+  display: none;
+}
+
+.card-skeleton {
+  height: 240px;
+  border-radius: var(--radius);
+  background: linear-gradient(90deg, var(--surface-sunk), var(--rule), var(--surface-sunk));
+  background-size: 200% 100%;
+  animation: card-wait 1.4s linear infinite;
+}
+
+@keyframes card-wait {
+  to {
+    background-position: -200% 0;
+  }
+}
+
+/* What the reader brushed, in their own words, on its way to the chat. */
+.card-selection {
+  margin: 0;
+  padding: 0 var(--gap-3) var(--gap-2);
+  font-size: 11.5px;
+  color: var(--accent);
+}
+
+.card-foot {
+  margin: 0;
+  padding: 6px var(--gap-3);
+  border-top: 1px solid var(--rule);
+  background: var(--surface-sunk);
+  font-size: 11.5px;
+  color: var(--ink-faint);
+}
+
+.card-scroll {
+  max-height: 340px;
+  overflow: auto;
+}
+
+.grid {
+  border-collapse: collapse;
+  width: 100%;
+  font-size: 12.5px;
+}
+
+.grid th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: var(--surface-sunk);
+  text-align: left;
+  padding: 0;
+  border-bottom: 1px solid var(--rule);
+}
+
+.grid th button {
+  width: 100%;
+  text-align: left;
+  background: none;
+  border: 0;
+  padding: 6px 10px;
+  font: inherit;
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+  cursor: pointer;
+}
+
+.grid th button:hover {
+  color: var(--ink);
+}
+
+.grid td {
+  padding: 5px 10px;
+  border-bottom: 1px solid var(--rule);
+  white-space: nowrap;
+}
+
+.grid td.num {
+  font-family: var(--mono);
+  text-align: right;
+}
+
+.pivot {
+  height: 380px;
+}
+
+.pivot perspective-viewer {
+  height: 100%;
+  width: 100%;
+  /* Perspective themes itself through its own variables, the same way
+     CopilotKit does. Its "configure" button is the one control that shows
+     through, so it gets this product's type and colours rather than its own. */
+  --theme-font-family: var(--ui);
+  --mono-font-family: var(--mono);
+  --button--font-family: var(--ui);
+  --button--font-size: 12px;
+  --color: var(--ink);
+  --inactive--color: var(--ink-faint);
+  --active--color: var(--accent);
+  --plugin--background: var(--surface);
+  --select--background-color: var(--surface);
+  --icon--color: var(--ink-dim);
+}
+
+.rail-narration {
+  margin-top: var(--gap-1);
+  font-size: 12px;
+}
+
+.rail-narration summary {
+  cursor: pointer;
+  list-style: none;
+  color: var(--rail-dim);
+}
+
+.rail-narration summary::before {
+  content: "▸ ";
+}
+
+.rail-narration[open] summary::before {
+  content: "▾ ";
+}
+
+.rail-narration p {
+  margin: var(--gap-1) 0 0;
+  padding: var(--gap-2);
+  background: rgba(0, 0, 0, 0.25);
+  border-radius: var(--radius);
+  line-height: 1.45;
+  color: var(--rail-ink);
+}
+
+.rail-cost {
+  margin: var(--gap-1) 0 0;
+  font-size: 11px;
+  color: var(--rail-dim);
+}
+
+/* --- what a gate is approving ---------------------------------------------- */
+
+.gate-what {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--gap-2);
+  margin: var(--gap-3) 0;
+}
+
+@media (max-width: 760px) {
+  .gate-what {
+    grid-template-columns: 1fr;
+  }
+}
+
+.gate-what div {
+  background: var(--surface-sunk);
+  border-radius: var(--radius);
+  padding: var(--gap-2) var(--gap-3);
+  font-size: 12.5px;
+  color: var(--ink-dim);
+}
+
+.gate-what b {
+  display: block;
+  font-size: 10.5px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+  margin-bottom: var(--gap-1);
+}
+
+.gate-diff {
+  margin: 0 0 var(--gap-3);
+  font-size: 12px;
+}
+
+.gate-diff b {
+  display: block;
+  margin-bottom: var(--gap-1);
+  font-size: 11px;
+  color: var(--ink-faint);
+}
+
+.gate-diff pre {
+  margin: 0;
+  padding: var(--gap-2);
+  background: var(--surface-sunk);
+  border-radius: var(--radius);
+  font-family: var(--mono);
+  font-size: 11.5px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-x: auto;
+}
+
+.diff-add {
+  color: var(--ok);
+}
+
+.diff-cut {
+  color: var(--fail);
+  text-decoration: line-through;
+}
+
+/* --- new run: the plan before the Start button ----------------------------- */
+
+.new-grid {
+  display: grid;
+  grid-template-columns: 1.05fr 0.95fr;
+  gap: var(--gap-5);
+  align-items: start;
+}
+
+@media (max-width: 960px) {
+  .new-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.drop {
+  display: block;
+  border: 2px dashed var(--rule-strong);
+  border-radius: var(--radius-lg);
+  padding: var(--gap-5) var(--gap-4);
+  text-align: center;
+  background: var(--surface);
+  cursor: pointer;
+  transition: border-color 120ms ease;
+}
+
+.drop.is-over,
+.drop:hover {
+  border-color: var(--accent);
+}
+
+.drop.is-full {
+  border-style: solid;
+}
+
+.drop-big {
+  display: block;
+  font-family: var(--display);
+  font-size: 23px;
+  line-height: 1.2;
+  margin-bottom: 2px;
+  overflow-wrap: anywhere;
+}
+
+.drop-sub {
+  display: block;
+  font-size: 13px;
+  color: var(--ink-faint);
+}
+
+.field {
+  display: block;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--ink-dim);
+  margin: var(--gap-3) 0 var(--gap-1);
+}
+
+.new-grid textarea {
+  width: 100%;
+  font: inherit;
+  color: var(--ink);
+  background: var(--surface);
+  border: 1px solid var(--rule-strong);
+  border-radius: var(--radius);
+  padding: var(--gap-2);
+  resize: vertical;
+}
+
+.new-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--gap-3);
+  flex-wrap: wrap;
+  margin: var(--gap-3) 0 0;
+  font-size: 12.5px;
+}
+
+.choices {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: var(--gap-2);
+  margin-bottom: var(--gap-4);
+}
+
+.choice {
+  display: block;
+  text-align: left;
+  background: var(--surface);
+  border: 1px solid var(--rule);
+  border-radius: var(--radius-lg);
+  padding: var(--gap-3);
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+}
+
+.choice.is-on {
+  border-color: var(--accent);
+  box-shadow: inset 0 0 0 1px var(--accent);
+}
+
+.choice b {
+  display: block;
+  margin-bottom: 2px;
+}
+
+.choice span {
+  display: block;
+  font-size: 12.5px;
+  color: var(--ink-dim);
+}
+
+.choice-team {
+  display: flex !important;
+  align-items: center;
+  gap: 6px;
+  margin-top: var(--gap-2);
+  font-size: 11.5px !important;
+  color: var(--ink-faint) !important;
+}
+
+.plan {
+  background: var(--surface);
+  border: 1px solid var(--rule);
+  border-radius: var(--radius-lg);
+  padding: var(--gap-4);
+  box-shadow: 0 1px 2px rgba(20, 40, 80, 0.04);
+}
+
+.plan-eyebrow {
+  margin: 0 0 var(--gap-1);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+}
+
+.plan-name {
+  font-family: var(--display);
+  font-weight: 400;
+  font-size: 26px;
+  margin: 0 0 var(--gap-1);
+}
+
+.plan-desc,
+.plan-file {
+  font-size: 13px;
+  color: var(--ink-dim);
+  margin: 0 0 var(--gap-3);
+}
+
+.plan-inputs {
+  display: grid;
+  gap: var(--gap-2);
+  margin-bottom: var(--gap-3);
+}
+
+.plan-inputs label {
+  display: grid;
+  gap: 2px;
+  font-size: 12px;
+}
+
+.plan-inputs b {
+  font-family: var(--mono);
+  font-size: 11.5px;
+  color: var(--ink-dim);
+}
+
+.plan-inputs input {
+  font: inherit;
+  font-family: var(--mono);
+  font-size: 13px;
+  padding: 5px 8px;
+  border: 1px solid var(--rule-strong);
+  border-radius: var(--radius);
+  background: var(--cream);
+  color: var(--ink);
+}
+
+.plan-steps {
+  list-style: none;
+  margin: 0 0 var(--gap-3);
+  padding: 0 0 0 var(--gap-3);
+  border-left: 2px solid var(--rule);
+}
+
+.plan-steps li {
+  position: relative;
+  padding: 3px 0;
+  font-size: 13px;
+}
+
+.plan-steps li::before {
+  content: "";
+  position: absolute;
+  left: calc(-1 * var(--gap-3) - 5px);
+  top: 11px;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--rule-strong);
+}
+
+.plan-steps li.is-gate::before {
+  background: var(--wait);
+}
+
+.plan-steps span {
+  color: var(--ink-faint);
+  margin-left: 6px;
+  font-size: 12px;
+}
+
+.plan-gate {
+  color: var(--wait) !important;
+}
+
+.plan-estimate {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: var(--gap-2);
+  margin: 0 0 var(--gap-3);
+  padding: var(--gap-2) var(--gap-3);
+  background: var(--surface-sunk);
+  border-radius: var(--radius);
+}
+
+.plan-estimate > div {
+  display: flex;
+  flex-direction: column-reverse;
+}
+
+.plan-estimate dd {
+  margin: 0;
+  font-size: 15px;
+}
+
+.plan-estimate dt {
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+  font-weight: 700;
+}
+
+.rail-stop {
+  margin-left: auto;
+  background: none;
+  border: 1px solid var(--rail-rule);
+  border-radius: var(--radius);
+  padding: 2px 9px;
+  font: inherit;
+  font-size: 11.5px;
+  font-weight: 700;
+  color: var(--rail-dim);
+  cursor: pointer;
+}
+
+.rail-stop:hover:not(:disabled) {
+  border-color: var(--fail-bright);
+  color: var(--fail-bright);
+}
+
+.rail-stop:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.status.is-stopped::before,
+.pill.is-stopped .pill-dot {
+  background: var(--ink-faint);
+}
+
+.pill.is-stopped {
+  background: rgba(255, 255, 255, 0.1);
+  color: var(--rail-dim);
+}
+
+/* --- a finished run ---------------------------------------------------------- */
+
+.done {
+  margin: 0 0 var(--gap-5);
+}
+
+.done-figures {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: var(--gap-2);
+  margin: 0 0 var(--gap-3);
+}
+
+@media (max-width: 700px) {
+  .done-figures {
+    grid-template-columns: 1fr 1fr;
+  }
+}
+
+.done-figures > div {
+  display: flex;
+  flex-direction: column-reverse;
+  background: var(--surface);
+  border: 1px solid var(--rule);
+  border-radius: var(--radius);
+  padding: var(--gap-2) var(--gap-3);
+}
+
+.done-figures dd {
+  margin: 0;
+  font-size: 17px;
+}
+
+.done-figures dt {
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+  font-weight: 700;
+}
+
+.done-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--gap-2);
+  margin: 0 0 var(--gap-3);
+}
+
+.done-actions .btn {
+  text-decoration: none;
+}
+
+/* The report's own opening, lifted. The accent rule says "this is the point",
+   and it is the only place on the page the accent is used for emphasis. */
+.done-summary {
+  background: var(--surface);
+  border-left: 3px solid var(--accent);
+  border-radius: 0 var(--radius-lg) var(--radius-lg) 0;
+  padding: var(--gap-3) var(--gap-4);
+}
+
+.done-summary p:last-child {
+  margin: 0;
+  font-size: 15px;
+  color: var(--ink);
+}
+
+.done-eyebrow {
+  margin: 0 0 var(--gap-1);
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--accent);
+}
+
+/* --- the replay scrubber ----------------------------------------------------- */
+
+.scrubber {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  gap: var(--gap-3);
+  padding: 0 var(--gap-3);
+  height: 40px;
+  border-top: 1px solid var(--rule);
+  background: var(--surface-sunk);
+  font-size: 12px;
+  color: var(--ink-dim);
+}
+
+.scrubber button {
+  background: none;
+  border: 1px solid var(--rule-strong);
+  border-radius: var(--radius);
+  padding: 3px 10px;
+  font: inherit;
+  font-weight: 700;
+  color: var(--ink);
+  cursor: pointer;
+}
+
+.scrubber input[type="range"] {
+  flex: 1;
+  accent-color: var(--accent);
+}
+
+.done-versions {
+  display: flex;
+  align-items: center;
+  gap: var(--gap-2);
+  margin: var(--gap-3) 0 0;
+  font-size: 12.5px;
+}
+
+.done-versions .done-eyebrow {
+  margin: 0;
+}
+
+.done-versions a {
+  font-family: var(--mono);
+  font-size: 12px;
+  padding: 2px 8px;
+  border: 1px solid var(--rule);
+  border-radius: 999px;
+  text-decoration: none;
+  color: var(--ink-dim);
+}
+
+.done-versions a:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.done-versions a.is-here {
+  background: var(--ink);
+  border-color: var(--ink);
+  color: var(--cream);
+}
+
+.sec-failed {
+  margin: var(--gap-3) 0 0;
+  padding: var(--gap-3);
+  background: var(--fail-wash);
+  border-left: 3px solid var(--fail);
+  border-radius: 0 var(--radius-lg) var(--radius-lg) 0;
+}
+
+.sec-failed-what {
+  margin: 0 0 var(--gap-2);
+  color: var(--ink);
+}
+
+.sec-failed-missing {
+  margin: 0 0 2px;
+  font-size: 11.5px;
+  color: var(--fail);
+}
+
+/* The runner's own line, kept but folded down: a stack trace is evidence, not
+   an explanation, and the sentence above it is the explanation. */
+.sec-failed-error {
+  margin: var(--gap-2) 0 0;
+  padding: var(--gap-2);
+  background: var(--surface);
+  border-radius: var(--radius);
+  font-family: var(--mono);
+  font-size: 11.5px;
+  line-height: 1.5;
+  color: var(--ink-dim);
+  overflow-wrap: anywhere;
+}
+
+.sec-failed .sec-resume {
+  margin-top: var(--gap-3);
+}
+
+.card-asking {
+  display: flex;
+  gap: var(--gap-2);
+  padding: var(--gap-2) var(--gap-3);
+  border-top: 1px solid var(--rule);
+  background: var(--surface-sunk);
+}
+
+.card-asking input {
+  flex: 1;
+  font: inherit;
+  font-size: 13px;
+  padding: 5px 9px;
+  border: 1px solid var(--rule-strong);
+  border-radius: var(--radius);
+  background: var(--surface);
+  color: var(--ink);
 }
