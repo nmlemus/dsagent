@@ -124,6 +124,8 @@ Three `CUSTOM` events. `name` is the name below, `value` the object. Every paylo
  "step": "profile", "persona": "marie", "env": "default", "index": 0, "total": 4,
  "status": "started|done|failed|awaiting_gate", "needs": [],
  "produces": ["artifacts/data-profile.md", "artifacts/data-profile.json"],
+ "produces_matched": {"artifacts/data-profile.md": ["artifacts/data-profile.md"],
+                      "artifacts/data-profile.json": ["artifacts/data-profile.json"]},
  "ts": 1789564216.4, "error": null}
 
 // dsagent.tool
@@ -138,7 +140,13 @@ Three `CUSTOM` events. `name` is the name below, `value` the object. Every paylo
 ```
 
 `produces` rides on **every** `dsagent.step` status, including `started`, so the canvas can
-mark a path as a deliverable before the file exists — the run-001/002 requirement.
+mark a path as a deliverable before the file exists — the run-001/002 requirement. It is the
+promise, as declared, and since a `produces` entry may be a glob it is not necessarily a
+path. `produces_matched` is what has actually landed: each entry mapped to the real files it
+names at event time — empty lists on `started`, filled on every other status. Links and
+done/missing ticks read `produces_matched`; `produces` is what shows a promise that has no
+file behind it yet. Keyed by entry rather than flattened, so a tick is per promise: with two
+patterns a flat list cannot say whether both were satisfied.
 `kind` on a file event is `deliverable` iff the path is in that step's `produces`.
 `tool_call_id` is the dedupe key against the raw `TOOL_CALL_*` the bridge emits for the
 same call. `args_preview` is truncated to 500 chars and never carries file contents.
@@ -174,7 +182,8 @@ Use the **v2** hooks. In 1.72.0 `useCoAgent`, `useRenderToolCall`, `useLangGraph
 | Panel | Hook |
 |---|---|
 | Gate card | `useInterrupt({ enabled: e => e.value?.reason === "dsagent.gate", renderInChat: false, render: ({interrupt, resolve, cancel}) => <GateCard/> })`; approve calls `resolve({decision: "approve"})` |
-| DAG progress | `const { agent } = useAgent(); agent.subscribe({ onCustomEvent: ({ event }) => … })`, filtered to `event.name === "dsagent.step"`, reduced into a map keyed by step id |
+| DAG progress | `const { agent } = useAgent(); agent.subscribe({ onCustomEvent: ({ event }) => … })`, filtered to `event.name === "dsagent.step"`, reduced into a map keyed by step id. Ticks and links read `produces_matched`, not `produces` — a glob is not a path |
+| Persona narration | the same subscriber's `onTextMessageStartEvent` / `onTextMessageEndEvent`, attributed to whichever step is between its `started` and its end. The chat withholds those ids through the `messageView` slot |
 | Canvas file list | the same subscriber on `dsagent.file` — append-only (run 002: four figures in 14 s), and focus changes only on `dsagent.step` `status=done`, never on a file event (run 001, obs. 3) |
 
 File serving: `GET /runs/{run_id}/files/{path:path}` on the same FastAPI app, resolved
@@ -183,6 +192,32 @@ against `<run_dir>/workspace`, 404 unless `Path.resolve().is_relative_to(workspa
 is an `<img>`, `.html` goes in `<iframe sandbox src=…>` with an **empty** sandbox — run
 002's report is self-contained and needs no scripts. Plotly dashboards will need
 `allow-scripts` plus a separate origin; deferred, not designed here.
+
+### Persona narration in the chat
+
+A persona's own commentary reaches the browser as an ordinary assistant message: the
+bridge attributes messages only inside a subagent window, which it opens solely for a tool
+literally named `task` (`agent.py:426`), and the runner launches persona steps itself. So
+`subagentRunId` is empty and nothing on the wire says marie wrote this and noel wrote that.
+Left in the transcript it reads as one voice changing personality mid-conversation —
+visible in `docs/runs/ui-canvas-002.png`.
+
+Three ways to keep it out of the chat, least invasive first:
+
+1. **Rendering override.** `<CopilotChat messageView={…}>` is a documented slot;
+   `CopilotChatMessageView` takes the `messages` it should draw, so a wrapper filters and
+   delegates. Nothing about the run, the thread or the backend changes — the withheld
+   messages are still in the thread and still reach the model as context. **Chosen.**
+2. **Owning the view.** `<CopilotChatView messages={…}>` accepts messages directly, but
+   `CopilotChatProps` omits that prop, so this means driving input, suggestions,
+   attachments and scroll ourselves.
+3. **Tagging in `serve`.** Set something on the message the frontend could key off. A
+   backend change for a presentation problem, and there is no field for it — `name` and
+   `metadata` exist on the AG-UI message but the bridge fills neither from a nested graph.
+
+Attribution is by time, because the protocol offers nothing better: a message that starts
+between a step's `started` and its end belongs to that step's persona. The same subscriber
+already tracks that, so it costs one `useRef`.
 
 Before deciding what to do with the unattributed persona `TOOL_CALL_*`, PR 5 checks
 `emit_subagent_events` / `subagent_visibility` (`"inline"` default, `"attributed"`,

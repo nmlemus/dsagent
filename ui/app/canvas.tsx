@@ -4,10 +4,12 @@ import { useInterrupt } from "@copilotkit/react-core/v2";
 
 import { FileView } from "./file-view";
 import { GateCard, gateOf, isGate } from "./gate-card";
-import { type RunFile, useRunFiles } from "./use-run-files";
+import { DagPanel } from "./dag-panel";
+import { useRun } from "./run-context";
+import type { RunFile } from "./types";
 
 export function Canvas() {
-  const { files, focused, focus } = useRunFiles();
+  const { files, focused, focus } = useRun();
 
   const gate = useInterrupt({
     enabled: (event) => isGate(event.value),
@@ -28,6 +30,8 @@ export function Canvas() {
       {/* The gate sits above the files rather than replacing them: the decision
           it asks for is usually about a file in the list below. */}
       {gate && <div className="canvas-gate">{gate}</div>}
+
+      <DagPanel onOpen={focus} />
 
       {files.length === 0 && !gate && (
         <div className="empty">Artifacts from a run will appear here.</div>
