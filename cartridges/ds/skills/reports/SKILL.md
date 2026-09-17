@@ -23,8 +23,13 @@ them in two minutes.
 
 - Numbers carry their denominator and their uncertainty when one exists.
 - Charts: one message per chart, title states the message, axes labelled with units,
-  no dual axes, no 3D, colorblind-safe palette. Save as PNG under
-  `artifacts/figures/` and reference them from the report.
+  no dual axes, no 3D, colorblind-safe palette.
+- **Emit every figure with `show_chart`, never as an image.** A PNG is a decision
+  nobody downstream can revisit: the reader cannot hover a point, zoom a range or
+  ask what a category holds, and the numbers are gone. `show_chart` takes a
+  Vega-Lite spec plus the path of the table it draws — see "Emitting a chart"
+  below. Write a PNG only when something outside the report needs one (a PDF, a
+  slide), and then as well as the chart, not instead of it.
 - **A title never claims a trend the intervals do not support.** If the confidence
   intervals overlap across the periods, or the series does not move in one direction,
   the title says what is actually there — "no clear trend", "flat within noise",
@@ -36,7 +41,58 @@ them in two minutes.
 - Prefer tables for fewer than six numbers; prefer charts for trends and comparisons.
 - Write in English, plain and direct. No hedging phrases that add nothing.
 
+## Emitting a chart
+
+Aggregate with `run_python`, write the aggregate to a file, then reference it:
+
+```python
+by_cat = (df.groupby("weather")
+            .agg(n=("date", "size"), precip_mean=("precipitation", "mean"))
+            .reset_index())
+by_cat.to_parquet("artifacts/scratch/by_category.parquet")
+```
+
+```python
+show_chart(
+    spec={
+        "$schema": "https://vega.github.io/schema/vega-lite/v5.json",
+        "width": "container", "height": 240,
+        "data": {"name": "table"},
+        "params": [{"name": "hover", "select": {"type": "point", "on": "pointerover"}}],
+        "mark": {"type": "bar", "cornerRadiusEnd": 3},
+        "encoding": {
+            "x": {"field": "weather", "type": "nominal", "sort": "-y", "axis": {"labelAngle": 0}},
+            "y": {"field": "precip_mean", "type": "quantitative",
+                  "title": "mean precipitation (mm/day)"},
+            "tooltip": [{"field": "weather"}, {"field": "n", "title": "days"},
+                        {"field": "precip_mean", "title": "mm/day"}],
+        },
+    },
+    data_ref="artifacts/scratch/by_category.parquet",
+    title="Only rain and snow record precipitation",
+)
+```
+
+Rules that are specific to this tool:
+
+- **Never inline rows in the spec.** `"data": {"name": "table"}`, always; the rows
+  come from `data_ref`. Aggregate first and reference the aggregate — a chart that
+  references the raw dataset makes the reader's browser do the `groupby`.
+- **Make it interactive where it earns its keep**: a `point` select on
+  `pointerover` for hover; `{"select": "interval", "bind": "scales"}` to pan and
+  zoom a quantitative axis; an interval selection on `x` when a reader would want
+  to pick a range. Give every encoded field a `tooltip`.
+- The `title` is the sentence above the chart, and it follows the trend rule above:
+  it states the message, and never a trend the intervals do not support.
+- A spec that fails the schema comes back with the validator's message. Fix it and
+  call again **with the same `chart_id`** — that is what makes the second call a
+  correction rather than a second chart.
+- A table a reader will look *through* rather than *at* — a column profile, a check
+  table, a ranked list — goes through `show_table` on the same file.
+
 ## Output
 
 Write `report/<name>.md` and, when asked for HTML, render it with the snippet in
 `scripts/render_html.py` (markdown → self-contained HTML with embedded images).
+The charts are not in that file: they belong to the run, and the report screen
+renders them from the run's own record.

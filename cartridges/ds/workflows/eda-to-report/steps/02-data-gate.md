@@ -25,4 +25,16 @@ clearly which columns or periods are affected and what a fix would look like. An
 that does not breach a threshold but changes how the data can be read belongs in a
 "Flags" section above the verdict — that is what the analysis step will carry as caveats.
 
+**Show the checks as a table.** The person deciding this gate reads your four rows
+before answering it, so write them to `artifacts/scratch/gate-checks.csv` (check, value,
+threshold, result) and emit them with `show_table`:
+
+```
+show_table(data_ref="artifacts/scratch/gate-checks.csv",
+           title="Data gate — <n> of <n> checks")
+```
+
+That table is what the gate card shows as *what is being approved*. Write it before you
+finish, or the decision is made on the prompt alone.
+
 `data/` is read-only here. Working files go under `artifacts/scratch/`.

@@ -12,7 +12,7 @@
 
 export type RunEvent = {
   index: number;
-  name: "dsagent.step" | "dsagent.tool" | "dsagent.file" | "dsagent.note";
+  name: "dsagent.step" | "dsagent.tool" | "dsagent.file" | "dsagent.note" | "dsagent.chart";
   value: Record<string, any>;
 };
 
@@ -39,6 +39,30 @@ export type RunFile = {
 
 export type Note = { step: string; persona: string; text: string; ts: number };
 
+/**
+ * A chart or table a persona emitted — a Vega-Lite spec and the file it draws.
+ *
+ * The rows are deliberately not here: `dataUrl` is where they live, so the same
+ * card in the run screen, in a second tab and in the exported report all read
+ * one file, and a run with four charts does not carry four copies of its data
+ * through the event log.
+ */
+export type Card = {
+  chartId: string;
+  kind: "chart" | "table";
+  title: string;
+  dataRef: string;
+  dataUrl: string;
+  step: string;
+  persona: string;
+  section: string;
+  spec: Record<string, any> | null;
+  columns: string[];
+  rows: number | null;
+  version: number;
+  ts: number;
+};
+
 export type StepRow = {
   step: string;
   persona: string;
@@ -55,6 +79,8 @@ export type StepRow = {
   tools: Record<string, number>;
   /** How many tool calls are still in flight — the "is anything happening" signal. */
   running: number;
+  /** The report section this step writes into, when its workflow declares one. */
+  section: string;
   gate: GateOnStep | null;
   /** Every decision this step's gate has received, oldest first.
    *
@@ -68,6 +94,14 @@ export type StepRow = {
 export type RunView = {
   steps: StepRow[];
   files: RunFile[];
+  /**
+   * Every card the run has emitted, in emission order, one entry per `chart_id`.
+   *
+   * A second emission of the same id replaces the first *in place*: the reader is
+   * looking at a document, and a corrected chart is the same chart with a new
+   * version, not a second one further down the page.
+   */
+  cards: Card[];
   /** The step whose gate is waiting for an answer, if any. */
   gateStep: StepRow | null;
   /** The file the canvas should be showing, unless the operator pinned one. */
@@ -76,7 +110,9 @@ export type RunView = {
   cursor: number;
 };
 
-export const emptyRun: RunView = { steps: [], files: [], gateStep: null, focus: null, cursor: 0 };
+export const emptyRun: RunView = {
+  steps: [], files: [], cards: [], gateStep: null, focus: null, cursor: 0,
+};
 
 export function reduce(view: RunView, event: RunEvent): RunView {
   const next =
@@ -86,7 +122,15 @@ export function reduce(view: RunView, event: RunEvent): RunView {
         ? applyFile(view, event.value)
         : event.name === "dsagent.tool"
           ? applyTool(view, event.value)
-          : applyNote(view, event.value);
+          : event.name === "dsagent.chart"
+            ? applyCard(view, event.value)
+            : event.name === "dsagent.note"
+              ? applyNote(view, event.value)
+              // An event this build does not know is not a note. The reducer used
+              // to fall through to `applyNote`, which turned the first
+              // `dsagent.chart` of a run into a note with no text — a screen
+              // quietly wrong rather than a screen missing something.
+              : view;
   return { ...next, cursor: Math.max(view.cursor, event.index ?? 0) };
 }
 
@@ -103,6 +147,7 @@ function applyStep(view: RunView, e: Record<string, any>): RunView {
       status: e.status,
       produces: e.produces ?? [],
       matched: e.produces_matched ?? {},
+      section: e.section ?? "",
       startedAt: e.ts,
       endedAt: null,
       error: null,
@@ -115,6 +160,7 @@ function applyStep(view: RunView, e: Record<string, any>): RunView {
     return {
       ...base,
       status: e.status,
+      section: e.section ?? base.section,
       produces: e.produces ?? base.produces,
       // `started` carries empty lists by design; keeping what we had is what
       // stops a re-entered step from blanking its own history.
@@ -212,6 +258,28 @@ function applyTool(view: RunView, e: Record<string, any>): RunView {
       : row,
   );
   return { ...view, steps };
+}
+
+/** A chart or table entered the document — or replaced the version already there. */
+function applyCard(view: RunView, e: Record<string, any>): RunView {
+  const card: Card = {
+    chartId: e.chart_id,
+    kind: e.kind === "table" ? "table" : "chart",
+    title: e.title ?? "",
+    dataRef: e.data_ref ?? "",
+    dataUrl: e.data_url ?? "",
+    step: e.step ?? "",
+    persona: e.persona ?? "",
+    section: e.section ?? "",
+    spec: e.spec ?? null,
+    columns: e.columns ?? [],
+    rows: e.rows ?? null,
+    version: e.version ?? 1,
+    ts: e.ts,
+  };
+  const i = view.cards.findIndex((c) => c.chartId === card.chartId);
+  const cards = i === -1 ? [...view.cards, card] : view.cards.map((c, n) => (n === i ? card : c));
+  return { ...view, cards };
 }
 
 function applyNote(view: RunView, e: Record<string, any>): RunView {

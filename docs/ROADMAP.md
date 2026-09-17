@@ -96,6 +96,24 @@ Turning the M2.2 slice into something a stakeholder can watch for ten minutes an
 
 ## Decisions log
 
+- 2026-09-17 — A figure is a **Vega-Lite spec plus a reference to its data**, not an image.
+  `show_chart` / `show_table` (harness) validate the spec against the Vega-Lite schema with
+  altair, hand the persona the validator's own message on failure, and give up after three
+  attempts so a PNG stays available as the honest fallback. `spec["data"]` is rewritten to
+  `{"name": "table"}` on the way in: rows live in a workspace file and reach the browser
+  through the run's preview endpoint, so a model never retypes a table it already wrote.
+  Emitting the same `chart_id` twice is *version 2 of that chart*, which is what makes "ask
+  the persona to change this" a revision rather than a second chart further down the page.
+- 2026-09-17 — **altair is pinned below 6.** altair 6 carries the Vega-Lite *v6* schema and
+  the UI bundles vega-lite 5; a server validating against a grammar the renderer does not
+  speak would pass specs the reader cannot see, which is worse than not validating. altair
+  5.5 ships v5.20.1. Declared twice on purpose — in the harness's `[ui]` extra and in the ds
+  cartridge's default env — so a CLI run, which has no `[ui]`, still validates.
+- 2026-09-17 — `Step.section` is an optional **label**, not behaviour. It rides on
+  `dsagent.step` events so the document can group a step's output under a heading; the runner
+  never reads it, and a workflow that declares none still runs. That is the whole cartridge-
+  format change M2.6 needed.
+
 - 2026-09-17 — The human wait at a gate is measured from the *pending record in `run.json`*, not
   from a clock read when the answer arrives, and `RunState.gate_wait` accumulates across answers.
   Under `serve` the first `ask_human` never returns — it raises a LangGraph interrupt — and the

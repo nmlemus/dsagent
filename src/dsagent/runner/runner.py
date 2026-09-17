@@ -41,6 +41,12 @@ from typing import Any
 from dsagent.cartridge.models import Cartridge, Step, Workflow
 from dsagent.envs.base import Env, make_env
 from dsagent.models import default_model
+from dsagent.runner.charts import (
+    CHART_EVENT,
+    ChartRecord,
+    StepContext,
+    chart_tools,
+)
 
 
 class GateDecision(str, Enum):
@@ -202,6 +208,15 @@ class RunState:
     keeps only its *standing* decision: a gate sent back and later approved would
     otherwise report the second wait and forget the first, and the first is the
     one where somebody read the report and said no."""
+    charts: dict[str, dict[str, Any]] = field(default_factory=dict)
+    """Every chart and table the run has emitted, by `chart_id`, latest version.
+
+    Kept on the run rather than only in the event log because a resumed run has
+    to know that `precipitation-by-category` already exists at version 1 — that
+    is what makes a persona's correction a *second version of that chart* rather
+    than a second chart with the same title. The log keeps every version; this
+    keeps the standing one.
+    """
     gate: dict[str, Any] | None = None
     """The gate being asked right now: step, persona, prompt, produces, asked_at.
 
@@ -278,6 +293,12 @@ class WorkflowRunner:
         self._envs: dict[str, Env] = {}
         self._reported: dict[str, float] = {}
         """Workspace mtimes already announced via `dsagent.file` for the running step."""
+        self._here = StepContext()
+        """Which step the chart tools should attribute an emission to. One runner
+        drives every step of a workflow through one set of tools, so the answer
+        has to be read when a tool is called, not when it is built."""
+        self._state: RunState | None = None
+        """The run being driven, so a chart emitted mid-step is saved with it."""
 
     # ---- events -------------------------------------------------------------
 
@@ -334,6 +355,7 @@ class WorkflowRunner:
                 "env": step.env or wf.env,
                 "index": order.index(step.id),
                 "total": len(order),
+                "section": step.section or "",
                 "status": status,
                 "needs": list(step.needs),
                 "produces": list(step.produces),
@@ -407,6 +429,39 @@ class WorkflowRunner:
 
     # ---- envs ---------------------------------------------------------------
 
+    def charts(self) -> list[Any]:
+        """The chart tools, bound to this run.
+
+        Handed to every persona, in every env: emitting a chart is not something
+        a kernel does, it is something the *run* records, and a persona working
+        in a Docker env has the same report to write into.
+        """
+        return chart_tools(
+            self.workspace,
+            self.run_id,
+            on_chart=self._on_chart,
+            context=lambda: self._here,
+            known=self._known_chart,
+        )
+
+    def _known_chart(self, chart_id: str) -> ChartRecord | None:
+        stored = (self._state.charts if self._state else {}).get(chart_id)
+        return ChartRecord(**stored) if stored else None
+
+    def _on_chart(self, rec: ChartRecord) -> None:
+        """Record one emission: on the run, then in the log, then to the screen.
+
+        Order matters on a resume. `run.json` is what a re-entering runner reads
+        to decide whether this is version 1 or version 2; the event log is what
+        the document is rebuilt from; the live consumer is a browser that may not
+        be there. Writing the run first means an interrupted emission is still
+        counted.
+        """
+        if self._state is not None:
+            self._state.charts[rec.chart_id] = asdict(rec)
+            self._state.save(self.run_dir)
+        self.emit(CHART_EVENT, rec.as_event())
+
     def env_for(self, name: str) -> Env:
         if name not in self._envs:
             spec = self.cartridge.envs[name]
@@ -419,11 +474,11 @@ class WorkflowRunner:
             e.close()
         self._envs.clear()
 
-    @staticmethod
-    def _default_factory(cartridge: Cartridge, persona: str, env: Env, workspace: Path):
+    def _default_factory(self, cartridge: Cartridge, persona: str, env: Env, workspace: Path):
         from dsagent.host.build import build_persona_agent
 
-        return build_persona_agent(cartridge, persona, env, workspace)
+        return build_persona_agent(cartridge, persona, env, workspace,
+                                   extra_tools=self.charts())
 
     # ---- run ----------------------------------------------------------------
 
@@ -448,6 +503,7 @@ class WorkflowRunner:
             state = RunState(workflow=wf.name, cartridge=self.cartridge.name, inputs=inputs,
                              steps={s.id: StepRecord(id=s.id) for s in wf.steps})
         state.status = "running"
+        self._state = state
         state.save(self.run_dir)
 
         try:
@@ -506,6 +562,7 @@ class WorkflowRunner:
 
     def _run_step(self, wf: Workflow, step: Step, rec: StepRecord, state: RunState, inputs: dict[str, Any], dry_run: bool) -> None:
         env_name = step.env or wf.env
+        self._here = StepContext(step=step.id, persona=step.persona, section=step.section or "")
         rec.status, rec.started_at = "running", time.time()
         state.save(self.run_dir)
         # The step event carries this and more; `log` keeps the lines it owns

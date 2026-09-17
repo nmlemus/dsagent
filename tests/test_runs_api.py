@@ -100,7 +100,10 @@ def test_cartridges_describes_every_workflow_the_launcher_can_offer(client):
     gated = [s for s in eda["steps"] if s["gate"]]
     assert [s["id"] for s in gated] == ["data-gate"]
     assert gated[0]["gate"]["kind"] == "human"
-    assert eda["steps"][2]["produces"] == ["artifacts/findings.md", "artifacts/figures/*.png"]
+    assert eda["steps"][2]["produces"] == ["artifacts/findings.md"]
+    assert [s["section"] for s in eda["steps"]] == [
+        "The data", "Data quality", "Findings", "Report",
+    ]
 
 
 def test_an_unknown_workflow_is_refused_rather_than_started(client):

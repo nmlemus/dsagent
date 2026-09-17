@@ -721,3 +721,72 @@ Not touched, as instructed: ruff 0.16 flags four pre-existing issues in
 
 `pytest` 247 passed / 8 skipped · `ruff check src tests` · `npm run build`,
 `typecheck`, `lint` · `dsagent cartridge validate cartridges/ds`.
+
+---
+
+# M2.6 — the living report
+
+Spec: `docs/ui-living-report.md`. Visual and behavioural reference:
+`docs/mockups/living-report.html`, played end to end before a line was written —
+home, the workflows tab, the plan proposal, the document filling section by
+section, the gate card, the chart toolbar, "ask Noel to change this" (which
+returns a *second version of the same chart*, not a new one), and the drawer.
+Tasks 1–2 were delivered by M2.5; this starts at 3.
+
+## Task 3 (completed) — a figure is an object, not an image
+
+`show_chart` and `show_table`, in the harness, handed to every persona in every
+env. A persona aggregates with `run_python`, writes the aggregate to a file, and
+emits a **Vega-Lite spec plus the path of that file**. What that buys is the rest
+of the milestone: the reader can hover it, zoom it, change its mark, brush a
+range, and ask the persona who made it to change it — none of which a PNG can do.
+
+**The rows never travel through the model.** `spec["data"]` is rewritten to
+`{"name": "table"}` on the way in, and the card reads its rows from the run's own
+preview endpoint. A model that pastes 1,400 rows into a tool call is paying to
+retype a file it just wrote, and getting some of the numbers wrong on the way.
+
+**Validation is a loop.** altair carries the published Vega-Lite schema and
+compiles the spec into its object model — stricter than the schema alone, so a
+mark that does not exist fails here rather than in the reader's browser. A
+failure comes back as the validator's own message, trimmed to its first lines
+(altair prints the offending sub-schema in full, which for a chart is hundreds of
+lines of grammar read back to a model paying by the token). After three attempts
+the tool stops asking and says to write a PNG instead — research part B's
+schema-validate-then-repair result, with a budget.
+
+**Emitting the same `chart_id` twice is version 2 of that chart**, in place. The
+standing version lives in `RunState.charts` so a resumed run knows the chart
+already exists; every version lives in the event log. A *repair* is not a
+revision — nothing was shown to a reader — so a spec that failed and was fixed is
+still v1.
+
+### Decisions
+
+- **altair pinned `>=5.5,<6`.** altair 6 ships the Vega-Lite *v6* schema; the UI
+  bundles vega-lite 5. A server validating against a grammar the renderer does
+  not speak passes specs the reader cannot see. Declared in the `[ui]` extra
+  *and* in the cartridge's default env, so a CLI run — which has no `[ui]` —
+  still validates.
+- **`Step.section` is a label.** It rides on `dsagent.step` events and nothing
+  reads it. A workflow that declares no section still runs. That is the entire
+  cartridge-format change this milestone needed (spec §3.2).
+- **`analyze` no longer promises `artifacts/figures/*.png`.** Promising a PNG
+  would force every run to write one, which is the thing this task removes. The
+  eleven glob tests that used that entry as their fixture now build a one-persona
+  cartridge of their own (`tests/fakes.tiny_cartridge`): a glob is a *harness*
+  feature, and a test of the runner should not fail because a cartridge changed
+  its mind about writing images.
+- **`READERS` moved to `dsagent.tabular`.** `/preview` and `show_chart` both need
+  to read a table by extension, and the runner cannot import the FastAPI module
+  to get it.
+- **The event reducer no longer treats an unknown event as a note.** It fell
+  through to `applyNote`, so the first `dsagent.chart` of a run would have become
+  a note with no text — a screen quietly wrong rather than one missing something.
+
+### Verified
+
+`pytest` 269 passed / 8 skipped (22 new in `tests/test_charts.py`, covering the
+repair loop, versioning, workspace containment, and every interactive spec shape
+the mockup draws) · `ruff check src tests` · `dsagent cartridge validate` ·
+`npm run build`, `typecheck`, `lint`.

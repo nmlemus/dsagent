@@ -62,6 +62,14 @@ class Step(BaseModel):
     """Workflow inputs this step is shown. `None` means the ones its own
     instruction text interpolates — a step that never writes `{question}` is
     never told the question. Set it explicitly to widen or narrow that."""
+    section: str | None = None
+    """Title of the report section this step writes, if the workflow says so.
+
+    Optional, and inert when absent: a workflow that declares no sections still
+    runs, and the harness never invents one. It is a *label*, carried on the
+    step's events so the document can group what the step produced under a
+    heading — the runner does not read it, and no behaviour depends on it.
+    """
 
 
 class WorkflowInput(BaseModel):

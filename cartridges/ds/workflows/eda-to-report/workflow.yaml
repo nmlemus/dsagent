@@ -10,6 +10,7 @@ steps:
   - id: profile
     persona: marie
     instructions: steps/01-profile.md
+    section: The data
     produces: [artifacts/data-profile.md, artifacts/data-profile.json]
 
   - id: data-gate
@@ -17,6 +18,7 @@ steps:
     instructions: steps/02-data-gate.md
     needs: [profile]
     sees: []                    # works from artifacts/data-profile.json, not from inputs
+    section: Data quality
     produces: [artifacts/data-gate.md]
     gate:
       kind: human
@@ -26,11 +28,16 @@ steps:
     persona: noel
     instructions: steps/03-analyze.md
     needs: [data-gate]
-    produces: [artifacts/findings.md, "artifacts/figures/*.png"]
+    section: Findings
+    # No figure files: figures are `show_chart` emissions now, which are the run's
+    # record rather than the workspace's. A PNG is still allowed — for a PDF or a
+    # slide — but promising one would force every run to write one.
+    produces: [artifacts/findings.md]
 
   - id: report
     persona: marie
     instructions: steps/04-report.md
     needs: [analyze]
     sees: []                    # works from the three artifacts on disk
+    section: Report
     produces: [report/findings.md, report/findings.html]

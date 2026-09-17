@@ -174,8 +174,6 @@ def test_deliverables_are_the_declared_files_in_the_order_they_landed(runs_dir):
         "artifacts/data-profile.json",
         "artifacts/data-gate.md",
         "artifacts/findings.md",
-        "artifacts/figures/01.png",
-        "artifacts/figures/02.png",
         "report/findings.md",
         "report/findings.html",
     ]

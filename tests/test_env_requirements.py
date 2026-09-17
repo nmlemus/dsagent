@@ -90,7 +90,10 @@ def test_docker_env_requirements_are_validated_but_not_checked(tmp_path):
 def test_ds_cartridge_declares_what_its_skill_scripts_need():
     default = load_cartridge(DS).envs["default"]
     assert default.kind == "kernel"
-    assert default.requirements == ["pandas>=2", "matplotlib", "markdown"]
+    # `altair` is the odd one out: nothing in the cartridge draws with it. It is
+    # the Vega-Lite schema `show_chart` validates against, declared here so a CLI
+    # run — which has no `[ui]` extra — still validates a spec before recording it.
+    assert default.requirements == ["pandas>=2", "matplotlib", "markdown", "altair>=5.5,<6"]
 
 
 # --- kernel precondition -----------------------------------------------------

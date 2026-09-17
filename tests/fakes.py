@@ -7,8 +7,10 @@ no longer a filename, and one definition of the expansion beats three.
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any
 
+import yaml
 from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import AIMessage
 from langchain_core.outputs import ChatGeneration, ChatResult
@@ -80,3 +82,48 @@ class ScriptedChatModel(BaseChatModel):
         self.cursor = i + 1
         reply = self.replies[i] if i < len(self.replies) else AIMessage(content="done")
         return ChatResult(generations=[ChatGeneration(message=reply)])
+
+
+def tiny_cartridge(root, steps: list[dict[str, Any]], *, name: str = "tiny"):
+    """A one-persona cartridge on disk, loaded — a fixture for harness behaviour.
+
+    A harness test that needs a particular `produces` shape used to reach for
+    whichever step of `eda-to-report` happened to have it, which made a test of
+    the *runner* fail when the *cartridge* changed its mind about writing PNGs.
+    Declaring the shape the test is about is both clearer and stable.
+
+    `steps` are step dicts as `workflow.yaml` writes them, minus `instructions`,
+    which is generated.
+    """
+    from dsagent.cartridge import load_cartridge
+
+    root = Path(root)
+    (root / "agents").mkdir(parents=True, exist_ok=True)
+    (root / "skills" / "only").mkdir(parents=True, exist_ok=True)
+    wdir = root / "workflows" / "w"
+    (wdir / "steps").mkdir(parents=True, exist_ok=True)
+
+    (root / "agents" / "ana.md").write_text(
+        "---\nname: ana\ndescription: does the work\nskills: [only]\n---\nYou are Ana.\n"
+    )
+    (root / "skills" / "only" / "SKILL.md").write_text(
+        "---\nname: only\ndescription: the only skill\n---\n# Only\n"
+    )
+    (root / "cartridge.yaml").write_text(yaml.safe_dump({
+        "name": name, "version": "0.0.1", "description": "a cartridge for one test",
+        "personas": {"ana": {"role": "worker", "workflows": ["w"]}},
+        "skills": {"only": {"scope": "all"}},
+        "workflows": ["workflows/w"],
+        "envs": {"default": {"kind": "kernel", "requirements": []}},
+    }, sort_keys=False))
+
+    declared = []
+    for i, step in enumerate(steps):
+        rel = f"steps/{i:02d}-{step['id']}.md"
+        (wdir / rel).write_text(f"Do the work of `{step['id']}`.\n")
+        declared.append({**step, "persona": "ana", "instructions": rel})
+    (wdir / "workflow.yaml").write_text(yaml.safe_dump({
+        "name": "w", "description": "one workflow", "inputs": {"data_path": {"type": "path"}},
+        "env": "default", "steps": declared,
+    }, sort_keys=False))
+    return load_cartridge(root)

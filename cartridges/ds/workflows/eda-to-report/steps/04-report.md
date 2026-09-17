@@ -18,7 +18,12 @@ run_skill_script(skill="reports", script="render_html.py",
                  argv=["report/findings.md", "report/findings.html"])
 ```
 
-Check the HTML opens (file exists, non-empty, contains the three headline findings and the
-figures as embedded images).
+Check the HTML opens (file exists, non-empty, contains the three headline findings).
+
+**The charts are not yours to re-draw.** `analyze` emitted them with `show_chart`; they
+belong to the run, and the report screen renders them live from its record. Refer to them
+by title in the prose. Do not call `show_chart` again to copy one, and do not embed a PNG
+of it — either would put a second, staler version of the same chart in front of the
+reader.
 
 `data/` is read-only. Working files go under `artifacts/scratch/`.

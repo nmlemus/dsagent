@@ -33,7 +33,6 @@ from __future__ import annotations
 import asyncio
 import io
 import json
-import math
 import re
 import shutil
 import time
@@ -55,6 +54,7 @@ from dsagent.runs import (
     summarize,
 )
 from dsagent.serve import decision_of, resolve_run_file
+from dsagent.tabular import READERS, TableUnreadable, read_table
 
 POLL_SECONDS = 0.25
 """How often the SSE stream looks for new lines in a run's event log.
@@ -106,6 +106,7 @@ def workflow_shape(cartridge: Cartridge, name: str) -> dict[str, Any]:
                 "env": s.env or wf.env,
                 "needs": list(s.needs),
                 "produces": list(s.produces),
+                "section": s.section or "",
                 "gate": {"kind": s.gate.kind, "prompt": s.gate.prompt} if s.gate else None,
             }
             for s in steps
@@ -358,18 +359,15 @@ def add_runs_routes(
             raise HTTPException(status_code=404, detail="not found")
 
         wanted = max(1, min(rows, PREVIEW_MAX_ROWS))
-        reader = READERS.get(target.suffix.lower())
-        if reader is None:
+        if target.suffix.lower() not in READERS:
             raise HTTPException(
                 status_code=415,
                 detail=f"no preview for {target.suffix or 'a file with no extension'}",
             )
         try:
-            columns, table, total = reader(target, wanted)
-        except HTTPException:
-            raise
-        except Exception as e:
-            raise HTTPException(status_code=415, detail=f"cannot read {path}: {e}") from e
+            columns, table, total = read_table(target, wanted)
+        except TableUnreadable as e:
+            raise HTTPException(status_code=415, detail=str(e)) from e
 
         return {
             "path": path,
@@ -409,59 +407,6 @@ def add_runs_routes(
         )
 
 
-def _read_parquet(target: Path, rows: int) -> tuple[list[str], list[list[Any]], int]:
-    """Parquet, through pandas — the reader the cartridge's kernel env installs.
-
-    A server without pandas answers 415 rather than guessing; the file is still
-    downloadable, and "this server cannot read that" is a true thing to say.
-    """
-    try:
-        import pandas as pd
-    except ImportError:
-        raise HTTPException(
-            status_code=415, detail="this server has no pandas, so it cannot read parquet"
-        ) from None
-
-    frame = pd.read_parquet(target)
-    head = frame.head(rows)
-    return (
-        [str(c) for c in head.columns],
-        [[_jsonable(v) for v in record] for record in head.itertuples(index=False)],
-        int(frame.shape[0]),
-    )
-
-
-def _read_delimited(target: Path, rows: int) -> tuple[list[str], list[list[Any]], int]:
-    """Delimited text, through the stdlib, so a preview needs no dependency.
-
-    `csv` understands quoted fields containing the delimiter, which the browser's
-    own split-on-comma does not — and it counts the remaining rows without
-    holding the file in memory.
-    """
-    import csv
-
-    delimiter = "\t" if target.suffix.lower() == ".tsv" else ","
-    with target.open(newline="", encoding="utf-8", errors="replace") as fh:
-        reader = csv.reader(fh, delimiter=delimiter)
-        header = next(reader, [])
-        table: list[list[Any]] = []
-        total = 0
-        for row in reader:
-            total += 1
-            if len(table) < rows:
-                table.append(list(row))
-    return [str(c) for c in header], table, total
-
-
-READERS: dict[str, Any] = {
-    ".parquet": _read_parquet,
-    ".pq": _read_parquet,
-    ".csv": _read_delimited,
-    ".tsv": _read_delimited,
-}
-"""Extension → reader. The harness knows formats, not what they contain."""
-
-
 def _archive_members(run_dir: Path, workspace: Path, *, everything: bool) -> list[str]:
     """What goes into a run's zip, workspace-relative and in a stable order."""
     if everything:
@@ -471,19 +416,6 @@ def _archive_members(run_dir: Path, workspace: Path, *, everything: bool) -> lis
             if f.is_file() and ".dsagent" not in f.relative_to(workspace).parts
         )
     return [rel for rel in deliverables(run_dir) if (workspace / rel).is_file()]
-
-
-def _jsonable(value: Any) -> Any:
-    """One cell, as JSON. Anything exotic becomes its own repr rather than a 500."""
-    if value is None:
-        return None
-    if isinstance(value, bool | int | str):
-        return value
-    if isinstance(value, float):
-        # NaN and infinities are not JSON, and a table full of them is exactly
-        # what a data-quality preview is for.
-        return value if math.isfinite(value) else None
-    return str(value)
 
 
 def _is_replay(driver: Any) -> bool:
