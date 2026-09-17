@@ -2178,3 +2178,105 @@ body.is-resizing iframe {
   margin: var(--gap-3) 0 0;
   font-size: 13px;
 }
+
+/* --- the section's own words ----------------------------------------------- */
+
+/* The artifact the step wrote, rendered in place. Its headings step down: the
+   section already has one, and a report's `##` must not compete with it. */
+.sec-prose {
+  max-width: var(--measure);
+}
+
+.sec-prose > :first-child {
+  margin-top: 0;
+}
+
+.sec-prose h1,
+.sec-prose h2 {
+  font-size: 17px;
+  font-weight: 700;
+  margin: var(--gap-4) 0 var(--gap-2);
+}
+
+.sec-prose h3,
+.sec-prose h4 {
+  font-size: 14px;
+  font-weight: 700;
+  margin: var(--gap-3) 0 var(--gap-1);
+}
+
+.sec-prose p,
+.sec-prose li {
+  color: var(--ink-dim);
+}
+
+.sec-prose li {
+  margin-bottom: var(--gap-1);
+}
+
+.sec-prose strong {
+  color: var(--ink);
+}
+
+.sec-prose code {
+  font-family: var(--mono);
+  font-size: 12.5px;
+  background: var(--surface-sunk);
+  padding: 1px 4px;
+  border-radius: var(--radius);
+}
+
+.sec-prose table {
+  border-collapse: collapse;
+  font-size: 12.5px;
+  margin: var(--gap-2) 0 var(--gap-3);
+  display: block;
+  overflow-x: auto;
+}
+
+.sec-prose th,
+.sec-prose td {
+  border-bottom: 1px solid var(--rule);
+  padding: 5px 10px;
+  text-align: left;
+  white-space: nowrap;
+}
+
+.sec-prose th {
+  font-size: 10.5px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+}
+
+.sec-prose blockquote {
+  margin: var(--gap-2) 0;
+  padding-left: var(--gap-3);
+  border-left: 2px solid var(--rule-strong);
+  color: var(--ink-dim);
+}
+
+/* Follow-up chips: they teach what the chat is for. An empty input next to a
+   finished report is a box most people never type in. */
+.ask-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--gap-2);
+  margin: var(--gap-3) 0 0;
+}
+
+.ask-row button {
+  background: none;
+  border: 1px solid var(--rule);
+  border-radius: 999px;
+  padding: 4px 11px;
+  font: inherit;
+  font-size: 12px;
+  color: var(--ink-dim);
+  cursor: pointer;
+}
+
+.ask-row button:hover {
+  color: var(--accent);
+  border-color: var(--accent);
+}

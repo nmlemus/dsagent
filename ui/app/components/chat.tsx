@@ -1,11 +1,11 @@
 "use client";
 
-import { CopilotKit, CopilotChat, useAgentContext } from "@copilotkit/react-core/v2";
+import { CopilotChat, useAgentContext } from "@copilotkit/react-core/v2";
 import "@copilotkit/react-core/v2/styles.css";
 
 import type { RunDetail } from "../lib/api";
 
-const AGENT = "dsagent";
+import { AGENT } from "./ask";
 
 /**
  * The conversation, about this run.
@@ -18,7 +18,11 @@ const AGENT = "dsagent";
  * What ties them together is context: `useAgentContext` puts the run on screen
  * into the request, and the orchestrator has `list_run_files` / `read_run_file`,
  * so "which finding should I be most careful with?" is answered from the
- * artifacts rather than from memory (§7.9).
+ * artifacts rather than from memory (§6.10).
+ *
+ * The provider is not here: `AskProvider` wraps the whole run screen, because
+ * the document and its cards ask questions too and every answer has to land in
+ * this one conversation.
  */
 export function Chat({ runId, detail, replay }: { runId: string; detail: RunDetail | null; replay: boolean }) {
   if (replay) {
@@ -32,7 +36,7 @@ export function Chat({ runId, detail, replay }: { runId: string; detail: RunDeta
     );
   }
   return (
-    <CopilotKit runtimeUrl="/api/copilotkit" agent={AGENT} threadId={`chat:${runId}`}>
+    <>
       <RunContext runId={runId} detail={detail} />
       <section className="chat">
         <div className="chat-invite">
@@ -49,7 +53,7 @@ export function Chat({ runId, detail, replay }: { runId: string; detail: RunDeta
           }}
         />
       </section>
-    </CopilotKit>
+    </>
   );
 }
 

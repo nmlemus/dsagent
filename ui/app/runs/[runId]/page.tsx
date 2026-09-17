@@ -5,6 +5,7 @@ import dynamic from "next/dynamic";
 import { useParams } from "next/navigation";
 import { useEffect, useState } from "react";
 
+import { AskProvider } from "../../components/ask";
 import { Document } from "../../components/document";
 import { Drawer, type Detail } from "../../components/drawer";
 import { Rail } from "../../components/rail";
@@ -19,9 +20,12 @@ import { useRun } from "../../lib/use-run";
  * demo script (§6.8): what has to be quick is the steps and the document, not the
  * message box.
  */
-const Chat = dynamic(() => import("../../components/chat").then((m) => m.Chat), {
-  loading: () => <div className="chat is-loading" />,
-});
+const Chat = dynamic(
+  () => import("../../components/chat").then((m) => m.Chat),
+  {
+    loading: () => <div className="chat is-loading" />,
+  },
+);
 
 /**
  * The run screen: team rail, living document, detail drawer.
@@ -54,37 +58,40 @@ export default function RunScreen() {
   }
 
   return (
-    <div className={`run-screen${detail ? " has-drawer" : ""}`}>
-      <Rail
-        detail={run.detail}
-        steps={run.view.steps}
-        openStep={openStep}
-        onOpenStep={(step) => {
-          setOpenStep(step);
-          if (step) setDetail({ kind: "step", id: step });
-        }}
-      >
-        <Chat runId={runId} detail={run.detail} replay={replay} />
-      </Rail>
+    <AskProvider runId={runId} replay={replay}>
+      <div className={`run-screen${detail ? " has-drawer" : ""}`}>
+        <Rail
+          detail={run.detail}
+          steps={run.view.steps}
+          openStep={openStep}
+          onOpenStep={(step) => {
+            setOpenStep(step);
+            if (step) setDetail({ kind: "step", id: step });
+          }}
+        >
+          <Chat runId={runId} detail={run.detail} replay={replay} />
+        </Rail>
 
-      <Document
-        detail={run.detail}
-        view={run.view}
-        onOpen={setDetail}
-        onDecide={(decision, note) => void run.decide(decision, note)}
-        deciding={run.deciding}
-        onResume={() => void run.resume()}
-        resuming={run.resuming}
-      />
+        <Document
+          runId={runId}
+          detail={run.detail}
+          view={run.view}
+          onOpen={setDetail}
+          onDecide={(decision, note) => void run.decide(decision, note)}
+          deciding={run.deciding}
+          onResume={() => void run.resume()}
+          resuming={run.resuming}
+        />
 
-      <Drawer
-        runId={runId}
-        detail={detail}
-        view={run.view}
-        run={run.detail}
-        onClose={() => setDetail(null)}
-      />
-    </div>
+        <Drawer
+          runId={runId}
+          detail={detail}
+          view={run.view}
+          run={run.detail}
+          onClose={() => setDetail(null)}
+        />
+      </div>
+    </AskProvider>
   );
 }
 

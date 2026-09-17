@@ -867,3 +867,37 @@ the end of the milestone, when what is still referenced is settled.
 verdict at its step ("Approved after 5m 01s" — it really did wait), the rail's
 hand-offs, and the drawer open on `data-gate.md`. `pytest` 272 / 8 skipped ·
 `ruff` · `npm run build`, `typecheck`, `lint`.
+
+## Task 5 (completed) — the document says what the run wrote
+
+A section's body is **the artifact the step produced**, rendered in place: the
+first markdown file its `produces` names. `profile` wrote `data-profile.md`, the
+gate wrote `data-gate.md`, `analyze` wrote `findings.md`, `report` wrote
+`report/findings.md` — so the document is not a summary of the run written by the
+UI, it *is* the run's own words laid out as one document. The "Sources" strip
+under each section names the same path, and clicking it opens that file in the
+drawer. **Nothing on this screen says anything a persona did not write.**
+
+Which file is "the point" is the step's answer, not the UI's: `produces` is
+declared in order, and the first markdown entry is the one the cartridge put
+first. The artifact's own `#` title is dropped, because the section already has a
+heading and repeating it two lines down reads as a mistake.
+
+**Asking about a section** goes through one channel. `AskProvider` now wraps the
+whole run screen rather than just the chat panel — the document and (next task)
+its charts ask questions too, and every answer has to land in the one
+conversation at the foot of the rail. `useAsk()` returns `null` when nothing is
+listening, and every caller uses that to hide the affordance rather than offer a
+button that quietly drops what was asked: under `--replay` there are no chips at
+all, which is why `m26-t5-document.jpg` has none.
+
+Two follow-up chips per finished section. They are not decoration: an empty input
+next to a finished report is a box most people never type in, and a chip is how
+the chat says what it is for.
+
+### Verified
+
+`m26-t5-document.jpg`: the replayed run's own profile — row counts, the column
+table, time coverage, the leap-day check — rendered as section 1 of the document.
+Four sections, four prose bodies, zero ask-rows (replay). `npm run build`,
+`typecheck`, `lint`.

@@ -1,10 +1,16 @@
 "use client";
 
-import type { RunDetail } from "../lib/api";
+import { useEffect, useState } from "react";
+
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
+
+import { fileUrl, type RunDetail } from "../lib/api";
 import { duration, initial } from "../lib/format";
 import type { RunView, StepRow } from "../lib/run-state";
 import { useClock } from "../lib/use-run";
 
+import { useAsk } from "./ask";
 import { GateCard, GateVerdict } from "./gate-card";
 
 /**
@@ -21,6 +27,7 @@ import { GateCard, GateVerdict } from "./gate-card";
  * product that looks broken.
  */
 export function Document({
+  runId,
   detail,
   view,
   onOpen,
@@ -30,6 +37,7 @@ export function Document({
   resuming,
   children,
 }: {
+  runId: string;
   detail: RunDetail | null;
   view: RunView;
   /** Point the drawer at something: a file, a step, a spec. */
@@ -68,10 +76,12 @@ export function Document({
             </h2>
             {state === "pending" && <p className="sec-plan">{promise(step, section)}</p>}
             {state === "running" && step && <AtWork step={step} now={now} />}
+            {state !== "pending" && step && <Prose runId={runId} step={step} />}
             {children?.(step as StepRow, state)}
             {state === "done" && step && (
               <Sources step={step} onOpen={(id) => onOpen({ kind: "file", id })} />
             )}
+            {state === "done" && step && <AskRow step={step} section={section} />}
             {/* The decision renders **at its own step**, under the evidence it is
                 about. A gate in a side panel is a question about something the
                 reader has to go and find; a gate here is a question about the
@@ -128,6 +138,102 @@ function AtWork({ step, now }: { step: StepRow; now: number }) {
         {duration(now - step.startedAt)}
       </span>
     </div>
+  );
+}
+
+/**
+ * The section's own words — the artifact the step wrote, rendered in place.
+ *
+ * The document is not a summary of the run written by the UI: it *is* the run's
+ * artifacts, laid out as one document. `profile` wrote `data-profile.md`, the
+ * gate wrote `data-gate.md`, `analyze` wrote `findings.md` — so the section
+ * shows that file, and the "Sources" strip under it names the same path. Nothing
+ * on this screen says anything a persona did not write.
+ */
+function Prose({ runId, step }: { runId: string; step: StepRow }) {
+  const path = primary(step);
+  const [text, setText] = useState<string | null>(null);
+  const [failed, setFailed] = useState(false);
+
+  useEffect(() => {
+    if (!path) return;
+    let live = true;
+    fetch(fileUrl(runId, path))
+      .then((r) => (r.ok ? r.text() : Promise.reject(new Error(String(r.status)))))
+      .then((body) => live && setText(body))
+      .catch(() => live && setFailed(true));
+    return () => {
+      live = false;
+    };
+  }, [runId, path]);
+
+  if (!path || failed) return null;
+  // No skeleton: the file is on the same host and the section around it is
+  // already on screen. A placeholder that flashes for 40 ms is noise.
+  if (text === null) return null;
+  return (
+    <div className="sec-prose">
+      <ReactMarkdown remarkPlugins={[remarkGfm]}>{trim(text)}</ReactMarkdown>
+    </div>
+  );
+}
+
+/**
+ * The markdown deliverable a section shows: the first one the step promised.
+ *
+ * `produces` is the step's contract in the order the cartridge declared it, and
+ * a workflow that promises a report names it first — so "the first `.md`" is the
+ * step's own answer to which file is the point, not a guess by the UI.
+ */
+function primary(step: StepRow): string | null {
+  for (const entry of step.produces) {
+    const hit = (step.matched[entry] ?? []).find((p) => p.endsWith(".md"));
+    if (hit) return hit;
+  }
+  return null;
+}
+
+/**
+ * Drop the artifact's own title.
+ *
+ * The section already has a heading, put there by the workflow; the file's `#`
+ * line repeats it two lines further down. Everything below the first heading is
+ * the persona's, untouched.
+ */
+function trim(markdown: string): string {
+  const lines = markdown.split("\n");
+  const first = lines.findIndex((line) => line.trim() !== "");
+  if (first === -1 || !lines[first].startsWith("# ")) return markdown;
+  return lines.slice(first + 1).join("\n").trimStart();
+}
+
+/**
+ * Two questions worth asking about this section, and a way to ask your own.
+ *
+ * Follow-up chips are one of the patterns the research lists under "2026
+ * delight", and they earn their place here for a duller reason: they teach what
+ * this chat is for. An empty input next to a finished report is a box most
+ * people never type in.
+ */
+function AskRow({ step, section }: { step: StepRow; section: string }) {
+  const ask = useAsk();
+  if (!ask) return null;
+  const about = `In section "${section}" (step ${step.step})`;
+  return (
+    <p className="ask-row">
+      <button
+        type="button"
+        onClick={() => ask(`${about}: what should I be most careful with?`)}
+      >
+        What should I be careful with?
+      </button>
+      <button
+        type="button"
+        onClick={() => ask(`${about}: what did ${step.persona} actually do, and from which files?`)}
+      >
+        What did {step.persona} actually do?
+      </button>
+    </p>
   );
 }
 
