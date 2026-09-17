@@ -286,6 +286,10 @@ def serve(
     host: str = typer.Option("127.0.0.1", "--host"),
     port: int = typer.Option(8000, "--port"),
     seed: Path | None = typer.Option(None, "--seed", help="directory copied into each new run's workspace"),
+    recursion_limit: int = typer.Option(
+        None, "--recursion-limit",
+        help="super-steps one orchestrator turn may take (default 150; LangGraph's own is 25)",
+    ),
 ):
     """Serve the orchestrator over AG-UI for the web UI. Needs the `ui` extra."""
     try:
@@ -301,7 +305,10 @@ def serve(
 
     carts = load_cartridges(cartridge)
     env = make_env(carts[0].envs["default"], workspace)
-    application = build_app(carts, env, workspace, RUNS_DIR, model=model, seed=seed)
+    from dsagent.serve import RECURSION_LIMIT
+
+    application = build_app(carts, env, workspace, RUNS_DIR, model=model, seed=seed,
+                            recursion_limit=recursion_limit or RECURSION_LIMIT)
     console.print(
         f"[bold]dsagent serve[/bold] {__version__} · cartridges: "
         f"{', '.join(c.name for c in carts)}\n"
