@@ -1,9 +1,10 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
+import { API, type RunDetail, fileUrl } from "../lib/api";
+import { duration, money } from "../lib/format";
 import type { StepRow } from "../lib/run-state";
-import { duration } from "../lib/format";
 import { useClock } from "../lib/use-run";
 
 /**
@@ -15,11 +16,19 @@ import { useClock } from "../lib/use-run";
  * `POST /runs/{id}/gate`; the run is what holds the question, not this browser.
  */
 export function GateCard({
+  runId,
   step,
+  detail,
+  next,
   onDecide,
   busy,
 }: {
+  runId: string;
   step: StepRow;
+  /** The run, for what it has cost so far. */
+  detail: RunDetail | null;
+  /** The step this decision releases — what is actually being approved. */
+  next: { id: string; persona: string } | null;
   onDecide: (decision: "approve" | "reject", note: string) => void;
   busy: boolean;
 }) {
@@ -46,6 +55,31 @@ export function GateCard({
 
       <p className="gate-message">{gate.prompt}</p>
 
+      {/* Every approval says exactly what is approved — the third of the three
+          principles, and the one thing the research found nobody doing well.
+          Not "continue?", but: this person starts this work, on this, and it
+          will cost about this much. */}
+      <div className="gate-what">
+        <div>
+          <b>What you are approving</b>
+          {next
+            ? `That ${next.persona} starts ${next.id} on this data as it stands. `
+            : "That the run continues on this data as it stands. "}
+          {kept(step).length > 0
+            ? "The artifacts above are what they will work from."
+            : "The section above is what they will work from."}
+        </div>
+        <div>
+          <b>What it costs</b>
+          {money(detail?.cost_usd)} so far.{" "}
+          <Estimate detail={detail} />
+          <br />
+          The run is paused until you answer; waiting costs nothing.
+        </div>
+      </div>
+
+      <Diff runId={runId} step={step} />
+
       <div className="gate-actions">
         <button
           className="btn btn-primary"
@@ -71,6 +105,127 @@ export function GateCard({
       </div>
     </div>
   );
+}
+
+/**
+ * What the rest of this workflow has cost in the runs before this one.
+ *
+ * An estimate from *this* run's own history would be circular, and one from a
+ * price list would be a guess. Past runs of the same workflow are the only
+ * honest source, and when there are none the card says so rather than inventing
+ * a number — "cheap until it isn't" is the complaint the research records about
+ * every platform in this category.
+ */
+function Estimate({ detail }: { detail: RunDetail | null }) {
+  const [past, setPast] = useState<number[] | null>(null);
+  const workflow = detail?.workflow;
+
+  useEffect(() => {
+    if (!workflow) return;
+    let live = true;
+    fetch(`${API}/runs`)
+      .then((r) => (r.ok ? r.json() : Promise.reject(new Error(String(r.status)))))
+      .then((body: { runs: { workflow: string; status: string; cost_usd: number | null }[] }) => {
+        if (!live) return;
+        setPast(
+          body.runs
+            .filter((r) => r.workflow === workflow && r.status === "done" && r.cost_usd)
+            .map((r) => r.cost_usd as number),
+        );
+      })
+      .catch(() => live && setPast([]));
+    return () => {
+      live = false;
+    };
+  }, [workflow]);
+
+  if (past === null) return <>Reading what past runs cost…</>;
+  if (past.length === 0) return <>No finished run of this workflow yet, so no estimate.</>;
+  const average = past.reduce((sum, c) => sum + c, 0) / past.length;
+  return (
+    <>
+      {past.length} finished {past.length === 1 ? "run" : "runs"} of this workflow cost{" "}
+      {money(average)} in total on average.
+    </>
+  );
+}
+
+/** What the step promised and delivered — the thing being approved, by name. */
+function kept(step: StepRow): string[] {
+  return Object.values(step.matched).flat();
+}
+
+/**
+ * What changed since you sent this back.
+ *
+ * A gate asked a second time with nothing to show for it is the same question
+ * again, and answering it is guesswork. The runner keeps the refused version at
+ * the moment of rejection; this fetches both and shows the lines that differ.
+ * Nothing is diffed on a first ask, because there is nothing to diff.
+ */
+function Diff({ runId, step }: { runId: string; step: StepRow }) {
+  const previous = step.gates.filter((g) => g.decision === "reject").length;
+  const path = kept(step).find((p) => p.endsWith(".md"));
+  const [lines, setLines] = useState<{ sign: string; text: string }[] | null>(null);
+
+  useEffect(() => {
+    if (!previous || !path) return;
+    let live = true;
+    const was = `${API}/runs/${encodeURIComponent(runId)}/gate-version/` +
+      `${encodeURIComponent(step.step)}/${previous}/${path}`;
+    Promise.all([
+      fetch(was).then((r) => (r.ok ? r.text() : Promise.reject(new Error(String(r.status))))),
+      fetch(fileUrl(runId, path)).then((r) => (r.ok ? r.text() : "")),
+    ])
+      .then(([before, after]) => live && setLines(changed(before, after)))
+      .catch(() => live && setLines([]));
+    return () => {
+      live = false;
+    };
+  }, [runId, step.step, previous, path]);
+
+  if (!previous || !path) return null;
+  if (lines === null) return null;
+  return (
+    <div className="gate-diff">
+      <b className="mono">{path}</b>
+      {lines.length === 0 ? (
+        <p className="dim">
+          Nothing has changed in this file since you sent it back.
+        </p>
+      ) : (
+        <pre>
+          {lines.map((line, i) => (
+            <span key={i} className={`diff-${line.sign === "+" ? "add" : "cut"}`}>
+              {line.sign} {line.text}
+              {"\n"}
+            </span>
+          ))}
+        </pre>
+      )}
+    </div>
+  );
+}
+
+/**
+ * The lines one version has and the other does not.
+ *
+ * Set difference rather than a proper edit script: a reader wants to know what
+ * the persona added and removed, and for a markdown artifact of thirty lines
+ * that is the same answer an LCS would give, without the algorithm. Capped,
+ * because a rewritten file is a rewritten file and printing all of it teaches
+ * nobody anything.
+ */
+function changed(before: string, after: string): { sign: string; text: string }[] {
+  const was = before.split("\n").map((l) => l.trimEnd());
+  const now = after.split("\n").map((l) => l.trimEnd());
+  const wasSet = new Set(was);
+  const nowSet = new Set(now);
+  const out = [
+    ...was.filter((l) => l && !nowSet.has(l)).map((text) => ({ sign: "-", text })),
+    ...now.filter((l) => l && !wasSet.has(l)).map((text) => ({ sign: "+", text })),
+  ];
+  return out.slice(0, 20);
 }
 
 /**

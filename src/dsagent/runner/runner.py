@@ -30,6 +30,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import shutil
 import subprocess
 import time
 from collections.abc import Callable
@@ -66,6 +67,14 @@ nothing on the wire says who is talking (`docs/ui-slice.md` §4). The runner doe
 know, so it says so: attribution by construction rather than by clock, and it
 survives a reload, a second tab and a run nobody was watching, none of which a
 message stream does.
+"""
+
+GATE_VERSIONS = "gate-versions"
+"""Where a rejected gate's artifacts are kept, inside the run directory.
+
+Deliberately *outside* `workspace/`: the workspace is what the run produced and
+what its zip contains, and a copy kept so a person can see what changed is
+neither. Read back through `GET /runs/{id}/gate-version/...`.
 """
 
 EVENT_LOG = "events.jsonl"
@@ -543,7 +552,8 @@ class WorkflowRunner:
             raise ValueError(f"workflow '{wf.name}' missing required inputs: {', '.join(missing)}")
         return out
 
-    def _task_message(self, wf: Workflow, step: Step, inputs: dict[str, Any]) -> str:
+    def _task_message(self, wf: Workflow, step: Step, inputs: dict[str, Any],
+                      sent_back: GateRecord | None = None) -> str:
         raw = (wf.path / step.instructions).read_text(encoding="utf-8")
         visible = _visible_inputs(step, raw, inputs)
         instructions = _fill(raw, visible)
@@ -552,9 +562,21 @@ class WorkflowRunner:
             for p in step.produces
         ) or "- (nothing mandatory)"
         inputs_md = "\n".join(f"- {k}: {v}" for k, v in visible.items()) or "- (none)"
+        review = ""
+        if sent_back is not None:
+            note = sent_back.note.strip() or "(no note was given)"
+            review = (
+                f"## This work was sent back\n"
+                f"A person reviewed what you produced here and did not approve it. "
+                f"They said:\n\n> {note}\n\n"
+                f"Read what is already on disk, address what they raised, and rewrite the "
+                f"files below. Do not start from scratch and do not argue the point; if you "
+                f"disagree, say so in the file and change what you can.\n\n"
+            )
         return (
             f"# Workflow `{wf.name}` — step `{step.id}`\n\n"
             f"## Inputs\n{inputs_md}\n\n"
+            f"{review}"
             f"## Instructions\n{instructions}\n\n"
             f"## You must produce these files (workspace-relative)\n{produces}\n\n"
             f"Finish with a short summary of what you did and any concerns for the next step."
@@ -583,7 +605,8 @@ class WorkflowRunner:
             # `_reported`. A stale baseline would blame this step for the last
             # step's files.
             self._reported = dict(before)
-            result = self._drive(agent, self._task_message(wf, step, inputs), step)
+            sent_back = rec.gate if rec.gate and rec.gate.decision == "reject" else None
+            result = self._drive(agent, self._task_message(wf, step, inputs, sent_back), step)
             rec.output = _last_text(result)
             # Before the produces check: a step that failed is the one worth reading.
             _record_telemetry(rec, result)
@@ -768,10 +791,53 @@ class WorkflowRunner:
             self._emit_step(wf, step, rec.status, gate=_gate_event(gate.kind, prompt, rec.gate))
             return True
         state.status = "awaiting_gate"
+        superseded = self._keep_version(step)
+        # **A rejection sends the step back.** It used to leave the step `done`
+        # and simply re-ask on resume, which made "send back with a note" a
+        # pause: the persona never saw the note, nothing was rewritten, and the
+        # only way forward was to approve the same artifact you had just
+        # refused. A gate that cannot change anything is not a gate.
+        #
+        # The cost is stated rather than hidden: resuming re-runs the step, and
+        # re-running a step costs what the step costs. That is the trade a person
+        # makes when they say no.
+        rec.status = "pending"
         state.save(self.run_dir)
-        self._emit_step(wf, step, "awaiting_gate", gate=_gate_event(gate.kind, prompt, rec.gate))
+        self._emit_step(wf, step, "awaiting_gate",
+                        gate={**_gate_event(gate.kind, prompt, rec.gate),
+                              "superseded": superseded})
         self.log(f"[gate] run paused at '{step.id}'. Resume with --resume once approved.")
         return False
+
+    def _keep_version(self, step: Step) -> list[str]:
+        """Copy what the reader was looking at when they sent this gate back.
+
+        A rejection is the one moment a run has two versions of the same
+        artifact: the one that was refused, and the one the persona writes next.
+        Nothing else in the run keeps the first, so without this the question
+        "what did they change?" can only be answered by reading the new file and
+        remembering the old one. Returns the paths kept, for the gate event.
+        """
+        kept: list[str] = []
+        # Numbered by how many versions are already kept, so a gate sent back
+        # twice keeps both and neither overwrites the other.
+        base = self.run_dir / GATE_VERSIONS / step.id
+        version = len(list(base.glob("v*"))) + 1 if base.is_dir() else 1
+        root = base / f"v{version}"
+        for entry in step.produces:
+            for rel in self.matched(entry):
+                source = self.workspace / rel
+                if not source.is_file():
+                    continue
+                dest = root / rel
+                dest.parent.mkdir(parents=True, exist_ok=True)
+                try:
+                    shutil.copy2(source, dest)
+                except OSError as e:  # a copy that fails is not a run that fails
+                    self._log(f"[gate] could not keep {rel}: {e}")
+                    continue
+                kept.append(rel)
+        return kept
 
     def _auto_gate(self, wf: Workflow, step: Step, rec: StepRecord, state: RunState,
                    dry_run: bool, decided: str | None) -> bool:

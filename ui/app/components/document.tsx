@@ -101,7 +101,14 @@ export function Document({
                 reader has to go and find; a gate here is a question about the
                 paragraph above it. */}
             {step && step.status === "awaiting_gate" && !step.gate?.decision && (
-              <GateCard step={step} onDecide={onDecide} busy={deciding} />
+              <GateCard
+                runId={runId}
+                step={step}
+                detail={detail}
+                next={nextOf(planned, i)}
+                onDecide={onDecide}
+                busy={deciding}
+              />
             )}
             {step && <GateVerdict step={step} />}
             {step && step.status === "awaiting_gate" && step.gate?.decision === "reject" && (
@@ -274,6 +281,12 @@ function Sources({ step, onOpen }: { step: StepRow; onOpen: (path: string) => vo
 }
 
 type Planned = { step: StepRow | undefined; state: SectionState; section: string };
+
+/** The step a decision at `i` releases — what is actually being approved. */
+function nextOf(planned: Planned[], i: number): { id: string; persona: string } | null {
+  const after = planned[i + 1]?.step;
+  return after ? { id: after.step, persona: after.persona } : null;
+}
 
 /**
  * The document's outline: one entry per step the workflow declares, in order.

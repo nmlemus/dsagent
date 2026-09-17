@@ -103,16 +103,17 @@ def test_a_rejected_gate_pauses_the_run_and_is_recorded(mmm):
     assert FakeAgent.calls == ["ingest", "data-gate"]
 
 
-def test_re_entry_skips_done_work_but_still_asks_the_decided_gate(mmm):
-    """The whole point: the gate call happens again, the step's work does not."""
+def test_re_entry_skips_approved_work_but_still_asks_the_decided_gate(mmm):
+    """The whole point: the gate call happens again, approved work does not."""
     mmm(Answers(GateDecision.REJECT)).run("mmm-meridian", MMM_INPUTS)
     assert FakeAgent.calls == ["ingest", "data-gate"]
 
     a = Answers(GateDecision.APPROVE, GateDecision.REJECT)
     state = mmm(a).run("mmm-meridian", MMM_INPUTS, resume=True)
 
-    # `ingest` and `data-gate` did their work once, in the first entry.
-    assert FakeAgent.calls == ["ingest", "data-gate", "model-spec"]
+    # `ingest` was approved and is not redone. `data-gate` was sent back, so it
+    # is — that is what a rejection means.
+    assert FakeAgent.calls == ["ingest", "data-gate", "data-gate", "model-spec"]
     # Gate 1 was asked again — that is what keeps the interrupt sequence stable.
     assert len(a.asked) == 2
     assert "Data gate report ready" in a.asked[0]
@@ -145,9 +146,14 @@ def test_an_approved_gate_is_asked_again_but_its_answer_is_discarded(mmm):
 
 
 def test_step_status_no_longer_carries_gate_state(mmm):
-    """`status` is the work; `gate` is the decision. They are different questions."""
+    """`status` is the work; `gate` is the decision. They are different questions.
+
+    A rejected gate makes them disagree in the other direction too: the decision
+    is recorded on a step whose work is `pending` again, because saying no is
+    what sends the work back.
+    """
     state = mmm(Answers(GateDecision.REJECT)).run("mmm-meridian", MMM_INPUTS)
-    assert state.steps["data-gate"].status == "done"      # the work finished
+    assert state.steps["data-gate"].status == "pending"   # the work goes round again
     assert state.steps["data-gate"].gate.decision == "reject"
     assert state.status == "awaiting_gate"                 # the run is what is paused
 
@@ -286,7 +292,8 @@ def test_re_entry_reopens_the_same_run_and_keeps_the_finished_work(mmm, tmp_path
     assert [d.name for d in tmp_path.iterdir() if d.is_dir()] == ["run"]
     second = json.loads(run_json.read_text())
     assert second["steps"]["ingest"]["started_at"] == first["steps"]["ingest"]["started_at"]
-    assert FakeAgent.calls == ["ingest", "data-gate", "model-spec"]
+    # `ingest` is not redone; `data-gate` is, because its gate sent it back.
+    assert FakeAgent.calls == ["ingest", "data-gate", "data-gate", "model-spec"]
 
 
 def test_the_gate_request_carries_what_a_gate_card_has_to_show(mmm):

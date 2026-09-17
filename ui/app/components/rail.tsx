@@ -1,6 +1,6 @@
 "use client";
 
-import type { RunDetail } from "../lib/api";
+import type { RunDetail, StepRecord } from "../lib/api";
 import { duration, initial, money, percent, tokens } from "../lib/format";
 import type { StepRow } from "../lib/run-state";
 import { useClock } from "../lib/use-run";
@@ -57,6 +57,7 @@ export function Rail({
           <StepItem
             key={step.step}
             step={step}
+            record={detail?.steps?.[step.step] ?? null}
             open={openStep === step.step}
             onToggle={() => onOpenStep(openStep === step.step ? null : step.step)}
             next={steps[i + 1]}
@@ -132,12 +133,15 @@ function Metric({ label, value, title }: { label: string; value: string; title?:
  */
 function StepItem({
   step,
+  record,
   open,
   onToggle,
   next,
   now,
 }: {
   step: StepRow;
+  /** The run's own record of this step — cost and tokens are not events. */
+  record: StepRecord | null;
   open: boolean;
   onToggle: () => void;
   next: StepRow | undefined;
@@ -165,16 +169,17 @@ function StepItem({
           {running && " · working"}
           {waiting && " · waiting for you"}
         </p>
-        {shown && <StepDetail step={step} />}
+        {shown && <StepDetail step={step} record={record} />}
       </div>
       {step.status === "done" && next && <HandOff step={step} to={next.persona} />}
     </>
   );
 }
 
-/** What the step promised, what it has called, and what it cost. */
-function StepDetail({ step }: { step: StepRow }) {
+/** What the step promised, what it has called, what it thought, and what it cost. */
+function StepDetail({ step, record }: { step: StepRow; record: StepRecord | null }) {
   const calls = Object.entries(step.tools).sort((a, b) => b[1] - a[1]);
+  const note = step.notes.at(-1);
   return (
     <div className="rail-detail">
       {step.produces.map((entry) => {
@@ -194,6 +199,21 @@ function StepDetail({ step }: { step: StepRow }) {
               {tool} <b>{n}</b>
             </span>
           ))}
+        </p>
+      )}
+      {/* The persona's own working note, folded away. Hiding reasoning entirely
+          and dumping the whole trace are both listed as anti-patterns in the
+          research; a summary that opens is the third option. */}
+      {note && (
+        <details className="rail-narration">
+          <summary>{step.persona} — working note</summary>
+          <p>{note.text}</p>
+        </details>
+      )}
+      {(record?.cost_usd != null || record?.usage?.input_tokens) && (
+        <p className="rail-cost mono">
+          {money(record?.cost_usd ?? null)} ·{" "}
+          {tokens((record?.usage?.input_tokens ?? 0) + (record?.usage?.output_tokens ?? 0))} tokens
         </p>
       )}
       {step.error && <p className="rail-error">{step.error}</p>}

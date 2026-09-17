@@ -7,7 +7,7 @@ import pytest
 
 from dsagent.cartridge import load_cartridge
 from dsagent.envs.base import Env
-from dsagent.runner import GateDecision, RunState, WorkflowRunner
+from dsagent.runner import GateAnswer, GateDecision, RunState, WorkflowRunner
 from tests.fakes import paths_for, produces_of
 
 DS = Path(__file__).resolve().parents[1] / "cartridges" / "ds"
@@ -82,21 +82,41 @@ def test_missing_artifact_fails_step(runner_factory):
     assert state.steps["analyze"].status == "pending"
 
 
-def test_human_gate_pauses_and_resumes(runner_factory, tmp_path):
+def test_human_gate_pauses_and_sends_the_step_back(runner_factory, tmp_path):
+    """A rejection is not a pause: the step it gated is sent back to be redone.
+
+    What it costs is the point of saying no. `profile` is untouched — it was
+    never in question — but `data-gate` returns to `pending`, and resuming runs
+    it again with the reviewer's note in its prompt.
+    """
     decisions = iter([GateDecision.REJECT, GateDecision.APPROVE])
     r = runner_factory(ask=lambda p: next(decisions))
     state = r.run("eda-to-report", {"data_path": "x.csv"})
     assert state.status == "awaiting_gate"
-    # The step's *work* finished; it is the run that is waiting on the decision.
-    assert state.steps["data-gate"].status == "done"
+    assert state.steps["data-gate"].status == "pending"
     assert state.steps["data-gate"].gate.decision == "reject"
+    assert state.steps["profile"].status == "done"
     assert [c[0] for c in FakeAgent.calls] == ["marie", "marie"]
 
     state = r.run("eda-to-report", {"data_path": "x.csv"}, resume=True)
     assert state.status == "done"
-    # profile and data-gate were not re-run
-    assert [c[0] for c in FakeAgent.calls] == ["marie", "marie", "noel", "marie"]
+    # `profile` is not re-run; `data-gate` is, because it was sent back.
+    assert [c[0] for c in FakeAgent.calls] == ["marie", "marie", "marie", "noel", "marie"]
     assert state.steps["data-gate"].gate.decision == "approve"
+
+
+def test_a_step_sent_back_is_told_why(runner_factory):
+    """The note is the whole content of a rejection; without it, nothing changes."""
+    decisions = iter([GateDecision.REJECT, GateDecision.APPROVE])
+    r = runner_factory(ask=lambda p: GateAnswer(next(decisions), "check the fog rows"))
+    r.run("eda-to-report", {"data_path": "x.csv"})
+    r.run("eda-to-report", {"data_path": "x.csv"}, resume=True)
+
+    redone = [prompt for persona, prompt in FakeAgent.calls if "step `data-gate`" in prompt]
+    assert len(redone) == 2
+    assert "This work was sent back" not in redone[0]
+    assert "check the fog rows" in redone[1]
+    assert "sent back" in redone[1]
 
 
 def test_dry_run_touches_no_agent(runner_factory):

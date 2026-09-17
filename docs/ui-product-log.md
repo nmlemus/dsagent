@@ -979,3 +979,60 @@ toggle switched to `point`, and the drawer showing the spec that produced it.
 `m26-t6-pivot.jpg`: Perspective grouping the column profile, in the light theme,
 with no network. `pytest` 276 / 8 skipped · `ruff` · `dsagent cartridge validate`
 · `npm run build`, `typecheck`, `lint`.
+
+## Task 7 (completed) — the rail, and a gate that can actually change something
+
+The rail gained the two things §1.3 still owed it: each step's **working note**,
+folded away behind a summary (hiding reasoning entirely and dumping the whole
+trace are both listed as anti-patterns; a summary that opens is the third
+option), and its **cost and tokens**, read off the run record rather than the
+event log, because neither is an event.
+
+The gate card now says **exactly what is being approved**, which the research
+found nobody doing well: not "continue?", but *"that noel starts analyze on this
+data as it stands"*, with the step's own checks table rendered directly above it,
+plus *"$0.17 so far — 8 finished runs of this workflow cost $0.54 in total on
+average"*. The estimate comes from past runs of the same workflow and says so;
+with no finished run to average it says that instead of inventing a number.
+"Cheap until it isn't" is the complaint the research records about every platform
+in this category, and a made-up estimate is how you earn it.
+
+### The finding: a rejected gate was a pause, not a rejection
+
+Building the "diff on re-entry" (§1.5, §6.11) turned up the reason it could not
+exist: **a rejected gate left its step `done` and simply re-asked on resume.**
+The persona never saw the note, nothing was rewritten, and the only way forward
+was to approve the very artifact you had just refused. There was never a second
+version, because nothing produced one.
+
+So the runner changed, and this is the one behaviour change M2.6 makes to it:
+
+- **A rejection sends the step back.** `rec.status` returns to `pending`, and
+  resuming re-runs that step — and only that step; approved work is untouched.
+- **The note reaches the persona.** The step's prompt gains a *"This work was
+  sent back"* section carrying the reviewer's words, with instructions to read
+  what is on disk and address it rather than start over.
+- **The refused version is kept.** At the moment of rejection the runner copies
+  the step's delivered artifacts to `<run_dir>/gate-versions/<step>/v<n>/` —
+  outside `workspace/`, because a copy kept for a person to look at is not
+  something the run produced and does not belong in its zip. The gate event names
+  what it kept; `GET /runs/{id}/gate-version/{step}/{n}/{path}` reads it back.
+
+The cost is stated rather than hidden, on the card and in the code: resuming
+re-runs the step, and re-running a step costs what the step costs. That is the
+trade a person makes when they say no. Nothing about the runner's *contract*
+moved — the DAG, `produces`, and what a gate is are unchanged — but four existing
+tests asserted the old behaviour and now assert the new one, which is the honest
+signal that this was a real change and not a tidy-up.
+
+### Verified
+
+`m26-t7-gate.jpg`: the gate inline at `data-gate`, the nine checks above it as a
+sortable table, what is approved, what it has cost, what past runs cost, and the
+wait counting up. `pytest` 283 / 8 skipped — six new in `tests/test_gate_versions.py`
+covering the snapshot, the re-run, two rejections in a row, and a path that tries
+to climb out of the version directory · `ruff` · `dsagent cartridge validate` ·
+`npm run build`, `typecheck`, `lint`.
+
+The diff itself cannot be shown against the replay — a recording does not re-run
+a step — so it is demonstrated on a real run in §6.11.

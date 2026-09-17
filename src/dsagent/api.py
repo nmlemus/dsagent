@@ -44,6 +44,7 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import PlainTextResponse, Response, StreamingResponse
 
 from dsagent.cartridge.models import Cartridge
+from dsagent.runner.runner import GATE_VERSIONS
 from dsagent.runs import (
     deliverables,
     is_live,
@@ -377,6 +378,30 @@ def add_runs_routes(
             "total_rows": total,
             "shown_rows": len(table),
         }
+
+    @app.get("/runs/{run_id}/gate-version/{step}/{version}/{path:path}",
+             response_class=PlainTextResponse)
+    def gate_version(run_id: str, step: str, version: int, path: str) -> str:
+        """An artifact as it was when a gate was sent back.
+
+        The one thing a re-asked gate owes the person answering it: not "here is
+        the report again", but "here is what changed since you refused it". The
+        runner keeps a copy at the moment of rejection — outside the workspace,
+        because it is not something the run produced — and this is how the screen
+        reads it back to diff against what is there now.
+        """
+        run_dir = run_dir_of(run_id)
+        root = (run_dir / GATE_VERSIONS).resolve()
+        try:
+            target = (root / step / f"v{version}" / path).resolve()
+        except OSError:
+            raise HTTPException(status_code=404, detail="not found") from None
+        if not target.is_relative_to(root) or not target.is_file():
+            raise HTTPException(status_code=404, detail="not found")
+        try:
+            return target.read_text(encoding="utf-8", errors="replace")
+        except OSError as e:
+            raise HTTPException(status_code=404, detail=str(e)) from e
 
     @app.get("/runs/{run_id}/download")
     def download_all(run_id: str, everything: bool = False):
