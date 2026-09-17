@@ -23,7 +23,7 @@ Status legend: `[ ]` todo · `[~]` in progress · `[x]` done. One task per PR.
 - [x] Harness fixes from run 001: `Step.sees` (a step is shown only the inputs it interpolates), cache-token detail in telemetry, canvas observations in `docs/ui.md`
 - [x] Fix step instructions / skills based on that run — iteration 2 verified by run 002: D1–D8 all fixed, one new deviation (D9, `analyze` fitted trend lines against its own no-modeling rule) recorded in `docs/runs/eda-to-report-002.md`
 
-### M2.2 UI vertical slice (see docs/ui.md) — moved up: the product is the UI
+### M2.2 UI vertical slice (see docs/ui.md) — DONE 2026-09-16
 - [x] **Runner: stream step events instead of only `log()`** — `RunnerEvent` + `on_event` on `WorkflowRunner`, emitting `dsagent.step` / `dsagent.tool` / `dsagent.file`; personas run with `.stream()` so tool and file events arrive while the step is still working. Each step event carries `produces`, so a consumer can tell a deliverable from a working file (runs 001/002). No AG-UI dependency
 - [x] Design PR: `docs/ui-slice.md` — verified package APIs, run-inside-a-tool design, event schemas, frontend plan, PR breakdown
 - [x] Runner: stable gate-`interrupt()` sequence on re-entry (`StepRecord.gate` split from `status`) and a deterministic `run_id` derived from `tool_call_id`, with the two-gate resume test and a re-entry test asserting the same `run_dir` is reopened
@@ -35,10 +35,23 @@ Status legend: `[ ]` todo · `[~]` in progress · `[x]` done. One task per PR.
 - [x] Gate card: `useInterrupt` in the right pane — step, persona, message, `produces` links to `/runs/{id}/files/{path}`, approve/reject with a note. Verified end to end from the browser (`docs/runs/ui-gate-001.png`)
 - [x] Workflow progress render: DAG panel at the top of the canvas — per-step persona, status, live elapsed, `produces` ticks from `produces_matched`, tool counts. It also owns persona narration: a persona's assistant messages are withheld from the chat by a `messageView` rendering override and shown against their step (`docs/runs/ui-dag-001.png`)
 - [x] Runner: `produces` glob support — a pattern is a contract, satisfied by at least one match; matched files are `kind: deliverable`. `analyze` declares `artifacts/figures/*.png`
-- [ ] Run `eda-to-report` end to end from the browser; screenshot in `docs/runs/`
-- [ ] Then: A2UI panels for agent-composed views; MCP Apps later if needed
+- [x] Run `eda-to-report` end to end from the browser — `docs/runs/eda-to-report-003.md`, with the gate approved from the card and screenshots in `docs/runs/eda-to-report-003/`. $0.47 against run 002's $0.85; all four run-001 canvas observations answered
+- [ ] Then: A2UI panels for agent-composed views; MCP Apps later if needed *(deferred past M2.2 — the slice does not need them)*
 
-### M2.3 Docker env
+### M2.2.1 UX debt — from run 003, unstarted
+
+The slice works end to end; these are what an operator hits while using it. Ordered as
+`docs/runs/eda-to-report-003.md` orders them.
+
+- [ ] **A successful run ends in a red error.** `GraphRecursionError: Recursion limit of 25` on the orchestrator graph, *after* the workflow is `done` and every artifact is written, so the SSE stream closes with `RUN_ERROR` and the chat shows `terminated`. Every run does this. Needs a `recursion_limit` on the served graph — the value wants choosing, not guessing
+- [ ] **A served run leaves no readable log.** `dsagent serve` passes `log=lambda m: None`, so a run directory has `run.json` and no `runner.log`; the CLI writes one. Reading a run after the fact is worse from the browser than from the terminal
+- [ ] **`produces` ticks read ○ while the files are visibly landing.** `produces_matched` is empty on `started` by design, so mid-step the DAG row and the file list disagree in front of the operator
+- [ ] **A reload loses the run.** Canvas state is reduced from the live event stream only; refreshing mid-run shows an empty canvas while the run continues server-side, with no way to re-attach. Related: nothing outside the gate card names the run (see M4's multi-run management)
+- [ ] **The human wait is invisible.** Run 003 spent 37 s waiting for the gate decision and no surface shows it — exactly the number needed to judge whether a gate earns its cost
+- [ ] **The error toast shows a stack trace** from a minified bundle. It should name the step and the reason
+- [ ] **A failed step's presentation is unexercised.** The DAG row renders `error`, but no run has failed in the browser, so that path has never been looked at
+
+### M2.3 Docker env — next
 - [ ] `DockerBackend` integration test behind `DSAGENT_DOCKER=1` (build `envs/meridian`, `execute("python -c 'import meridian'")`)
 - [ ] Workspace bind-mount + file ownership sanity (non-root user in image)
 - [ ] Auto-gate scripts run *inside* the step env, not on the host (`_gate` currently shells out on the host)
@@ -162,3 +175,9 @@ Status legend: `[ ]` todo · `[~]` in progress · `[x]` done. One task per PR.
   starts between a step's `started` and its end is that step's. The slot was chosen over owning `CopilotChatView`
   (would mean driving input, suggestions, attachments and scroll) and over tagging in `serve` (a backend change for
   a presentation problem). Nothing about the run or the thread changes — the withheld messages still reach the model.
+- 2026-09-16 — M2.2 is done: `eda-to-report` runs end to end from the browser, gate approved from the card
+  (`docs/runs/eda-to-report-003.md`). All four canvas observations from run 001 are answered, and the run cost
+  $0.47 against 002's $0.85 — model variance in `analyze`'s turn count, not anything the milestone did. The
+  slice left seven operator-facing rough edges, tracked as M2.2.1; the first is that a successful run still
+  ends in a red `terminated` error, because the orchestrator graph exhausts LangGraph's default recursion limit
+  after the work is finished. A2UI panels are deferred past the slice. M2.3 (Docker env) is next.
