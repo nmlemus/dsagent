@@ -2,7 +2,8 @@
 
 The runner never plans. It walks `workflow.ordered_steps()`, builds (or reuses)
 the env each step declares, invokes the step's persona with the step
-instructions, verifies `produces` on disk, and handles gates:
+instructions, verifies `produces` on disk (entries may be globs), and handles
+gates:
 
 * ``human`` — calls `ask_human(prompt)`; on "no" the run stops in state
   ``awaiting_gate`` and can be resumed later with `--resume`.
@@ -221,8 +222,25 @@ class WorkflowRunner:
             },
         )
 
+    def matched(self, entry: str) -> list[str]:
+        """Workspace-relative files a `produces` entry names right now.
+
+        Empty when nothing matches, which is what both the verification and the
+        deliverable label key off. Real glob semantics via `Path.glob`, rather
+        than `fnmatch` or `PurePath.match`: those two would let
+        `figures/*.png` claim `artifacts/figures/x.png`, because one ignores the
+        separator and the other matches from the right.
+        """
+        if not is_pattern(entry):
+            return [entry] if (self.workspace / entry).is_file() else []
+        return sorted(
+            f.relative_to(self.workspace).as_posix()
+            for f in self.workspace.glob(entry)
+            if f.is_file()
+        )
+
     def _emit_files(self, step: Step, before: dict[str, float], after: dict[str, float]) -> None:
-        deliverables = set(step.produces)
+        deliverables = {p for entry in step.produces for p in self.matched(entry)}
         for f in _changed_files(before, after):
             path = f["path"]
             try:
@@ -318,7 +336,10 @@ class WorkflowRunner:
         raw = (wf.path / step.instructions).read_text(encoding="utf-8")
         visible = _visible_inputs(step, raw, inputs)
         instructions = _fill(raw, visible)
-        produces = "\n".join(f"- `{p}`" for p in step.produces) or "- (nothing mandatory)"
+        produces = "\n".join(
+            f"- `{p}` (one or more matching files)" if is_pattern(p) else f"- `{p}`"
+            for p in step.produces
+        ) or "- (nothing mandatory)"
         inputs_md = "\n".join(f"- {k}: {v}" for k, v in visible.items()) or "- (none)"
         return (
             f"# Workflow `{wf.name}` — step `{step.id}`\n\n"
@@ -354,7 +375,7 @@ class WorkflowRunner:
             rec.output = _last_text(result)
             # Before the produces check: a step that failed is the one worth reading.
             _record_telemetry(rec, result)
-            missing = [p for p in step.produces if not (self.workspace / p).exists()]
+            missing = [entry for entry in step.produces if not self.matched(entry)]
             if missing:
                 raise RuntimeError(f"step '{step.id}' did not produce: {', '.join(missing)}")
             rec.status = "done"
@@ -483,6 +504,21 @@ class WorkflowRunner:
         rec.gate = GateRecord(decision=GateDecision.APPROVE.value, note=output[-500:], ts=time.time())
         state.save(self.run_dir)
         return True
+
+
+GLOB_CHARS = "*?["
+"""What makes a `produces` entry a pattern rather than a path."""
+
+
+def is_pattern(entry: str) -> bool:
+    """True when a `produces` entry is a glob rather than a literal path.
+
+    A step that writes a variable number of files cannot name them: `analyze`
+    produced five figures in run 001 and four in run 002. `artifacts/figures/*.png`
+    declares them as a group. It is still a contract — at least one file must
+    match, or the step failed just as surely as if a named file were missing.
+    """
+    return any(c in entry for c in GLOB_CHARS)
 
 
 SKILL_MANIFEST = "/SKILL.md"

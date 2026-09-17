@@ -8,6 +8,7 @@ import pytest
 from dsagent.cartridge import load_cartridge
 from dsagent.envs.base import Env
 from dsagent.runner import GateDecision, RunState, WorkflowRunner
+from tests.fakes import paths_for, produces_of
 
 DS = Path(__file__).resolve().parents[1] / "cartridges" / "ds"
 
@@ -23,13 +24,12 @@ class FakeAgent:
     def invoke(self, payload):
         prompt = payload["messages"][0]["content"]
         FakeAgent.calls.append((self.persona, prompt))
-        for line in prompt.splitlines():
-            if line.startswith("- `") and line.endswith("`"):
-                rel = line[3:-1]
-                if rel in self.skip:
-                    continue
+        for entry in produces_of(prompt):
+            if entry in self.skip:
+                continue
+            for rel in paths_for(entry):
                 p = self.workspace / rel
-                p.mkdir(parents=True, exist_ok=True) if False else p.parent.mkdir(parents=True, exist_ok=True)
+                p.parent.mkdir(parents=True, exist_ok=True)
                 p.write_text(f"written by {self.persona}")
         return {"messages": [{"role": "assistant", "content": f"{self.persona} done"}]}
 

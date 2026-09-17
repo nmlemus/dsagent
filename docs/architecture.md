@@ -180,7 +180,7 @@ personas:
   marie: { role: "Data Analyst", skills: [reports, eda], workflows: [eda-to-report] }
 ```
 
-Step instructions are markdown, written for the persona, and are injected as the task message when the harness calls `task(persona, …)`. `produces` is verified on disk after every step; a missing artifact fails the step before the next one starts. Gates come in two kinds: `human` (a Deep Agents interrupt that surfaces over CLI/WebSocket) and `auto` (a script the harness runs in the step's env).
+Step instructions are markdown, written for the persona, and are injected as the task message when the harness calls `task(persona, …)`. `produces` is verified on disk after every step; a missing artifact fails the step before the next one starts. An entry may be a glob (`artifacts/figures/*.png`) for a step that writes a variable number of files; a pattern is satisfied by at least one match and is otherwise treated exactly like a missing file, and everything it matches counts as a deliverable. Gates come in two kinds: `human` (a Deep Agents interrupt that surfaces over CLI/WebSocket) and `auto` (a script the harness runs in the step's env).
 
 ### 3.4 Environments (`envs/*`)
 
@@ -286,7 +286,7 @@ Package name stays `datascience-agent` on PyPI with a 2.0 major; the CLI keeps `
 
 ## 8. Open questions
 
-Persona names for the MMM pair (Ana/Pablo are placeholders). Whether `produces` should support globs. How to price/meter Docker GPU time per run for the Aiuda Labs delivery engine (relevant because the v1 dogfood tracked cost per engagement).
+Persona names for the MMM pair (Ana/Pablo are placeholders). How to price/meter Docker GPU time per run for the Aiuda Labs delivery engine (relevant because the v1 dogfood tracked cost per engagement).
 
 ---
 

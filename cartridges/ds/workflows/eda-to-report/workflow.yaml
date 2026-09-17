@@ -26,7 +26,7 @@ steps:
     persona: noel
     instructions: steps/03-analyze.md
     needs: [data-gate]
-    produces: [artifacts/findings.md]
+    produces: [artifacts/findings.md, "artifacts/figures/*.png"]
 
   - id: report
     persona: marie

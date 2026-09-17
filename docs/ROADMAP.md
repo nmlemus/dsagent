@@ -34,6 +34,7 @@ Status legend: `[ ]` todo · `[~]` in progress · `[x]` done. One task per PR.
 - [x] Canvas contents: workspace files from `dsagent.file` — deliverables and working files grouped by `kind`, sandboxed iframe for `.html`, react-markdown for `.md`, `<img>` for figures, a table for `.csv/.tsv`, `<pre>` for json/text. Verified end to end (`docs/runs/ui-canvas-001.png`, `-002.png`). Parquet still has no browser reader; it links out
 - [x] Gate card: `useInterrupt` in the right pane — step, persona, message, `produces` links to `/runs/{id}/files/{path}`, approve/reject with a note. Verified end to end from the browser (`docs/runs/ui-gate-001.png`)
 - [ ] Workflow progress render: DAG with step status from `dsagent.step` events
+- [x] Runner: `produces` glob support — a pattern is a contract, satisfied by at least one match; matched files are `kind: deliverable`. `analyze` declares `artifacts/figures/*.png`
 - [ ] Run `eda-to-report` end to end from the browser; screenshot in `docs/runs/`
 - [ ] Then: A2UI panels for agent-composed views; MCP Apps later if needed
 
@@ -60,7 +61,6 @@ Status legend: `[ ]` todo · `[~]` in progress · `[x]` done. One task per PR.
 - [ ] Multi-run management in the UI (list runs, open past run, resume paused run)
 - [ ] BigQuery connector via cartridge `.mcp.json` + LangChain MCP adapters
 - [ ] Run resumability across process restarts (already in `run.json`; needs API surface)
-- [ ] Runner: `produces` glob support (`artifacts/figures/*.png`)
 - [ ] chore: `dsagent --version` prints "Missing command" (eager callback vs `no_args_is_help`)
 
 ## Decisions log
@@ -144,3 +144,11 @@ Status legend: `[ ]` todo · `[~]` in progress · `[x]` done. One task per PR.
   went straight to the HTML, and the four figures of the analyze burst appended without stealing focus — run
   001's observations 2 and 3, now enforced rather than noted. A user click pins the pane until the next step
   finishes.
+- 2026-09-16 — `produces` entries may be globs. A step that writes a variable number of files cannot name them
+  — `analyze` produced five figures in run 001 and four in run 002, so they went undeclared and the canvas
+  listed them as working files. A pattern is still a contract: at least one match or the step fails, exactly as
+  a missing literal does. Matching is `Path.glob`, not `fnmatch` (ignores the separator) or `PurePath.match`
+  (matches from the right) — either would let `figures/*.png` claim `artifacts/figures/x.png`. The step event's
+  `produces` stays unexpanded, because it is the declared contract; the `kind` on a file event is what resolves
+  it. `03-analyze.md` now asks for *between one and five* figures rather than "up to five", so the prose
+  requires what the contract enforces.
