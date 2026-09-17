@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 
-import { fileUrl } from "./gate-card";
+import { fileUrl } from "../lib/api";
 
 type Kind = "html" | "markdown" | "image" | "table" | "text" | "opaque";
 
@@ -73,24 +73,33 @@ function TextFile({ url, path, kind }: { url: string; path: string; kind: Kind }
   return <pre className="view-text">{text}</pre>;
 }
 
+/**
+ * One file's text, keyed by its URL.
+ *
+ * The URL is part of the state rather than a thing an effect resets, so
+ * switching files shows "loading" by *derivation* — a result whose `url` is not
+ * the one being asked for is simply not this file's — instead of by a setState
+ * on the way into the effect, which costs a cascading render and is what the
+ * React lint rule is pointing at.
+ */
 function useText(url: string) {
-  const [text, setText] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [loaded, setLoaded] = useState<{ url: string; text?: string; error?: string }>({
+    url: "",
+  });
 
   useEffect(() => {
     let live = true;
-    setText(null);
-    setError(null);
     fetch(url)
       .then((r) => (r.ok ? r.text() : Promise.reject(new Error(`HTTP ${r.status}`))))
-      .then((t) => live && setText(t))
-      .catch((e) => live && setError(String(e.message ?? e)));
+      .then((text) => live && setLoaded({ url, text }))
+      .catch((e) => live && setLoaded({ url, error: String(e.message ?? e) }));
     return () => {
       live = false;
     };
   }, [url]);
 
-  return { text, error };
+  const current = loaded.url === url ? loaded : null;
+  return { text: current?.text ?? null, error: current?.error ?? null };
 }
 
 const MAX_ROWS = 200;

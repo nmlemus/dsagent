@@ -198,3 +198,73 @@ driver and consumes to the end frame. The endpoint also checks
 
 The replay writes no `runner.log` (it is not the runner); `GET /runs/{id}/log`
 says so rather than 404ing. Cost per run is still `null` everywhere — §4.6, task 9.
+
+---
+
+## Task 3 — home screen, and a run restored from its log
+
+### What changed
+
+**`/` is the run list**, `/runs/<id>` the run screen, `/new` the launcher (task 4).
+The M2.2 shell — one page, chat plus canvas, state reduced from the live AG-UI
+stream — is gone. `ui/app/lib/` now holds the typed API client, the reducer, and
+the hooks; `ui/app/components/` the panels.
+
+**Everything on the run screen is reduced from `GET /runs/{id}/events`.** One
+endpoint hands over the whole backlog and then keeps streaming, so opening a
+finished run, reloading mid-run, opening a second tab and attaching to a run the
+CLI started are the same code path — §4.2's whole point, and M2.2.1 item 4.
+`EventSource` reconnects on its own and resumes from `Last-Event-ID`, which the
+server now honours.
+
+**The visual system landed here rather than in task 5**, because a home screen
+has to look like something. `tokens.css` carries §3's palette and the three
+typefaces; the run list is a ledger (mono numbers, right-aligned, hairline rules)
+rather than a stack of cards, so two runs can be compared down a column. Two
+colours the spec's four do not cover: `--fail`, a deep brick that is *not* the
+accent — orange is the primary action, and a failed step drawn in it reads as
+something to click — and navy at low alpha for secondary text and rules, so
+nothing introduces grey. Fonts are declared but not yet installed; the stacks
+fall back to system faces until task 5.
+
+**The proxy prefix moved from `/runs/*` to `/dsa/*`.** `/runs/<id>` is now a page
+in this app, and a Next rewrite on that path would proxy the run screen away to
+the API.
+
+**`npm run lint`** added (ESLint flat config, `eslint-config-next`; `next lint`
+is gone in Next 16). It found four real React-hygiene bugs, all fixed rather than
+silenced: `setState` in three effect bodies, and `Date.now()` read during render.
+The fixes are better code — the event stream accumulates into a local that the
+connection's own `onopen` publishes, the file viewer keys its fetch result by URL
+so "loading" is derived rather than assigned, and anything that counts up takes
+its time from one `useClock` hook.
+
+### The two hours that went into an iframe
+
+The report rendered as a blank white pane. The `sandbox=""` attribute looked
+guilty and was not: a hand-made iframe with the same attribute and the same URL
+painted fine, and so did the real one the moment it was moved out of its
+container. The cause was **`backdrop-filter: blur(6px)` on the sticky topbar** —
+it puts the page on a compositing path where a sandboxed iframe *elsewhere on the
+screen* loads its document and paints nothing. Removed; the comment in
+`globals.css` says why, because the next person will want a blurred header too.
+
+Two real fixes came out of the hunt anyway: the iframe now has a definite height
+(`min-height: 0` up the flex chain), and the file list shows the whole
+workspace-relative path, because `artifacts/findings.md` and `report/findings.md`
+are two different files with one basename in every run so far.
+
+### Verified
+
+`npm run build`, `npm run typecheck`, `npm run lint` clean; `pytest` 219,
+`ruff` clean. In the browser against `next build && next start` with
+`dsagent serve --replay`: the home screen lists every run this machine has,
+including the ones the CLI made (`docs/runs/ui-product/t3-home.jpg`), and a run
+opened cold rebuilds its four steps, its promises, its ten files and its report
+from `events.jsonl` alone (`t3-run-restored.jpg`).
+
+### Deferred
+
+Cost is `—` everywhere until task 9. The progress region shows two steps before
+scrolling on a 900 px window; task 6 owns that. The chat pane is a placeholder in
+replay mode, which is honest — there is no model behind a recording.

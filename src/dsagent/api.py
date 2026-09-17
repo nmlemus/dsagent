@@ -245,9 +245,14 @@ def add_runs_routes(
         (§4.2) — none of them has to have been present at the start.
         """
         run_dir = run_dir_of(run_id)
+        # A browser reconnecting an `EventSource` sends the last id it saw. Honour
+        # it, or a dropped connection replays the whole run into a screen that
+        # already has it.
+        resumed = request.headers.get("last-event-id")
+        start_at = after or (int(resumed) if (resumed or "").isdigit() else 0)
 
         async def stream():
-            cursor = after
+            cursor = start_at
             quiet = time.time()
             while True:
                 if await request.is_disconnected():

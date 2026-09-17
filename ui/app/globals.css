@@ -1,11 +1,10 @@
-:root {
-  --line: #e4e4e7;
-  --muted: #71717a;
-  --bg-panel: #fafafa;
-  color-scheme: light;
-}
+@import "./tokens.css";
 
-* {
+/* ---------------------------------------------------------------- reset ---- */
+
+*,
+*::before,
+*::after {
   box-sizing: border-box;
 }
 
@@ -13,467 +12,1025 @@ html,
 body {
   margin: 0;
   height: 100%;
-  font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
 }
 
-.shell {
-  display: grid;
-  grid-template-columns: minmax(360px, 2fr) 3fr;
-  height: 100vh;
+body {
+  background: var(--cream);
+  color: var(--ink);
+  font-family: var(--ui);
+  font-weight: 500;
+  font-size: 15px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
 }
 
-.pane-chat {
-  border-right: 1px solid var(--line);
-  min-width: 0;
+/**
+ * The cream is a flat ground; this is the one texture on it. Two very low-alpha
+ * dot layers at different pitches read as paper rather than as a pattern, and at
+ * 1.5 % they survive a screenshot without becoming a feature.
+ */
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 0;
+  background-image:
+    radial-gradient(rgba(20, 40, 80, 0.018) 1px, transparent 1px),
+    radial-gradient(rgba(232, 68, 10, 0.012) 1px, transparent 1px);
+  background-size: 22px 22px, 37px 37px;
+  background-position: 0 0, 11px 18px;
+}
+
+h1,
+h2,
+h3,
+h4 {
+  margin: 0;
+  font-weight: 700;
+  line-height: 1.2;
+}
+
+p {
+  margin: 0 0 var(--gap-3);
+}
+
+a {
+  color: var(--ink);
+  text-decoration-color: var(--rule-strong);
+  text-underline-offset: 3px;
+}
+
+a:hover {
+  text-decoration-color: var(--accent);
+}
+
+button {
+  font: inherit;
+  color: inherit;
+}
+
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+  }
+}
+
+/* ----------------------------------------------------------- primitives ---- */
+
+.mono {
+  font-family: var(--mono);
+  font-size: 0.86em;
+  font-variant-numeric: tabular-nums;
+}
+
+.dim {
+  color: var(--ink-dim);
+}
+
+.serif {
+  font-family: var(--display);
+  font-weight: 400;
+  letter-spacing: -0.01em;
+}
+
+.panel {
+  background: var(--surface);
+  border: 1px solid var(--rule);
+  border-radius: var(--radius);
+}
+
+/* Buttons: one filled accent for the primary action on a screen, outlines for
+   everything else. Nothing gets a shadow. */
+.btn {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--gap-2);
+  padding: 9px 16px;
+  border: 1px solid var(--rule-strong);
+  border-radius: var(--radius);
+  background: var(--surface);
+  color: var(--ink);
+  font-weight: 700;
+  font-size: 14px;
+  cursor: pointer;
+  transition: background 120ms ease, border-color 120ms ease;
+}
+
+.btn:hover:not(:disabled) {
+  border-color: var(--ink);
+}
+
+.btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.btn-primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+
+.btn-primary:hover:not(:disabled) {
+  background: var(--accent-sunk);
+  border-color: var(--accent-sunk);
+}
+
+.btn-quiet {
+  border-color: transparent;
+  background: transparent;
+  color: var(--ink-dim);
+  padding: 6px 10px;
+}
+
+.btn-quiet:hover:not(:disabled) {
+  background: var(--surface-sunk);
+  border-color: transparent;
+  color: var(--ink);
+}
+
+.btn-small {
+  padding: 5px 10px;
+  font-size: 13px;
+}
+
+/* Status: a dot plus a word. The dot carries the colour so the word stays
+   readable, and status colours are used for nothing else. */
+.status {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  font-weight: 700;
+  font-size: 13px;
+  white-space: nowrap;
+}
+
+.status::before {
+  content: "";
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--ink-faint);
+}
+
+.status.is-running::before {
+  background: var(--accent);
+  animation: pulse 1.8s ease-in-out infinite;
+}
+
+.status.is-done::before {
+  background: var(--ok);
+}
+
+.status.is-failed::before {
+  background: var(--fail);
+}
+
+.status.is-awaiting_gate::before {
+  background: var(--wait);
+}
+
+.status.is-stale::before {
+  background: var(--ink-faint);
+  box-shadow: inset 0 0 0 1px var(--ink-dim);
+}
+
+@keyframes pulse {
+  0%,
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.45;
+    transform: scale(0.82);
+  }
+}
+
+/* --------------------------------------------------------------- shell ----- */
+
+.app {
+  position: relative;
+  z-index: 1;
+  min-height: 100%;
   display: flex;
   flex-direction: column;
 }
 
-.pane-chat > * {
+.topbar {
+  height: var(--header);
+  display: flex;
+  align-items: center;
+  gap: var(--gap-3);
+  padding: 0 var(--gap-4);
+  border-bottom: 1px solid var(--rule);
+  /* No `backdrop-filter` here, however much a blurred bar wants to exist: it
+     puts the whole page on a compositing path where a *sandboxed* iframe
+     elsewhere on the screen loads its document and then paints nothing. The
+     report is the product's deliverable; a translucent header is not. */
+  background: var(--cream);
+  position: sticky;
+  top: 0;
+  z-index: 20;
+}
+
+.wordmark {
+  font-weight: 900;
+  font-size: 17px;
+  letter-spacing: -0.02em;
+  text-decoration: none;
+}
+
+.wordmark span {
+  color: var(--accent);
+}
+
+.topbar-spacer {
+  flex: 1;
+}
+
+.topbar-note {
+  font-size: 13px;
+  color: var(--ink-dim);
+}
+
+.page {
+  flex: 1;
+  width: 100%;
+  max-width: 1180px;
+  margin: 0 auto;
+  padding: var(--gap-6) var(--gap-4) var(--gap-6);
+}
+
+.page-head {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: var(--gap-4);
+  margin-bottom: var(--gap-5);
+}
+
+.page-title {
+  font-family: var(--display);
+  font-weight: 400;
+  font-size: 40px;
+  line-height: 1.05;
+  letter-spacing: -0.015em;
+}
+
+.page-sub {
+  color: var(--ink-dim);
+  font-size: 14px;
+  margin-top: var(--gap-1);
+  max-width: var(--measure);
+}
+
+/* ------------------------------------------------------------- ledger ----- */
+
+/* The run list is a ledger, not a stack of cards: one row per run, numbers in
+   mono and right-aligned so two runs can be compared down the column. */
+.ledger {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.ledger th {
+  text-align: left;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--ink-dim);
+  padding: 0 var(--gap-3) var(--gap-2);
+  border-bottom: 1px solid var(--rule-strong);
+  white-space: nowrap;
+}
+
+.ledger th.num,
+.ledger td.num {
+  text-align: right;
+  font-family: var(--mono);
+  font-variant-numeric: tabular-nums;
+}
+
+.ledger th.num {
+  font-family: var(--ui);
+}
+
+.ledger td {
+  padding: var(--gap-3);
+  border-bottom: 1px solid var(--rule);
+  vertical-align: middle;
+}
+
+.ledger tbody tr {
+  transition: background 100ms ease;
+}
+
+.ledger tbody tr:hover {
+  background: var(--surface);
+}
+
+.run-link {
+  display: block;
+  font-weight: 700;
+  text-decoration: none;
+}
+
+.run-link:hover {
+  text-decoration: underline;
+  text-decoration-color: var(--accent);
+}
+
+.run-dataset {
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--ink-dim);
+  margin-top: 2px;
+}
+
+/* Progress inside a row: a hairline bar that fills, not a spinner. */
+.bar {
+  width: 88px;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--rule);
+  overflow: hidden;
+}
+
+.bar > i {
+  display: block;
+  height: 100%;
+  background: var(--accent);
+  transition: width 400ms ease;
+}
+
+.bar.is-done > i {
+  background: var(--ok);
+}
+
+.bar.is-failed > i {
+  background: var(--fail);
+}
+
+/* --------------------------------------------------------------- empty ---- */
+
+.empty {
+  border: 1px dashed var(--rule-strong);
+  border-radius: var(--radius-lg);
+  padding: var(--gap-6);
+  text-align: center;
+  background: var(--surface);
+}
+
+.empty h2 {
+  font-family: var(--display);
+  font-weight: 400;
+  font-size: 26px;
+  margin-bottom: var(--gap-2);
+}
+
+.empty p {
+  color: var(--ink-dim);
+  max-width: 46ch;
+  margin: 0 auto var(--gap-4);
+}
+
+.notice {
+  border: 1px solid var(--rule-strong);
+  border-left: 3px solid var(--fail);
+  border-radius: var(--radius);
+  background: var(--fail-wash);
+  padding: var(--gap-3);
+  font-size: 14px;
+}
+
+/* ----------------------------------------------------------- run screen ---- */
+
+.run-screen {
   flex: 1;
   min-height: 0;
+  display: grid;
+  grid-template-columns: minmax(340px, 1fr) minmax(0, 1.9fr);
 }
 
-.pane-canvas {
-  background: var(--bg-panel);
+.run-pane {
+  min-width: 0;
+  min-height: 0;
   display: flex;
   flex-direction: column;
-  min-width: 0;
+  height: calc(100vh - var(--header));
 }
 
-.pane-canvas > header {
-  padding: 0.75rem 1rem;
-  border-bottom: 1px solid var(--line);
-  font-size: 0.8125rem;
-  font-weight: 600;
-  letter-spacing: 0.02em;
-  text-transform: uppercase;
-  color: var(--muted);
+.run-pane-chat {
+  border-right: 1px solid var(--rule);
+  background: var(--surface);
 }
 
-.pane-canvas > .empty {
-  flex: 1;
+.run-pane-work {
+  display: grid;
+  grid-template-rows: minmax(200px, 45%) minmax(0, 1fr);
+}
+
+.progress {
+  overflow: auto;
+  padding: var(--gap-4);
+  border-bottom: 1px solid var(--rule);
+}
+
+/* The run's own header: identity on the left, the numbers a stakeholder asks
+   about on the right, in one row that stays readable at 1024px. */
+.run-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: var(--gap-3);
+  padding-bottom: var(--gap-3);
+  border-bottom: 1px solid var(--rule);
+  margin-bottom: var(--gap-4);
+}
+
+.run-title {
+  font-size: 30px;
+  line-height: 1;
+}
+
+.run-id .mono {
+  font-size: 11px;
+}
+
+.metrics {
+  display: flex;
+  gap: var(--gap-4);
+  margin: 0;
+}
+
+.metric dt {
+  font-size: 11px;
+  color: var(--ink-dim);
+  font-weight: 700;
+}
+
+.metric dd {
+  margin: 2px 0 0;
+  font-size: 16px;
+  font-weight: 500;
+}
+
+.metric dd.is-live {
+  color: var(--accent);
+}
+
+/* --- the stepper ----------------------------------------------------------- */
+
+.stepper {
+  display: flex;
+  flex-direction: column;
+}
+
+/* A step is a row on a spine: the persona's initial is the node, and the line
+   between nodes is the hand-off. The whole DAG reads top to bottom as a relay. */
+.step {
+  display: grid;
+  grid-template-columns: 34px minmax(0, 1fr);
+  gap: var(--gap-3);
+  padding-bottom: var(--gap-4);
+}
+
+.step-spine {
+  position: relative;
+  display: flex;
+  justify-content: center;
+}
+
+.step-spine::after {
+  content: "";
+  position: absolute;
+  top: 30px;
+  bottom: -24px;
+  width: 1px;
+  background: var(--rule-strong);
+}
+
+.step:last-child .step-spine::after {
+  display: none;
+}
+
+.step-mark {
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
   display: grid;
   place-items: center;
-  padding: 2rem;
-  text-align: center;
-  color: var(--muted);
-  font-size: 0.875rem;
+  font-size: 12px;
+  font-weight: 700;
+  background: var(--surface);
+  border: 1px solid var(--rule-strong);
+  color: var(--ink-dim);
+  z-index: 1;
 }
 
-.canvas-body {
-  flex: 1;
+.step.is-started .step-mark {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: #fff;
+  box-shadow: 0 0 0 4px var(--accent-wash);
+}
+
+.step.is-done .step-mark {
+  border-color: var(--ok);
+  color: var(--ok);
+  background: var(--ok-wash);
+}
+
+.step.is-failed .step-mark {
+  border-color: var(--fail);
+  color: var(--fail);
+  background: var(--fail-wash);
+}
+
+.step.is-waiting .step-mark {
+  border-color: var(--wait);
+  color: var(--wait);
+  background: var(--wait-wash);
+}
+
+.step-head {
+  display: flex;
+  align-items: baseline;
+  gap: var(--gap-2);
+}
+
+.step-name {
+  font-size: 16px;
+}
+
+.step-persona {
+  font-size: 13px;
+}
+
+.step-elapsed {
+  margin-left: auto;
+  font-size: 12px;
+  color: var(--ink-dim);
+}
+
+.step-activity {
+  margin: 2px 0 var(--gap-2);
+  font-size: 13px;
+  display: flex;
+  align-items: center;
+  gap: var(--gap-2);
+}
+
+.working {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent);
+  animation: pulse 1.4s ease-in-out infinite;
+}
+
+/* --- promises -------------------------------------------------------------- */
+
+/* The declared contract, drawn before it is met. A tick that is still hollow is
+   the honest state of a promise, and the canvas beside it agrees because both
+   read `produces_matched`. */
+.promises {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.promises li {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--gap-2);
+  align-items: baseline;
+  font-size: 12px;
+  padding-left: 18px;
+  position: relative;
+}
+
+.promises li::before {
+  content: "";
+  position: absolute;
+  left: 2px;
+  top: 6px;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  border: 1px solid var(--ink-faint);
+}
+
+.promises li.is-met::before {
+  background: var(--ok);
+  border-color: var(--ok);
+}
+
+.promise {
+  background: none;
+  border: 0;
+  padding: 0;
+  font-size: 12px;
+  color: var(--ink-dim);
+  cursor: default;
+  text-align: left;
+}
+
+button.promise {
+  cursor: pointer;
+  color: var(--ink);
+  text-decoration: underline;
+  text-decoration-color: var(--rule-strong);
+  text-underline-offset: 2px;
+}
+
+button.promise:hover {
+  text-decoration-color: var(--accent);
+}
+
+.notes {
+  margin-top: var(--gap-2);
+}
+
+.notes-body {
+  margin-top: var(--gap-2);
+  padding-left: var(--gap-3);
+  border-left: 2px solid var(--rule);
+  font-size: 13px;
+  color: var(--ink-dim);
+  max-height: 220px;
   overflow: auto;
-  padding: 1rem;
 }
 
-/* --- gate card --- */
+.notes-body p:last-child {
+  margin-bottom: 0;
+}
+
+.step-error {
+  margin-top: var(--gap-2);
+  padding: var(--gap-2) var(--gap-3);
+  border-left: 3px solid var(--fail);
+  background: var(--fail-wash);
+  border-radius: var(--radius);
+  font-size: 13px;
+}
+
+/* --- the gate -------------------------------------------------------------- */
 
 .gate {
-  border: 1px solid var(--line);
-  border-left: 3px solid #b45309;
-  border-radius: 8px;
-  background: #fff;
-  padding: 1rem;
-  max-width: 44rem;
+  margin-top: var(--gap-3);
+  padding: var(--gap-3);
+  border: 1px solid var(--wait);
+  border-radius: var(--radius-lg);
+  background: var(--wait-wash);
 }
 
 .gate-head {
   display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  margin-bottom: 0.625rem;
+  gap: var(--gap-2);
+  align-items: flex-start;
+  margin-bottom: var(--gap-2);
 }
 
-.gate-badge {
-  background: #fef3c7;
-  color: #92400e;
-  font-size: 0.6875rem;
+.gate-mark {
+  width: 10px;
+  height: 10px;
+  margin-top: 5px;
+  border-radius: 2px;
+  background: var(--wait);
+}
+
+.gate-title {
   font-weight: 700;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-  padding: 0.125rem 0.4rem;
-  border-radius: 4px;
 }
 
-.gate-step {
-  font-family: ui-monospace, SFMono-Regular, monospace;
-  font-size: 0.875rem;
-  font-weight: 600;
-}
-
-.gate-persona {
-  color: var(--muted);
-  font-size: 0.8125rem;
+.gate-meta {
+  font-size: 11px;
+  color: var(--ink-dim);
 }
 
 .gate-message {
-  margin: 0 0 0.875rem;
-  font-size: 0.9375rem;
-  line-height: 1.5;
-}
-
-.gate-label {
-  font-size: 0.6875rem;
-  font-weight: 600;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-  color: var(--muted);
-  margin-bottom: 0.25rem;
+  margin: 0 0 var(--gap-2);
+  font-size: 14px;
 }
 
 .gate-files {
-  margin: 0 0 0.875rem;
-  padding-left: 1.1rem;
-  font-family: ui-monospace, SFMono-Regular, monospace;
-  font-size: 0.8125rem;
-}
-
-.gate-files a {
-  color: #1d4ed8;
+  list-style: none;
+  margin: 0 0 var(--gap-3);
+  padding: 0;
+  font-size: 12px;
 }
 
 .gate-note {
+  display: block;
+  font-size: 11px;
+  margin-bottom: var(--gap-3);
+}
+
+.gate-note textarea {
+  display: block;
   width: 100%;
+  margin-top: var(--gap-1);
+  padding: var(--gap-2);
   font: inherit;
-  font-size: 0.875rem;
-  padding: 0.5rem;
-  border: 1px solid var(--line);
-  border-radius: 6px;
+  font-size: 13px;
+  color: var(--ink);
+  background: var(--surface);
+  border: 1px solid var(--rule-strong);
+  border-radius: var(--radius);
   resize: vertical;
+}
+
+.gate-note textarea:focus {
+  border-color: var(--accent);
+  outline: none;
 }
 
 .gate-actions {
   display: flex;
-  gap: 0.5rem;
-  margin-top: 0.625rem;
+  gap: var(--gap-2);
 }
 
-.gate-actions button {
-  font: inherit;
-  font-size: 0.875rem;
-  font-weight: 600;
-  padding: 0.4rem 1rem;
-  border-radius: 6px;
-  border: 1px solid var(--line);
-  cursor: pointer;
+.verdict {
+  margin-top: var(--gap-2);
+  font-size: 12px;
+  padding-left: 18px;
+  position: relative;
 }
 
-.gate-actions button:disabled {
-  opacity: 0.55;
-  cursor: default;
+.verdict::before {
+  content: "";
+  position: absolute;
+  left: 2px;
+  top: 6px;
+  width: 8px;
+  height: 8px;
+  border-radius: 2px;
 }
 
-.gate-approve {
-  background: #111827;
-  color: #fff;
-  border-color: #111827;
+.verdict.is-approve::before {
+  background: var(--ok);
 }
 
-.gate-reject {
-  background: #fff;
-  color: #991b1b;
+.verdict.is-reject::before {
+  background: var(--wait);
 }
 
-.gate-run {
-  margin-top: 0.75rem;
-  font-size: 0.6875rem;
-  color: var(--muted);
-  font-family: ui-monospace, SFMono-Regular, monospace;
+.verdict-label {
+  font-weight: 700;
 }
 
-/* --- canvas --- */
-
-.canvas-gate {
-  padding: 1rem 1rem 0;
+.verdict-note {
+  margin: 2px 0 0;
+  color: var(--ink-dim);
+  font-style: italic;
 }
 
-.canvas-split {
-  flex: 1;
-  display: grid;
-  grid-template-columns: minmax(200px, 16rem) 1fr;
+/* --- the canvas ------------------------------------------------------------ */
+
+.canvas {
   min-height: 0;
+  display: grid;
+  grid-template-columns: minmax(180px, 230px) minmax(0, 1fr);
+}
+
+.canvas.is-empty {
+  display: grid;
+  place-items: center;
+  padding: var(--gap-4);
 }
 
 .canvas-files {
-  border-right: 1px solid var(--line);
   overflow: auto;
-  padding: 0.5rem 0;
+  border-right: 1px solid var(--rule);
+  padding: var(--gap-3) 0;
+  background: var(--surface);
+}
+
+.file-group-label {
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--ink-dim);
+  padding: 0 var(--gap-3) var(--gap-1);
 }
 
 .canvas-files ul {
   list-style: none;
-  margin: 0 0 0.5rem;
+  margin: 0 0 var(--gap-3);
   padding: 0;
-}
-
-.files-label {
-  font-size: 0.6875rem;
-  font-weight: 600;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-  color: var(--muted);
-  padding: 0.5rem 0.75rem 0.25rem;
 }
 
 .file {
   display: block;
   width: 100%;
   text-align: left;
-  background: none;
   border: 0;
   border-left: 2px solid transparent;
-  padding: 0.3rem 0.75rem;
+  background: none;
+  padding: 6px var(--gap-3);
   cursor: pointer;
-  font: inherit;
 }
 
 .file:hover {
-  background: #f1f1f3;
+  background: var(--surface-sunk);
 }
 
 .file.is-focused {
-  background: #fff;
-  border-left-color: #111827;
+  border-left-color: var(--accent);
+  background: var(--accent-wash);
 }
 
-.file-path {
+/* The whole workspace-relative path, because two steps can write the same
+   basename — `artifacts/findings.md` and `report/findings.md` did, in every run
+   so far. The directory is the part that tells them apart. */
+.file-name {
   display: block;
-  font-family: ui-monospace, SFMono-Regular, monospace;
-  font-size: 0.75rem;
-  word-break: break-all;
+  font-size: 11px;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
+.file-name .file-dir {
+  color: var(--ink-faint);
 }
 
 .file-meta {
   display: block;
-  font-size: 0.6875rem;
-  color: var(--muted);
+  font-size: 11px;
+  color: var(--ink-dim);
 }
 
 .canvas-view {
-  overflow: auto;
-  background: #fff;
   min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--surface);
 }
 
+.view-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--gap-3);
+  padding: var(--gap-2) var(--gap-3);
+  border-bottom: 1px solid var(--rule);
+  font-size: 12px;
+  color: var(--ink-dim);
+}
+
+/* A definite height rather than a flexible one: an iframe is a replaced element
+   and the flex algorithm alone leaves its viewport ambiguous. */
 .view-frame {
+  flex: 1 1 auto;
   width: 100%;
   height: 100%;
+  min-height: 0;
   border: 0;
+  background: #fff;
 }
 
 .view-image {
-  display: block;
   max-width: 100%;
-  margin: 1rem auto;
+  max-height: 100%;
+  margin: var(--gap-3) auto;
+  display: block;
+  object-fit: contain;
 }
 
-.view-note {
-  padding: 1rem;
-  color: var(--muted);
-  font-size: 0.875rem;
-}
-
-.view-text,
 .view-markdown,
+.view-text,
 .view-table {
-  padding: 1rem 1.25rem;
-}
-
-.view-text {
-  margin: 0;
-  font-size: 0.8125rem;
-  white-space: pre-wrap;
-  word-break: break-word;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  padding: var(--gap-4);
 }
 
 .view-markdown {
-  font-size: 0.9375rem;
-  line-height: 1.6;
-  max-width: 48rem;
+  max-width: var(--measure);
+  font-size: 14px;
 }
 
-.view-markdown h1 { font-size: 1.5rem; }
-.view-markdown h2 { font-size: 1.2rem; margin-top: 1.5rem; }
-.view-markdown h3 { font-size: 1rem; }
-.view-markdown code {
-  font-family: ui-monospace, SFMono-Regular, monospace;
-  font-size: 0.85em;
-  background: #f4f4f5;
-  padding: 0.1em 0.3em;
-  border-radius: 3px;
+.view-markdown h1,
+.view-markdown h2 {
+  font-family: var(--display);
+  font-weight: 400;
+  margin: var(--gap-4) 0 var(--gap-2);
 }
-.view-markdown pre {
-  background: #f4f4f5;
-  padding: 0.75rem;
-  border-radius: 6px;
-  overflow-x: auto;
-}
-.view-markdown pre code { background: none; padding: 0; }
 
-.view-markdown table,
-.view-table table {
+.view-markdown h1 {
+  font-size: 28px;
+}
+
+.view-markdown h2 {
+  font-size: 21px;
+}
+
+.view-markdown table {
   border-collapse: collapse;
-  font-size: 0.8125rem;
-  width: 100%;
+  font-size: 13px;
 }
 
 .view-markdown th,
 .view-markdown td,
 .view-table th,
 .view-table td {
-  border: 1px solid var(--line);
-  padding: 0.3rem 0.5rem;
+  border: 1px solid var(--rule);
+  padding: 4px 8px;
   text-align: left;
 }
 
-.view-markdown th,
-.view-table th {
-  background: var(--bg-panel);
-  font-weight: 600;
-  position: sticky;
-  top: 0;
-}
-
-.view-table {
-  overflow-x: auto;
-}
-
-.view-table td {
-  font-family: ui-monospace, SFMono-Regular, monospace;
-  white-space: nowrap;
-}
-
-/* --- DAG panel --- */
-
-.dag {
-  border-bottom: 1px solid var(--line);
-  padding: 0.5rem 0;
-  max-height: 45%;
-  overflow: auto;
-  flex: 0 0 auto;
-}
-
-.dag-step {
-  padding: 0.4rem 1rem;
-  border-left: 2px solid transparent;
-}
-
-.dag-step.is-started { border-left-color: #2563eb; background: #f8fafc; }
-.dag-step.is-awaiting_gate { border-left-color: #b45309; }
-.dag-step.is-failed { border-left-color: #b91c1c; }
-
-.dag-head {
-  display: flex;
-  align-items: baseline;
-  gap: 0.5rem;
-}
-
-.dag-mark { font-size: 0.75rem; color: var(--muted); }
-.dag-step.is-done .dag-mark { color: #15803d; }
-.dag-step.is-started .dag-mark { color: #2563eb; }
-.dag-step.is-failed .dag-mark { color: #b91c1c; }
-.dag-step.is-awaiting_gate .dag-mark { color: #b45309; }
-
-.dag-name {
-  font-family: ui-monospace, SFMono-Regular, monospace;
-  font-size: 0.8125rem;
-  font-weight: 600;
-}
-
-.dag-persona { font-size: 0.75rem; color: var(--muted); }
-
-.dag-elapsed {
-  margin-left: auto;
-  font-size: 0.6875rem;
-  color: var(--muted);
-  font-variant-numeric: tabular-nums;
-}
-
-.dag-produces {
-  list-style: none;
-  margin: 0.15rem 0 0;
-  padding: 0 0 0 1.35rem;
-}
-
-.dag-produces li {
-  display: flex;
-  gap: 0.35rem;
-  align-items: baseline;
-  flex-wrap: wrap;
-  font-size: 0.75rem;
-  line-height: 1.5;
-}
-
-.dag-tick { width: 0.75rem; color: var(--muted); }
-.dag-produces li.is-met .dag-tick { color: #15803d; }
-
-.dag-promise {
-  font-family: ui-monospace, SFMono-Regular, monospace;
-  color: var(--muted);
-}
-
-.dag-file {
-  background: none;
-  border: 0;
-  padding: 0;
-  font: inherit;
-  font-family: ui-monospace, SFMono-Regular, monospace;
-  color: #1d4ed8;
-  cursor: pointer;
-  text-align: left;
-}
-
-.dag-file:hover { text-decoration: underline; }
-
-.dag-tools {
-  padding-left: 1.35rem;
-  margin-top: 0.2rem;
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.5rem;
-  font-size: 0.6875rem;
-  color: var(--muted);
-  font-family: ui-monospace, SFMono-Regular, monospace;
-}
-
-.dag-tool b { color: #111827; font-weight: 600; }
-
-.dag-log { padding-left: 1.35rem; margin-top: 0.25rem; }
-
-.dag-log-toggle {
-  background: none;
-  border: 0;
-  padding: 0;
-  font: inherit;
-  font-size: 0.75rem;
-  color: var(--muted);
-  cursor: pointer;
-}
-
-.dag-log-toggle:hover { color: #111827; }
-
-.dag-log-body {
-  margin-top: 0.25rem;
-  padding: 0.5rem 0.75rem;
-  background: #fff;
-  border: 1px solid var(--line);
-  border-radius: 6px;
-  max-height: 14rem;
-  overflow: auto;
-}
-
-.dag-log-body p {
-  margin: 0 0 0.5rem;
-  font-size: 0.8125rem;
-  line-height: 1.5;
+.view-text {
+  font-family: var(--mono);
+  font-size: 12px;
   white-space: pre-wrap;
+  margin: 0;
 }
 
-.dag-log-body p:last-child { margin-bottom: 0; }
+.view-table table {
+  border-collapse: collapse;
+  font-family: var(--mono);
+  font-size: 11px;
+}
 
-.dag-error {
-  margin: 0.3rem 0 0 1.35rem;
-  font-size: 0.75rem;
-  color: #b91c1c;
+.view-note {
+  padding: var(--gap-4);
+  font-size: 14px;
+}
+
+/* The first ninety seconds, when the persona is working and nothing has landed. */
+.waiting {
+  text-align: center;
+  color: var(--ink-dim);
+}
+
+.waiting-mark {
+  display: grid;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  margin: 0 auto var(--gap-3);
+  border-radius: 50%;
+  background: var(--accent);
+  color: #fff;
+  font-weight: 700;
+  font-size: 17px;
+  box-shadow: 0 0 0 6px var(--accent-wash);
+  animation: pulse 2.4s ease-in-out infinite;
+}
+
+.waiting-who {
+  color: var(--ink);
+  margin-bottom: var(--gap-2);
+}
+
+.waiting-tools {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--gap-2);
+  justify-content: center;
+  font-size: 12px;
+}
+
+/* --- the chat -------------------------------------------------------------- */
+
+.chat {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.chat.is-replay {
+  padding: var(--gap-4);
+  font-size: 14px;
+}
+
+@media (max-width: 1100px) {
+  .run-screen {
+    grid-template-columns: minmax(300px, 1fr) minmax(0, 1.4fr);
+  }
+
+  .metrics {
+    gap: var(--gap-3);
+  }
 }

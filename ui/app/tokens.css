@@ -1,0 +1,114 @@
+/**
+ * The Aiuda Labs skin, as tokens. `docs/ui-product.md` §3 fixes the palette and
+ * the three typefaces; everything else here is the smallest set of decisions
+ * needed to use them consistently.
+ *
+ * Two additions the spec's four colours do not cover, both deliberate:
+ * `--fail`, a deep brick that is not the accent — orange is the primary action,
+ * and a failed step drawn in it would read as something to click; and `--ink-dim`
+ * / `--rule`, navy at low alpha, so secondary text and hairlines stay in the same
+ * hue family instead of introducing grey.
+ */
+
+:root {
+  /* ground and surfaces */
+  --cream: #faf8f4;
+  --surface: #fffdf9;
+  --surface-sunk: #f4f1ea;
+
+  /* ink */
+  --ink: #142850;
+  --ink-dim: rgba(20, 40, 80, 0.62);
+  --ink-faint: rgba(20, 40, 80, 0.38);
+  --rule: rgba(20, 40, 80, 0.12);
+  --rule-strong: rgba(20, 40, 80, 0.24);
+
+  /* one accent, used for primary actions and the step that is running */
+  --accent: #e8440a;
+  --accent-sunk: #c73a09;
+  --accent-wash: rgba(232, 68, 10, 0.08);
+
+  /* status, and nothing else */
+  --ok: #0a7b5a;
+  --ok-wash: rgba(10, 123, 90, 0.1);
+  --fail: #8c1d18;
+  --fail-wash: rgba(140, 29, 24, 0.08);
+  --wait: #9a6b00;
+  --wait-wash: rgba(154, 107, 0, 0.1);
+
+  /* type */
+  --ui: "Satoshi", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --display: "Instrument Serif", "Iowan Old Style", Georgia, serif;
+  --mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+
+  /* an 8-pt scale, named by use rather than by size */
+  --gap-1: 4px;
+  --gap-2: 8px;
+  --gap-3: 16px;
+  --gap-4: 24px;
+  --gap-5: 32px;
+  --gap-6: 48px;
+
+  --radius: 3px;
+  --radius-lg: 6px;
+
+  /* the shell: how wide a reading column gets, and the header's height */
+  --measure: 68ch;
+  --header: 56px;
+
+  color-scheme: light;
+}
+
+/**
+ * Self-hosted, because client data is on the screen and a font request is a
+ * request to somebody else's server with this page's URL on it. Files live in
+ * `ui/public/fonts`; the stack above falls back to system faces if one is
+ * missing, so a checkout without them is plain rather than broken.
+ */
+@font-face {
+  font-family: "Satoshi";
+  src: url("/fonts/Satoshi-Medium.woff2") format("woff2");
+  font-weight: 500;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "Satoshi";
+  src: url("/fonts/Satoshi-Bold.woff2") format("woff2");
+  font-weight: 700;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "Satoshi";
+  src: url("/fonts/Satoshi-Black.woff2") format("woff2");
+  font-weight: 900;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "Instrument Serif";
+  src: url("/fonts/InstrumentSerif-Regular.woff2") format("woff2");
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "JetBrains Mono";
+  src: url("/fonts/JetBrainsMono-Regular.woff2") format("woff2");
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "JetBrains Mono";
+  src: url("/fonts/JetBrainsMono-Medium.woff2") format("woff2");
+  font-weight: 500;
+  font-style: normal;
+  font-display: swap;
+}

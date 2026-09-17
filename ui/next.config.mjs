@@ -1,20 +1,21 @@
 /**
- * The run workspace is proxied, not fetched cross-origin.
+ * The agent server is proxied, not fetched cross-origin.
  *
  * The canvas reads `.md` and `.csv` with `fetch`, which is subject to CORS —
- * `<iframe>` and `<img>` are not, which is why the first version of the canvas
- * showed images and failed on text with "Failed to fetch". Rewriting `/runs/*`
- * onto `dsagent serve` makes every artifact same-origin, so nothing has to be
- * relaxed on the Python side and there is no CORS policy to get wrong later.
+ * `<iframe>` and `<img>` are not, which is why the first canvas showed figures and
+ * failed on text with "Failed to fetch". Rewriting onto `dsagent serve` makes
+ * every artifact and every API call same-origin, so nothing has to be relaxed on
+ * the Python side and there is no CORS policy to get wrong later.
  *
- * The report iframe keeps `sandbox=""`, which denies same-origin access anyway.
+ * The prefix is `/dsa` and not `/runs`, because `/runs/<id>` is a *page* in this
+ * app: a rewrite on that path would proxy the run screen away to the API.
  */
 const DSAGENT_ORIGIN = process.env.DSAGENT_ORIGIN ?? "http://localhost:8000";
 
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   async rewrites() {
-    return [{ source: "/runs/:path*", destination: `${DSAGENT_ORIGIN}/runs/:path*` }];
+    return [{ source: "/dsa/:path*", destination: `${DSAGENT_ORIGIN}/:path*` }];
   },
 };
 
