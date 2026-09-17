@@ -16,10 +16,30 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Annotated, Any
 
+from langchain_core.runnables.config import ensure_config
 from langchain_core.tools import InjectedToolCallId, tool
 
 from dsagent.cartridge.models import Cartridge
 from dsagent.runner.runner import GateDecision, GateRequest, RunnerEvent, WorkflowRunner
+
+RUN_ID_KEY = "dsagent_run_id"
+"""`configurable` key naming the run directory one invocation must use.
+
+The launcher creates a run directory *before* the orchestrator is asked to run
+anything — that is where the uploaded dataset lands and what the browser has a
+URL for — so the id cannot be minted inside the tool that run. It travels in the
+graph config, which the server controls and replays unchanged on a resume, rather
+than through the model, which would make the name of a directory a thing a model
+could get wrong.
+
+Read with `ensure_config()`, **not** with a `config: RunnableConfig` parameter.
+This module has `from __future__ import annotations`, so that parameter's
+annotation is the *string* `"RunnableConfig | None"`, LangChain does not
+recognise it as the config injection, and the tool is handed `None` — silently,
+with the run then landing in a directory named after the tool call and the
+launcher's uploaded dataset nowhere near it. Probed both ways on
+langchain-core 1.6.3.
+"""
 
 
 def workflow_run_id(workflow: str, tool_call_id: str = "") -> str:
@@ -53,7 +73,13 @@ def workflow_tools(
     log: Callable[[str], None] = lambda m: None,
     seed: Path | None = None,
 ) -> list[Any]:
-    """`[list_workflows, run_workflow]`, bound to one front end's gate and events.
+    """The workflow and run-reading tools, bound to one front end's gate and events.
+
+    `list_workflows` and `run_workflow` start work; `list_run_files` and
+    `read_run_file` are how the orchestrator answers a question about a run that
+    has already happened ("which finding should I be most careful with?"). Its own
+    file tools are rooted in the chat workspace, and a run lives in its own
+    directory, so without these it can only repeat what the tool result said.
 
     `seed` is a directory copied into a *new* run's workspace before the first
     step. It exists because a run directory is named after the tool call, so
@@ -83,7 +109,8 @@ def workflow_tools(
         """Run a cartridge workflow end to end. `inputs` is a dict matching the workflow's declared inputs."""
         if name not in by_wf:
             return f"unknown workflow {name}; use list_workflows"
-        run_dir = runs_dir / workflow_run_id(name, tool_call_id)
+        given = (ensure_config().get("configurable") or {}).get(RUN_ID_KEY)
+        run_dir = runs_dir / (given or workflow_run_id(name, tool_call_id))
         resume = (run_dir / "run.json").exists()
         runner = WorkflowRunner(
             by_wf[name], run_dir, ask_human=ask_human, log=log, on_event=on_event,
@@ -102,4 +129,61 @@ def workflow_tools(
             "gates": {k: v.gate.decision for k, v in state.steps.items() if v.gate},
         })
 
-    return [list_workflows, run_workflow]
+    @tool
+    def list_run_files(run_id: str) -> str:
+        """List the files a run produced, deliverables first. `run_id` names a run directory."""
+        workspace = (runs_dir / run_id / "workspace").resolve()
+        if not workspace.is_dir():
+            return f"unknown run {run_id}"
+        declared = set(_deliverables(runs_dir / run_id))
+        files = sorted(
+            f.relative_to(workspace).as_posix()
+            for f in workspace.rglob("*")
+            if f.is_file() and ".dsagent" not in f.relative_to(workspace).parts
+        )
+        if not files:
+            return f"run {run_id} has written nothing yet"
+        return "\n".join(
+            f"- {p}" + (" (deliverable)" if p in declared else "") for p in files
+        )
+
+    @tool
+    def read_run_file(run_id: str, path: str, max_chars: int = 20000) -> str:
+        """Read a text file from a run's workspace. Use `list_run_files` first to see what there is."""
+        target = _resolve_in_workspace(runs_dir, run_id, path)
+        if target is None:
+            return f"no such file in run {run_id}: {path}"
+        try:
+            text = target.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            return f"{path} is not readable as text ({target.stat().st_size} bytes)"
+        if len(text) > max_chars:
+            return text[:max_chars] + f"\n… truncated at {max_chars} of {len(text)} chars"
+        return text
+
+    return [list_workflows, run_workflow, list_run_files, read_run_file]
+
+
+def _deliverables(run_dir: Path) -> list[str]:
+    from dsagent.runs import deliverables
+
+    return deliverables(run_dir)
+
+
+def _resolve_in_workspace(runs_dir: Path, run_id: str, rel: str) -> Path | None:
+    """A run-workspace path that is really inside that workspace, or None.
+
+    The same rule the files endpoint applies, for the same reason: a run id and a
+    path both arrive from outside — there, from a URL; here, from a model — and
+    neither may be allowed to walk out of the run it names.
+    """
+    if not run_id or "/" in run_id or "\\" in run_id or run_id in (".", ".."):
+        return None
+    workspace = (runs_dir / run_id / "workspace").resolve()
+    try:
+        target = (workspace / rel).resolve()
+    except OSError:
+        return None
+    if not target.is_relative_to(workspace) or ".dsagent" in target.relative_to(workspace).parts:
+        return None
+    return target if target.is_file() else None

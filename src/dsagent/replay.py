@@ -61,13 +61,17 @@ class Replay:
     def workflow(self) -> str:
         return self.source.get("workflow", "")
 
-    def create(self, run_id: str, inputs: dict[str, Any]) -> Path:
+    def create(self, run_id: str, inputs: dict[str, Any], workflow: str = "") -> Path:
         """A run directory in `pending`, with the recorded inputs filled in.
 
         Whatever the launcher uploaded stays where it put it; the replay only
         adds the files the recording says the run wrote, and the recorded
         `data/` file is one of them.
         """
+        if workflow and workflow != self.workflow:
+            raise ReplayError(
+                f"this fixture replays '{self.workflow}'; nothing else can be started in replay mode"
+            )
         run_dir = self.runs_dir / run_id
         (run_dir / "workspace").mkdir(parents=True, exist_ok=True)
         state = RunState(

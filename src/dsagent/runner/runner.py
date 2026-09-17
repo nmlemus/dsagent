@@ -414,9 +414,21 @@ class WorkflowRunner:
 
     def run(self, workflow_name: str, inputs: dict[str, Any] | None = None, *, resume: bool = False, dry_run: bool = False) -> RunState:
         wf = self.cartridge.workflows[workflow_name]
-        inputs = self._resolve_inputs(wf, inputs or {})
-        if resume and (self.run_dir / "run.json").exists():
-            state = RunState.load(self.run_dir)
+        state = (
+            RunState.load(self.run_dir)
+            if resume and (self.run_dir / "run.json").exists()
+            else None
+        )
+        # A run keeps the inputs it started with, and they are resolved *after*
+        # the recorded ones are merged in — a re-entering caller is the
+        # accident-prone half. `--resume` without the original `-i`, or a
+        # re-executed tool call where a model retypes them, would otherwise fail
+        # validation for an input the run directory has recorded all along. Under
+        # `dsagent serve` this is what keeps the launcher's form, rather than the
+        # model, authoritative about what the run is running on.
+        inputs = self._resolve_inputs(wf, {**(inputs or {}), **(state.inputs if state else {})})
+        if state is not None:
+            state.inputs = inputs
         else:
             state = RunState(workflow=wf.name, cartridge=self.cartridge.name, inputs=inputs,
                              steps={s.id: StepRecord(id=s.id) for s in wf.steps})

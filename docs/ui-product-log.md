@@ -97,3 +97,104 @@ matching the schema fails the suite.
 
 The `--replay` CLI flag lands with task 2: the flag is meaningless until the run
 endpoints exist, and dead code in between would be worse than one commit's wait.
+
+---
+
+## Task 2 — the runs API, and who owns a run
+
+### The decision this task turned on
+
+**A run belongs to the server, not to the tab that started it.** `POST /runs`
+creates the directory, `POST /runs/{id}/start` sets the orchestrator going on a
+background thread, and the browser follows `events.jsonl` over SSE and answers
+gates over HTTP. It is a viewer.
+
+§4.1 asks for exactly this and §4.2 explains why: reload, a second tab, and a
+CLI-started run all have to show the same screen, and none of them can if the run
+only exists inside one browser's event stream. §7.6 and §7.11 are the same
+requirement with the page and the server killed respectively.
+
+The run still goes *through* the orchestrator — the path the chat takes, as §4.1
+says — so the run exists in a thread that can be asked about afterwards. The only
+thing the server decides for it is which directory to write to.
+
+### What changed
+
+- **`src/dsagent/api.py`** — `GET /cartridges`, `GET|POST /runs`,
+  `GET /runs/{id}`, `PUT /runs/{id}/data/{input}`, `POST /runs/{id}/start`,
+  `POST /runs/{id}/gate`, `GET /runs/{id}/events` (SSE) + `/events.json`,
+  `GET /runs/{id}/log`. Its own module rather than more of `serve.py`, and for a
+  reason worth writing down: FastAPI resolves route annotations against the
+  *module* globals, so importing `Request` inside the function that registers the
+  routes made every route take `request` as a query parameter (422, "Field
+  required"). `api.py` is only imported from `build_app`, which already requires
+  the `[ui]` extra, so FastAPI is a plain module-level import here.
+- **`src/dsagent/driver.py`** — `GraphDriver`: one background thread per run,
+  `answer_gate` resuming the graph with `Command(resume=…)`, and `_mark_failed`
+  so a failure *outside* the runner (no credentials, a graph that gave up) still
+  lands in `run.json` instead of leaving the screen spinning. `Replay` implements
+  the same three methods, which is what `--replay` swaps in.
+- **`dsagent serve --replay <fixture> [--replay-speed]`** — every route identical,
+  no model loaded, no agent endpoint mounted.
+- **Run-reading tools for the orchestrator** — `list_run_files(run_id)` and
+  `read_run_file(run_id, path)`. Its own file tools are rooted in the chat
+  workspace; a run lives in its own directory. Without these, §7.9 ("which finding
+  should I be most careful with?") could only be answered from the sentence the
+  tool result returned.
+
+### Three traps, each found by a test
+
+**`config: RunnableConfig` does not work under `from __future__ import annotations`.**
+The run id travels to `run_workflow` in the graph config. Declared as a parameter,
+the annotation is the *string* `"RunnableConfig | None"`, LangChain does not
+recognise the injection, and the tool is handed `None` — silently. The run then
+lands in a directory named after the tool call, with the operator's uploaded
+dataset sitting in a different one. `ensure_config()` reads it correctly; probed
+both ways on langchain-core 1.6.3.
+
+**Inputs were resolved before the recorded ones were merged in.** A re-entering
+caller — `--resume` without the original `-i`, or a model retyping `inputs={}` —
+failed validation for an input the run directory had recorded all along. A run now
+keeps the inputs it started with, and they are resolved after the merge. This is
+also what makes the launcher's form, rather than the model, authoritative.
+
+**The gate note was dropped in serve mode.** `interrupt_gate` returned a bare
+decision, so "reject, because the fog rows look wrong" reached `run.json` as
+"reject". §7.10 asks for that note in the step's history.
+
+### Uploads are a raw-body `PUT`, not multipart
+
+`PUT /runs/{id}/data/{input}` with the file as the body. Multipart would mean
+adding `python-multipart`, and `CLAUDE.md` says not to add a dependency without
+asking — for a form with exactly one file in it, when a drag-and-drop already has
+the `File` in hand (`fetch(url, {method: "PUT", body: file})`). The input name is
+in the path, so a workflow declaring two datasets needs no new convention, and the
+filename is sanitised to its last segment and `[A-Za-z0-9-_.]`.
+
+If multipart is wanted later it is a one-line dependency and a small route change.
+
+### Verified
+
+`pytest` 219 passed / 7 skipped, `ruff` clean, `dsagent cartridge validate` green.
+New: 18 tests in `tests/test_runs_api.py` (driven against a replayed run through
+`TestClient`) and 9 in `tests/test_driver.py` (the real `create_deep_agent` graph
+with a stub model and fake personas — the run lands in the launcher's directory,
+the form beats the model, the gate is answered from outside the asking thread, a
+rejection resumes, a failure outside the runner reaches `run.json`).
+
+End to end by hand against `dsagent serve --replay … --replay-speed 20`: create →
+upload 48 kB CSV → start → the run parks at `data-gate` after two steps → approve
+over HTTP → finishes in 47 s with 116 events, 560 k tokens carried over from the
+recording, and `report/findings.html` served at 272 kB.
+
+**A note on `TestClient` and SSE.** A `client.post(...)` issued while that same
+client holds an open stream deadlocks — one portal, one request at a time — and so
+does breaking out of a stream early. Both are test-harness artifacts, not server
+behaviour, but they cost an hour: the stream test now answers its gate through the
+driver and consumes to the end frame. The endpoint also checks
+`request.is_disconnected()`, which is what a real client hanging up looks like.
+
+### Deferred
+
+The replay writes no `runner.log` (it is not the runner); `GET /runs/{id}/log`
+says so rather than 404ing. Cost per run is still `null` everywhere — §4.6, task 9.

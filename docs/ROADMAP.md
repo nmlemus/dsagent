@@ -59,7 +59,7 @@ Turning the M2.2 slice into something a stakeholder can watch for ten minutes an
 - [x] Replay fixture + replay engine: the runner writes `events.jsonl` and `runner.log`
       per run, a gate is announced before it is asked, persona narration becomes
       `dsagent.note`, and `ui/fixtures/run-eda-003` replays run 003 at 10× with no model
-- [ ] Runs API + event-log SSE (§4.1, §4.2) and `dsagent serve --replay`
+- [x] Runs API + event-log SSE (§4.1, §4.2) and `dsagent serve --replay`
 - [ ] Home screen + run restore on load
 - [ ] Launcher: cartridges endpoint, upload, form from declared inputs, start
 - [ ] Run screen layout + the Aiuda visual system
@@ -95,6 +95,32 @@ Turning the M2.2 slice into something a stakeholder can watch for ten minutes an
 - [ ] chore: `dsagent --version` prints "Missing command" (eager callback vs `no_args_is_help`)
 
 ## Decisions log
+
+- 2026-09-17 — A run belongs to the server, not to the browser tab that started it. `POST /runs`
+  creates the directory, `POST /runs/{id}/start` drives the orchestrator on a background thread,
+  and the browser follows `events.jsonl` over SSE and answers gates over `POST /runs/{id}/gate`.
+  Reload, a second tab and a CLI-started run cannot show the same screen if the run exists only
+  inside one browser's event stream (`docs/ui-product.md` §4.2, §7.6, §7.11). The run still goes
+  through the orchestrator — the path the chat takes — so it exists in a thread that can be asked
+  about afterwards; the only thing the server decides for it is which directory it writes to.
+- 2026-09-17 — The run id travels to `run_workflow` in the graph config (`dsagent_run_id`), read
+  with `ensure_config()` and **not** with a `config: RunnableConfig` parameter. Under
+  `from __future__ import annotations` that parameter's annotation is a string, LangChain does not
+  recognise the injection, and the tool is silently handed `None` — the run then lands in a
+  directory named after the tool call while the operator's uploaded dataset sits in another.
+  Probed both ways on langchain-core 1.6.3.
+- 2026-09-17 — A run keeps the inputs it started with: on resume they are merged from `run.json`
+  *before* validation, not after. A re-entering caller is the accident-prone half — `--resume`
+  without the original `-i`, or a model retyping `inputs={}` — and this is what makes the
+  launcher's form, rather than the model, authoritative about what a run is running on.
+- 2026-09-17 — File uploads are a raw-body `PUT /runs/{id}/data/{input}`, not multipart. Multipart
+  means adding `python-multipart` for a form with one file in it, and a drag-and-drop already has
+  the `File` in hand. The input name is in the path, so a workflow with two datasets needs no new
+  convention. Revisit if a form ever needs several files in one request.
+- 2026-09-17 — The runs API lives in `src/dsagent/api.py`, not in `serve.py`. FastAPI resolves route
+  annotations against module globals, so importing `Request` inside the registering function made
+  every route take `request` as a query parameter (422 "Field required"). `api.py` is imported only
+  from `build_app`, which already requires the `[ui]` extra.
 
 - 2026-09-17 — The runner writes `<run_dir>/events.jsonl` and `<run_dir>/runner.log` itself,
   rather than leaving both to whichever front end drove the run. `dsagent serve` passed

@@ -54,6 +54,13 @@ class RunSummary:
     """Seconds this run spent waiting for a human, summed over its gates."""
     awaiting: dict[str, Any] | None = None
     """The gate being asked right now, if any — step, prompt, produces, asked_at."""
+    live: bool = False
+    """Whether a process is actually standing behind this run at the moment.
+
+    `run.json` records what the run was doing, not whether anyone is still doing
+    it: a run whose server was killed mid-step reads `running` forever. The
+    driver owns the threads, so the API fills this in — a spinner that never
+    stops is worse than "this run was interrupted"."""
     error: str | None = None
 
     def dict(self) -> dict[str, Any]:

@@ -290,6 +290,11 @@ def serve(
         None, "--recursion-limit",
         help="super-steps one orchestrator turn may take (default 150; LangGraph's own is 25)",
     ),
+    replay: Path | None = typer.Option(
+        None, "--replay",
+        help="serve a recorded run instead of a model (see tools/make_replay_fixture.py)",
+    ),
+    replay_speed: float = typer.Option(10.0, "--replay-speed", help="playback multiplier"),
 ):
     """Serve the orchestrator over AG-UI for the web UI. Needs the `ui` extra."""
     try:
@@ -304,16 +309,20 @@ def serve(
     from dsagent.envs import make_env
 
     carts = load_cartridges(cartridge)
-    env = make_env(carts[0].envs["default"], workspace)
+    # A replay serves a recording: no model, and so no env to run anything in.
+    env = None if replay else make_env(carts[0].envs["default"], workspace)
     from dsagent.serve import RECURSION_LIMIT
 
     application = build_app(carts, env, workspace, RUNS_DIR, model=model, seed=seed,
-                            recursion_limit=recursion_limit or RECURSION_LIMIT)
+                            recursion_limit=recursion_limit or RECURSION_LIMIT,
+                            replay=replay, replay_speed=replay_speed)
+    mode = f"[yellow]replay[/yellow] {replay} at {replay_speed:g}×" if replay else "live"
     console.print(
         f"[bold]dsagent serve[/bold] {__version__} · cartridges: "
-        f"{', '.join(c.name for c in carts)}\n"
-        f"  agent  http://{host}:{port}/agent\n"
-        f"  files  http://{host}:{port}/runs/{{run_id}}/files/{{path}}"
+        f"{', '.join(c.name for c in carts)} · {mode}\n"
+        f"  runs   http://{host}:{port}/runs\n"
+        + ("" if replay else f"  agent  http://{host}:{port}/agent\n")
+        + f"  files  http://{host}:{port}/runs/{{run_id}}/files/{{path}}"
     )
     uvicorn.run(application, host=host, port=port)
 
