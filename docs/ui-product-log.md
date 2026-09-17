@@ -561,3 +561,27 @@ from a replayed run match run 003's published table line by line — profile
 $0.065, data-gate $0.054, analyze $0.241 — and the home screen shows **$0.47**
 against the run, with "—" against the older ones that were never priced
 (`docs/runs/ui-product/t9-home-costed.jpg`).
+
+---
+
+## Task 10 — the demo, and where it stops
+
+`docs/runs/ui-product/DEMO.md` walks §7 line by line. **Eight of the twelve are
+verified**, against `dsagent serve --replay`, which serves the same API, the same
+event stream and the same screens — it differs only in what drives the run.
+
+Four lines a recording cannot honestly stand in for, and they are the ones that
+need `ANTHROPIC_API_KEY`:
+
+- **§7.3** — a real `profile` step reporting itself inside five seconds.
+- **§7.7** — a real run ending without an error, which is M2.2.1 item 1 end to end.
+- **§7.9** — the orchestrator answering a question from the run's artifacts.
+- **§7.11** — a real server killed at a gate and restarted.
+
+Three runs finish them: one clean, one rejected-then-resumed, one killed at its
+gate. About $1.50 of a six-run budget, **none of which has been spent** — the
+whole milestone was built against run 003's own recording.
+
+Everything else is done and pushed. The branch is `m25-ui-product`, nine commits,
+`pytest` 235 / 8 skipped, `ruff`, `npm run build|typecheck|lint` and
+`dsagent cartridge validate` all green.
