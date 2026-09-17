@@ -76,3 +76,33 @@ def test_in_memory_loses_the_gate_with_the_process(tmp_path):
     # resume. That is the operator coming back to a question nobody is holding.
     second = checkpointer_for(tmp_path, memory=True)
     assert _gated_graph(second).invoke(Command(resume={"decision": "approve"}), config=config) is None
+
+
+def test_the_sync_saver_refuses_an_async_consumer(tmp_path):
+    """Why the run driver and the AG-UI bridge cannot share one SQLite saver.
+
+    This is the error that ended the first real demo chat message:
+    `NotImplementedError: The SqliteSaver does not support async methods`. The
+    bridge streams with `astream_events`; the driver invokes synchronously. One
+    saver cannot serve both, and `InMemorySaver` implements both — which is how
+    the mismatch stayed hidden through every test until then.
+    """
+    import asyncio
+
+    graph = _gated_graph(checkpointer_for(tmp_path))
+
+    async def stream():
+        return [e async for e in graph.astream_events({"steps": []},
+                                                      config={"configurable": {"thread_id": "t"}})]
+
+    with pytest.raises(NotImplementedError, match="async"):
+        asyncio.run(stream())
+
+    # …and the in-memory saver, which the chat keeps, serves it happily
+    memory_graph = _gated_graph(checkpointer_for(tmp_path, memory=True))
+
+    async def memory_stream():
+        return [e async for e in memory_graph.astream_events(
+            {"steps": []}, config={"configurable": {"thread_id": "t"}})]
+
+    assert asyncio.run(memory_stream())

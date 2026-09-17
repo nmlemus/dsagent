@@ -193,3 +193,29 @@ def test_resuming_appends_to_the_same_log(runs_dir):
         if (e["value"].get("gate") or {}).get("decision") == "reject"
     ]
     assert rejections
+
+
+def test_the_wait_is_a_total_across_every_answer(runs_dir):
+    """A gate sent back and then approved waited twice, and both count.
+
+    A step keeps only its standing decision, so summing the step records reports
+    the second wait and forgets the first — and the first is the one where
+    somebody read the report and said no.
+    """
+    import time
+
+    def slow_reject(request):
+        time.sleep(0.15)
+        return GateAnswer(GateDecision.REJECT, "look again")
+
+    def slow_approve(request):
+        time.sleep(0.1)
+        return GateDecision.APPROVE
+
+    run_dir, _ = drive(runs_dir, "twice", ask=slow_reject)
+    assert summarize(run_dir).gate_wait >= 0.15
+
+    drive(runs_dir, "twice", ask=slow_approve, resume=True)
+    s = summarize(run_dir)
+    assert s.status == "done"
+    assert s.gate_wait >= 0.25, f"both waits must count, got {s.gate_wait}"

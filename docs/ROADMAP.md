@@ -38,20 +38,20 @@ Status legend: `[ ]` todo · `[~]` in progress · `[x]` done. One task per PR.
 - [x] Run `eda-to-report` end to end from the browser — `docs/runs/eda-to-report-003.md`, with the gate approved from the card and screenshots in `docs/runs/eda-to-report-003/`. $0.47 against run 002's $0.85; all four run-001 canvas observations answered
 - [ ] Then: A2UI panels for agent-composed views; MCP Apps later if needed *(deferred past M2.2 — the slice does not need them)*
 
-### M2.2.1 UX debt — from run 003, unstarted
+### M2.2.1 UX debt — from run 003; all seven closed in M2.5
 
 The slice works end to end; these are what an operator hits while using it. Ordered as
 `docs/runs/eda-to-report-003.md` orders them.
 
 - [x] **A successful run ends in a red error.** Fixed: the served graph runs at `recursion_limit=150` (`dsagent serve --recursion-limit` to change it). The limit is per invocation and applies to the orchestrator alone — a persona is compiled with `checkpointer=False` and spends its own budget. Measured: ~3 super-steps fixed plus ~2 per model↔tool round, and `CopilotKitMiddleware` adds an `after_model` node to each round, so LangGraph's default 25 buys about ten rounds
-- [ ] **A served run leaves no readable log.** `dsagent serve` passes `log=lambda m: None`, so a run directory has `run.json` and no `runner.log`; the CLI writes one. Reading a run after the fact is worse from the browser than from the terminal
-- [ ] **`produces` ticks read ○ while the files are visibly landing.** `produces_matched` is empty on `started` by design, so mid-step the DAG row and the file list disagree in front of the operator
-- [ ] **A reload loses the run.** Canvas state is reduced from the live event stream only; refreshing mid-run shows an empty canvas while the run continues server-side, with no way to re-attach. Related: nothing outside the gate card names the run (see M4's multi-run management)
-- [ ] **The human wait is invisible.** Run 003 spent 37 s waiting for the gate decision and no surface shows it — exactly the number needed to judge whether a gate earns its cost
-- [ ] **The error toast shows a stack trace** from a minified bundle. It should name the step and the reason
-- [ ] **A failed step's presentation is unexercised.** The DAG row renders `error`, but no run has failed in the browser, so that path has never been looked at
+- [x] **A served run leaves no readable log.** `dsagent serve` passes `log=lambda m: None`, so a run directory has `run.json` and no `runner.log`; the CLI writes one. Reading a run after the fact is worse from the browser than from the terminal
+- [x] **`produces` ticks read ○ while the files are visibly landing.** `produces_matched` is empty on `started` by design, so mid-step the DAG row and the file list disagree in front of the operator
+- [x] **A reload loses the run.** Canvas state is reduced from the live event stream only; refreshing mid-run shows an empty canvas while the run continues server-side, with no way to re-attach. Related: nothing outside the gate card names the run (see M4's multi-run management)
+- [x] **The human wait is invisible.** Run 003 spent 37 s waiting for the gate decision and no surface shows it — exactly the number needed to judge whether a gate earns its cost
+- [x] **The error toast shows a stack trace** from a minified bundle. It should name the step and the reason
+- [x] **A failed step's presentation is unexercised.** The DAG row renders `error`, but no run has failed in the browser, so that path has never been looked at
 
-### M2.5 UI product pass (see docs/ui-product.md) — in progress on `m25-ui-product`
+### M2.5 UI product pass (see docs/ui-product.md) — DONE 2026-09-17 (PR #75)
 
 Turning the M2.2 slice into something a stakeholder can watch for ten minutes and want.
 §7 of the spec is the exit condition; `docs/ui-product-log.md` is the working log.
@@ -60,14 +60,14 @@ Turning the M2.2 slice into something a stakeholder can watch for ten minutes an
       per run, a gate is announced before it is asked, persona narration becomes
       `dsagent.note`, and `ui/fixtures/run-eda-003` replays run 003 at 10× with no model
 - [x] Runs API + event-log SSE (§4.1, §4.2) and `dsagent serve --replay`
-- [ ] Home screen + run restore on load
-- [ ] Launcher: cartridges endpoint, upload, form from declared inputs, start
-- [ ] Run screen layout + the Aiuda visual system
-- [ ] Progress region: stepper, header metrics, inline gate card, narration
-- [ ] Canvas: parquet preview, interactive HTML, downloads, zip
-- [ ] Failure / reject / resume presentation
-- [ ] SQLite checkpointer + cost in telemetry (§4.3, §4.6)
-- [ ] Demo script run, evidence, `docs/runs/ui-product/DEMO.md`, PR
+- [x] Home screen + run restore on load
+- [x] Launcher: cartridges endpoint, upload, form from declared inputs, start
+- [x] Run screen layout + the Aiuda visual system
+- [x] Progress region: stepper, header metrics, inline gate card, narration
+- [x] Canvas: parquet preview, interactive HTML, downloads, zip
+- [x] Failure / reject / resume presentation
+- [x] SQLite checkpointer + cost in telemetry (§4.3, §4.6)
+- [x] Demo script run, evidence, `docs/runs/ui-product/DEMO.md`, PR
 
 ### M2.3 Docker env — next
 - [ ] `DockerBackend` integration test behind `DSAGENT_DOCKER=1` (build `envs/meridian`, `execute("python -c 'import meridian'")`)
@@ -95,6 +95,22 @@ Turning the M2.2 slice into something a stakeholder can watch for ten minutes an
 - [ ] chore: `dsagent --version` prints "Missing command" (eager callback vs `no_args_is_help`)
 
 ## Decisions log
+
+- 2026-09-17 — The human wait at a gate is measured from the *pending record in `run.json`*, not
+  from a clock read when the answer arrives, and `RunState.gate_wait` accumulates across answers.
+  Under `serve` the first `ask_human` never returns — it raises a LangGraph interrupt — and the
+  tool re-executes on resume, so reading the clock there measured the resume and every gate
+  reported 0 s (M2.2.1 item 5, closed in the CLI and the replay but not in the product). A step
+  keeps only its standing decision, so a gate sent back and later approved would also forget the
+  first wait, which is the one where somebody read the report and said no.
+- 2026-09-17 — The run driver and the AG-UI bridge take **different checkpointers** over the same
+  server: `SqliteSaver` for the driver (sync `.invoke`) and `InMemorySaver` for the bridge (async
+  `astream_events`). LangGraph's SQLite savers implement one calling style each, and
+  `AsyncSqliteSaver` cannot be constructed outside a running event loop — an app is built before
+  uvicorn has one. `InMemorySaver` implements both, which is why nothing caught the mismatch until
+  the first real chat message raised "does not support async methods". What it costs, stated: a run
+  started *from the chat* still loses its gate on a restart; a run started from the launcher does
+  not. Giving the chat the same durability means building the agent inside the server's lifespan.
 
 - 2026-09-17 — A run belongs to the server, not to the browser tab that started it. `POST /runs`
   creates the directory, `POST /runs/{id}/start` drives the orchestrator on a background thread,

@@ -172,6 +172,10 @@ class Replay:
 
         rec = state.steps[value["step"]]
         rec.gate = GateRecord(decision=decision.value, note=note, ts=decided_at, asked_at=asked_at)
+        # The same running total a real run keeps: a step records only its
+        # standing decision, so the wait before a rejection would otherwise be
+        # forgotten when the gate is later approved.
+        state.gate_wait = round(state.gate_wait + max(0.0, decided_at - asked_at), 3)
         state.gate = None
         state.status = "running" if decision is GateDecision.APPROVE else "awaiting_gate"
         state.save(run_dir)

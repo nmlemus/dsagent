@@ -166,28 +166,51 @@ def build_app(
         from dsagent.driver import GraphDriver
         from dsagent.host import build_orchestrator
 
-        graph = build_orchestrator(
-            cartridges, env, workspace, model=model,
-            workflow_tools=workflow_tools(
-                cartridges, runs_dir,
-                ask_human=interrupt_gate, on_event=dispatch_runner_event, seed=seed,
-                prices=prices,
-            ),
-            middleware=[CopilotKitMiddleware()],
-            checkpointer=checkpointer_for(workspace, memory=memory_checkpointer),
+        tools = workflow_tools(
+            cartridges, runs_dir,
+            ask_human=interrupt_gate, on_event=dispatch_runner_event, seed=seed,
+            prices=prices,
         )
+
+        def orchestrator(checkpointer: Any):
+            return build_orchestrator(
+                cartridges, env, workspace, model=model, workflow_tools=tools,
+                middleware=[CopilotKitMiddleware()], checkpointer=checkpointer,
+            )
+
+        # Two graphs, two savers, because the two callers are not the same shape.
+        #
+        # The bridge streams with `astream_events`, and `SqliteSaver` raises
+        # "does not support async methods" the moment anyone types in the chat —
+        # which is exactly what the first real demo run did. Its async twin cannot
+        # be built here either: `AsyncSqliteSaver.__init__` calls
+        # `asyncio.get_running_loop()`, and an app is constructed before uvicorn
+        # has a loop.
+        #
+        # So the chat keeps an in-memory saver, as it had in M2.2, and the runs —
+        # which is what §4.3 and §7.11 are actually about — get the file. What
+        # that costs, stated plainly: a run started *from the chat* still loses
+        # its gate when the server restarts. A run started from the launcher does
+        # not. Giving the chat the same durability needs the agent built inside
+        # the server's lifespan, which is a change to make deliberately rather
+        # than in passing.
         add_langgraph_fastapi_endpoint(
             app,
             # `thread_id` comes off each `RunAgentInput` and the bridge puts it into
             # `config["configurable"]`, so one browser tab is one resumable thread.
             # The bridge merges this `config` into what it hands `astream_events`.
             LangGraphAGUIAgent(
-                name="dsagent", graph=graph, description="DSAgent orchestrator",
+                name="dsagent",
+                graph=orchestrator(checkpointer_for(workspace, memory=True)),
+                description="DSAgent orchestrator",
                 config={"recursion_limit": recursion_limit},
             ),
             path=path,
         )
-        driver = GraphDriver(graph, cartridges, runs_dir, recursion_limit=recursion_limit)
+        driver = GraphDriver(
+            orchestrator(checkpointer_for(workspace, memory=memory_checkpointer)),
+            cartridges, runs_dir, recursion_limit=recursion_limit,
+        )
 
     from dsagent.api import add_runs_routes
 
@@ -210,6 +233,14 @@ def checkpointer_for(workspace: Path, *, memory: bool = False):
     process — which is precisely the run most likely to still be waiting when the
     process goes away.
 
+LangGraph's SQLite savers each implement one half of the protocol: `SqliteSaver`
+    raises `NotImplementedError: does not support async methods` under
+    `astream_events`, and `AsyncSqliteSaver` is the mirror image under a plain
+    `.invoke()` — and cannot be constructed outside a running event loop at all.
+    `InMemorySaver` implements both, which is why the mismatch stayed hidden until
+    a real chat message reached a real server. `build_app` therefore gives the
+    sync driver the file and the async bridge memory; see the note there.
+
     `memory=True` keeps the old behaviour for a throwaway session, and a missing
     `langgraph-checkpoint-sqlite` falls back to it rather than refusing to serve:
     losing resumability is worse than nothing, but not as bad as no server.
@@ -218,20 +249,20 @@ def checkpointer_for(workspace: Path, *, memory: bool = False):
 
     if memory:
         return InMemorySaver()
+
+    path = workspace / ".dsagent" / CHECKPOINTS
+    path.parent.mkdir(parents=True, exist_ok=True)
     try:
         import sqlite3
 
         from langgraph.checkpoint.sqlite import SqliteSaver
+
+        # `check_same_thread=False` because the runs are driven on their own
+        # threads (`dsagent.driver`) while the request that answered the gate
+        # returns on another; SQLite's own locking is what keeps those honest.
+        return SqliteSaver(sqlite3.connect(str(path), check_same_thread=False))
     except ImportError:
         return InMemorySaver()
-
-    path = workspace / ".dsagent" / CHECKPOINTS
-    path.parent.mkdir(parents=True, exist_ok=True)
-    # `check_same_thread=False` because the runs are driven on their own threads
-    # (`dsagent.driver`) while the request that answered the gate returns on
-    # another; SQLite's own locking is what keeps those honest.
-    connection = sqlite3.connect(str(path), check_same_thread=False)
-    return SqliteSaver(connection)
 
 
 def resolve_run_file(runs_dir: Path, run_id: str, rel: str) -> Path | None:

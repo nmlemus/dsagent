@@ -378,3 +378,57 @@ def test_a_persona_never_inherits_the_callers_checkpointer(tmp_path):
     graph.invoke(Command(resume={"decision": "approve"}), config=cfg)
 
     assert said == [("marie", "I am marie"), ("noel", "I am noel")], said
+
+
+def test_the_wait_is_measured_from_when_the_run_stopped(tmp_path, monkeypatch):
+    """Under `serve` the first ask never returns — it raises an interrupt.
+
+    The tool re-executes when the answer arrives, so a clock read at the second
+    ask measures the resume, not the wait, and every gate in run 003's successor
+    reported 0s. The pending record in `run.json` is what remembers the moment the
+    run actually stopped; this asserts it is read back rather than overwritten.
+    """
+    import time
+
+    from dsagent.cartridge import load_cartridge
+    from dsagent.envs.base import Env
+    from dsagent.runner import GateDecision, WorkflowRunner
+    from dsagent.runs import read_state, summarize
+    from tests.test_runner_events import FakeBackend, StreamingFakeAgent
+
+    monkeypatch.setattr(
+        "dsagent.runner.runner.make_env",
+        lambda spec, ws: Env(spec=spec, workspace=ws, backend=FakeBackend()),
+    )
+    ds = Path(__file__).resolve().parents[1] / "cartridges" / "ds"
+    run_dir = tmp_path / "waited"
+
+    class Interrupted(Exception):
+        """Stands in for LangGraph's own: the first ask does not return."""
+
+    def make(ask):
+        return WorkflowRunner(
+            load_cartridge(ds), run_dir,
+            agent_factory=lambda c, persona, env, ws: StreamingFakeAgent(persona, ws),
+            ask_human=ask, log=lambda m: None,
+        )
+
+    def refuse_to_return(request):
+        raise Interrupted
+
+    with pytest.raises(Interrupted):
+        make(refuse_to_return).run("eda-to-report", {"data_path": "x.csv"})
+
+    # the run is parked, and `run.json` remembers when it stopped
+    stopped = read_state(run_dir)["gate"]["asked_at"]
+    assert read_state(run_dir)["status"] == "awaiting_gate"
+
+    time.sleep(0.2)  # the person reading the gate report
+    make(lambda request: GateDecision.APPROVE).run(
+        "eda-to-report", {"data_path": "x.csv"}, resume=True
+    )
+
+    gate = read_state(run_dir)["steps"]["data-gate"]["gate"]
+    assert gate["asked_at"] == pytest.approx(stopped), "the wait must start where the run stopped"
+    assert gate["ts"] - gate["asked_at"] >= 0.2
+    assert summarize(run_dir).gate_wait >= 0.2

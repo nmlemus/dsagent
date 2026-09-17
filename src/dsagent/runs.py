@@ -110,11 +110,17 @@ def summarize(run_dir: Path, state: dict[str, Any] | None = None) -> RunSummary:
         for k, v in (s.get("usage") or {}).items():
             usage[k] = usage.get(k, 0) + int(v or 0)
 
-    gate_wait = 0.0
-    for s in steps.values():
-        gate = s.get("gate") or {}
-        if gate.get("ts") and gate.get("asked_at"):
-            gate_wait += max(0.0, gate["ts"] - gate["asked_at"])
+    # The run's own accumulated total when it has one: a step keeps only its
+    # standing decision, so summing the steps forgets the wait before a gate that
+    # was sent back. Older runs, written before the field existed, fall back to
+    # the sum — which is what they can honestly report.
+    gate_wait = state.get("gate_wait")
+    if not isinstance(gate_wait, int | float):
+        gate_wait = 0.0
+        for s in steps.values():
+            gate = s.get("gate") or {}
+            if gate.get("ts") and gate.get("asked_at"):
+                gate_wait += max(0.0, gate["ts"] - gate["asked_at"])
 
     priced = [s.get("cost_usd") for s in steps.values() if s.get("cost_usd") is not None]
     cost = round(sum(float(c) for c in priced), 6) if priced else None

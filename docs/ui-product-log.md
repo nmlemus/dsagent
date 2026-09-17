@@ -585,3 +585,49 @@ whole milestone was built against run 003's own recording.
 Everything else is done and pushed. The branch is `m25-ui-product`, nine commits,
 `pytest` 235 / 8 skipped, `ruff`, `npm run build|typecheck|lint` and
 `dsagent cartridge validate` all green.
+
+---
+
+## Task 10 (completed) — the demo, with a real model
+
+Three runs, **$1.60**, all twelve §7 lines verified:
+`docs/runs/ui-product/DEMO.md` walks them one by one with the evidence.
+
+| run | for | wall | cost |
+|---|---|---|---|
+| A `…-000956` | the clean run, §7.1–§7.9 | 6 m 14 s | $0.62 |
+| B `…-080356` | killed at its gate, then sent back, §7.10–§7.11 | 6 m 46 s | $0.50 |
+| C `…-081412` | the human wait, measured properly | 6 m 28 s | $0.48 |
+
+A fourth run ($0.48) was created through the API during debugging and is on the
+home screen; it is a complete, successful run, and I cannot account for the click
+that made it, which is worth saying rather than tidying away.
+
+### Two real bugs the demo found, both fixed
+
+**The human wait was always reported as 0 s under `serve`.** M2.2.1 item 5 was
+supposedly closed in task 1 — and it was, for the CLI and for the replay. Under
+`serve` the first `ask_human` never returns: it raises a LangGraph interrupt, and
+the whole tool re-executes when the answer arrives. A clock read at that point
+measures the *resume*. The pending record in `run.json` already held the true
+moment; the runner now reads it back, and `RunState.gate_wait` accumulates across
+answers so a gate sent back and later approved counts both waits rather than only
+the second. Run C shows **Waited for you 1m 34s** against a card that counted
+1m 33s.
+
+**The chat died on its first real message.** `SqliteSaver` is sync-only and the
+AG-UI bridge streams with `astream_events`, so task 9's checkpointer turned every
+chat message into *"The SqliteSaver does not support async methods"* and a red
+`terminated`. `InMemorySaver` implements both halves, which is exactly why no test
+caught it. The driver and the bridge now take different savers, and the cost is
+written down where it is made: a run started *from the chat* still loses its gate
+on a restart, because `AsyncSqliteSaver` cannot be constructed outside a running
+event loop and the app is built before uvicorn has one.
+
+Both are the kind of thing only a real run finds. The milestone was right to
+spend its budget at the end rather than the beginning.
+
+### Verified
+
+`pytest` 238 passed / 8 skipped · `ruff check src tests` · `npm run build`,
+`typecheck`, `lint` · `dsagent cartridge validate cartridges/ds`.

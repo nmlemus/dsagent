@@ -195,6 +195,13 @@ class RunState:
     inputs: dict[str, Any]
     status: str = "pending"  # pending | running | done | failed | awaiting_gate
     steps: dict[str, StepRecord] = field(default_factory=dict)
+    gate_wait: float = 0.0
+    """Seconds this run has spent waiting for a person, accumulated.
+
+    A total rather than something derived from the step records, because a step
+    keeps only its *standing* decision: a gate sent back and later approved would
+    otherwise report the second wait and forget the first, and the first is the
+    one where somebody read the report and said no."""
     gate: dict[str, Any] | None = None
     """The gate being asked right now: step, persona, prompt, produces, asked_at.
 
@@ -652,7 +659,18 @@ class WorkflowRunner:
             run_id=self.run_id, workflow=wf.name, step=step.id, persona=step.persona,
             produces=list(step.produces), prompt=prompt,
         )
-        asked_at = time.time()
+        # When the run stopped, not when it was resumed. Under `dsagent serve` the
+        # first pass never returns from `ask_human` — it raises a LangGraph
+        # interrupt — and the whole tool re-executes when the answer arrives, so
+        # a clock read here would measure the resume rather than the wait, and
+        # every gate would report 0s. The pending record written below is what
+        # remembers the real moment; on re-entry it is read back.
+        pending = state.gate if isinstance(state.gate, dict) else None
+        asked_at = (
+            float(pending["asked_at"])
+            if pending and pending.get("step") == step.id and pending.get("asked_at")
+            else time.time()
+        )
         # Announced *before* asking, so a reader who is not the one being asked —
         # a second tab, a reloaded page, a stakeholder on the link — sees the run
         # stop and sees what it stopped for. Recorded in `run.json` for the same
@@ -669,6 +687,7 @@ class WorkflowRunner:
         )
         decided_at = time.time()
         state.status, state.gate = "running", None
+        state.gate_wait = round(state.gate_wait + max(0.0, decided_at - asked_at), 3)
         if decided == GateDecision.APPROVE.value:
             # Asked for the sequence's sake; the standing decision is the one
             # that counts, and it is the one to re-announce.
