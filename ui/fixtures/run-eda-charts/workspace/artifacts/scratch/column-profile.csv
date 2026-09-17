@@ -1,7 +1,7 @@
 column,dtype,null_pct,distinct,min,max,mean,outliers_iqr,top_values
-date,str,0.0,1461,2012-01-01,2015-12-31,,,2012-01-01 (1); 2012-01-02 (1); 2012-01-03 (1); 2012-01-04 (1); 2012-01-05 (1)
+date,str,0.0,1461,,,,,2012-01-01=1; 2012-01-02=1; 2012-01-03=1; 2012-01-04=1; 2012-01-05=1
 precipitation,float64,0.0,111,0.0,55.9,3.029,206,
 temp_max,float64,0.0,67,-1.6,35.6,16.439,0,
 temp_min,float64,0.0,55,-7.1,18.3,8.235,0,
 wind,float64,0.0,79,0.4,9.5,3.241,34,
-weather,str,0.0,5,,,,,rain (641); sun (640); fog (101); drizzle (53); snow (26)
+weather,str,0.0,5,,,,,rain=641; sun=640; fog=101; drizzle=53; snow=26

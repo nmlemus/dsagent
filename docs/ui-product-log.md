@@ -901,3 +901,81 @@ the chat says what it is for.
 table, time coverage, the leap-day check — rendered as section 1 of the document.
 Four sections, four prose bodies, zero ask-rows (replay). `npm run build`,
 `typecheck`, `lint`.
+
+## Task 6 (completed) — the cards, and three bugs between a spec and a pixel
+
+`<ChartCard>` and `<TableCard>`, in the document, under the paragraph that
+describes them. Vega and Perspective are bundled from `node_modules` and loaded
+on demand — never a CDN, because client data is on this screen and a script
+request is a request to somebody else's server with this page's URL on it.
+
+**ChartCard**: hover tooltips and pan-zoom straight from the persona's own
+`params`; a mark-type toggle that patches the spec on the client (bar → point →
+line, with the mark's own options replaced rather than merged, because
+`cornerRadiusEnd` means nothing on a line); a brush that becomes *context* rather
+than a filter — "selected month 2013-04 → 2014-02, of 48 rows" travels with the
+next question, which is the thing a person points at with a finger and cannot
+type; **Spec**, which opens the Vega-Lite the persona wrote, unedited, in the
+drawer; and **Ask &lt;persona&gt; to change this**, which asks for a new version
+*under the same `chart_id`* so the answer replaces the chart rather than adding
+one below it.
+
+**TableCard**: sort, filter, and **Pivot** — Perspective, from its *inline*
+builds, where the WebAssembly travels inside the JavaScript. The default entry
+points fetch a `.wasm` beside themselves, which this app does not serve and which
+may not come from a CDN; the inline bundles need no asset route and no network.
+They cost about 7 MB, so nothing loads them until the button is pressed, and
+Perspective's own light theme comes with them rather than with the app.
+
+### Three bugs between a valid spec and a visible chart
+
+Each of these produced a *silent* wrong picture, which is the failure mode this
+milestone is supposed to remove:
+
+1. **`Duplicate signal name: "zoom_tuple"`.** Two of run 1's charts drew
+   nothing. A selection `param` at the top level of a **layered** spec is copied
+   by Vega-Lite into every layer, and Vega then refuses the duplicate. Both specs
+   satisfied the schema. **The schema was never enough**: `validate_spec` now
+   also *draws* the chart once, headless, through `vl-convert` — with no rows and
+   `allowed_base_urls=[]`, because validating a persona's spec is not a reason for
+   this server to make a request — and hands back the compiler's own complaint,
+   stripped of its JavaScript stack. The `reports` skill gained the rule. Pinned
+   to `v5.21`, the line the browser renders: validating against a grammar the
+   reader's browser does not speak is theatre.
+2. **`width="0"` with 41 marks inside it.** Personas write `"width":
+   "container"`, which is right; vega-embed resolves it by measuring, and the
+   first measurement lands before layout. The card measures the host itself,
+   re-measures on resize (the drawer opening is exactly when a chart must redraw
+   narrower), and substitutes the number with `autosize: fit` stated rather than
+   inferred.
+3. **A plot squeezed to nothing beside a full-size legend.** A band scale takes
+   its width from the data, and the view was laid out before `view.insert` — with
+   zero categories, a discrete axis is zero wide and `fit` honours it. The
+   continuous-axis charts on the same screen were perfect, which is what made it
+   look like a spec problem. One `view.resize()` after the rows land.
+
+And one layout bug the cards exposed rather than caused: **nothing on the run
+screen scrolled.** `.run-screen` had both `flex: 1` and a height, and on a flex
+item `flex-grow` decides the main size — so the grid stretched to its content and
+neither the document nor the page could scroll. A grid item's `min-height` is
+`auto`, so `.doc` needed `min-height: 0` as well. Everything below the fold was
+simply unreachable.
+
+### Real run 2 of 10 — $0.570, 6 m 21 s
+
+Recorded with the smoke test in place and the layered-params rule in the skill:
+**8 `show_chart` calls, 7 cards, 1 repair.** The rejected call came back with the
+validator's message and the persona fixed it — and because the repaired chart
+kept its title, and the id is derived from the title, it landed as **v1, not v2**:
+a repair is not a revision, exactly as intended. Five charts, two tables, every
+spec valid against the compiler. `ui/fixtures/run-eda-charts` is that run.
+
+Spent so far: **$1.175 of a ten-run budget.**
+
+### Verified
+
+`m26-t6-charts.jpg`: five charts drawn from the run's own aggregates, the mark
+toggle switched to `point`, and the drawer showing the spec that produced it.
+`m26-t6-pivot.jpg`: Perspective grouping the column profile, in the light theme,
+with no network. `pytest` 276 / 8 skipped · `ruff` · `dsagent cartridge validate`
+· `npm run build`, `typecheck`, `lint`.

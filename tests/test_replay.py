@@ -166,10 +166,9 @@ def test_the_chart_fixture_is_a_real_run_that_emitted_charts(charted):
     charts = [e["value"] for e in charted.events if e["name"] == "dsagent.chart"]
     assert len(charts) == 7
     assert {c["kind"] for c in charts} == {"chart", "table"}
-    # Four figures, and one of them corrected in place by the persona that made it.
+    # Five figures and two tables, every one of them its own card.
     figures = {c["chart_id"] for c in charts if c["kind"] == "chart"}
-    assert len(figures) == 4
-    assert max(c["version"] for c in charts) == 2
+    assert len(figures) == 5
     # Every spec references its data rather than carrying it.
     assert all(c["spec"]["data"] == {"name": "table"} for c in charts if c["kind"] == "chart")
 
@@ -181,7 +180,7 @@ def test_a_replayed_chart_points_at_the_run_replaying_it(charted):
     assert wait_for(lambda: read_state(run_dir)["status"] == "done")
 
     state = read_state(run_dir)
-    assert len(state["charts"]) == 6
+    assert len(state["charts"]) == 7
     for chart_id, card in state["charts"].items():
         # The recorded URL named the run it was recorded in; this is a different
         # run, reading the same file out of its own directory.
@@ -195,17 +194,23 @@ def test_a_replayed_chart_points_at_the_run_replaying_it(charted):
 
     events = [e for e in read_events(run_dir) if e["name"] == "dsagent.chart"]
     assert len(events) == 7
-    assert [e["value"]["version"] for e in events][-1] == 2
 
 
-def test_the_standing_version_is_the_one_on_the_run(charted):
-    """Seven emissions, six cards: a corrected chart replaces itself."""
-    run_dir = charted.create("replayed", {})
-    charted.start("replayed")
-    assert wait_for(lambda: charted.answer_gate("replayed", GateDecision.APPROVE)), "no gate"
-    assert wait_for(lambda: read_state(run_dir)["status"] == "done")
+def test_every_chart_in_the_fixture_is_one_vega_lite_would_draw(charted):
+    """The fixture is evidence, so it may not contain a chart that draws nothing.
 
-    charts = read_state(run_dir)["charts"]
-    revised = [c for c in charts.values() if c["version"] > 1]
-    assert len(revised) == 1
-    assert revised[0]["version"] == 2
+    Run 1 of this milestone emitted two specs that satisfied the schema and then
+    failed in the browser with `Duplicate signal name`. Validation gained a
+    render smoke test because of it; this is that smoke test, pointed at the
+    recording the screens are developed against.
+    """
+    pytest.importorskip("vl_convert")
+    from dsagent.runner.charts import validate_spec
+
+    charts = [e["value"] for e in charted.events if e["name"] == "dsagent.chart"]
+    broken = {
+        c["chart_id"]: validate_spec(c["spec"])
+        for c in charts
+        if c["kind"] == "chart" and validate_spec(c["spec"])
+    }
+    assert broken == {}

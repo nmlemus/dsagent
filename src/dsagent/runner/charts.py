@@ -109,23 +109,46 @@ class StepContext:
     section: str = ""
 
 
+VEGA_LITE = "v5.21"
+"""The Vega-Lite the smoke test compiles against.
+
+It must be the line the **browser** renders, not the newest one available:
+`ui/package.json` pins `vega-lite@5`, and a spec validated against v6 that only
+v6 accepts is a spec the reader cannot see. Move the two together or neither.
+"""
+
+
 def validate_spec(spec: Any) -> str:
     """Check a Vega-Lite spec. Empty string when it is valid, else what is wrong.
 
-    Validation is altair's: it carries the published Vega-Lite JSON Schema and
-    compiles the spec into its own object model, which is a stricter check than
-    the schema alone — a mark that does not exist and a channel that is not a
-    channel both fail here rather than in the reader's browser.
+    Two checks, because one is not enough — and the second one is here because a
+    real run proved it.
 
-    A server without altair validates nothing and says so in the returned
-    message. That is deliberate: the alternative is refusing to record a chart
-    because the *server* is missing a package, which would make the run's
-    document depend on how the harness was installed.
+    **The schema**, through altair: it carries the published Vega-Lite JSON
+    Schema and builds the spec into its object model, so a mark that does not
+    exist and a channel that is not a channel fail here rather than in the
+    reader's browser.
+
+    **The compiler**, through `vl-convert`: the spec is rendered once, headless,
+    with no rows and no network. A spec can satisfy the schema and still not be a
+    chart — run 1 of this milestone emitted two layered specs with a selection
+    `param` at the top level, which Vega-Lite pushes into *every* layer, and
+    Vega then refuses with `Duplicate signal name: "zoom_tuple"`. Both passed the
+    schema. Both drew nothing. The persona only finds that out if the tool tells
+    it, which is what this returns.
+
+    A server without either package skips that check rather than refusing to
+    record the chart: the alternative makes the run's document depend on how the
+    harness was installed.
     """
     if not isinstance(spec, dict):
         return "spec must be a JSON object (a Vega-Lite specification)"
     if not (spec.get("mark") or spec.get("layer") or spec.get("encoding") or spec.get("spec")):
         return "spec has no `mark`, `layer` or `encoding`: that is not a Vega-Lite chart"
+    return _schema_error(spec) or _render_error(spec)
+
+
+def _schema_error(spec: dict[str, Any]) -> str:
     try:
         import altair as alt
     except ImportError:
@@ -136,6 +159,36 @@ def validate_spec(spec: Any) -> str:
         # failure to build the chart is a spec the browser would not render either
         return _first_lines(str(e))
     return ""
+
+
+def _render_error(spec: dict[str, Any]) -> str:
+    """Draw it once, with nothing in it, and see whether Vega will have it."""
+    try:
+        import vl_convert as vlc
+    except ImportError:
+        return ""
+    try:
+        # No rows: the question is whether the *spec* parses, and the rows live
+        # in a file the browser fetches. No base URLs either — validating a
+        # persona's spec is not a reason for this server to make a request.
+        vlc.vegalite_to_svg(
+            {**spec, "data": {"values": []}}, vl_version=VEGA_LITE, allowed_base_urls=[]
+        )
+    except Exception as e:  # noqa: BLE001 — whatever it raises, the chart does not draw
+        return _compiler_message(str(e))
+    return ""
+
+
+def _compiler_message(message: str) -> str:
+    """The compiler's complaint, without its JavaScript stack.
+
+    `vl-convert` runs Vega in an embedded JS engine, so a failure arrives with
+    ten frames of `vega-parser` in it. The first two lines say what is wrong; the
+    rest is a stack trace through a library the persona cannot edit.
+    """
+    lines = [line for line in message.splitlines() if line.strip()]
+    useful = [line for line in lines if not line.strip().startswith("at ")]
+    return "\n".join(useful[:4]) or _first_lines(message)
 
 
 def _first_lines(message: str, keep: int = 12) -> str:

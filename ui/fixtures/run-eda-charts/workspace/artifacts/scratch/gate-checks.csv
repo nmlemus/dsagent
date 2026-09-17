@@ -1,10 +1,10 @@
 check,value,threshold,result
-Null share — date,0.0% (0/1461),> 20%,PASS
-Null share — precipitation,0.0% (0/1461),> 20%,PASS
-Null share — temp_max,0.0% (0/1461),> 20%,PASS
-Null share — temp_min,0.0% (0/1461),> 20%,PASS
-Null share — wind,0.0% (0/1461),> 20%,PASS
-Null share — weather,0.0% (0/1461),> 20%,PASS
-Exact duplicate rows,0.0% (0/1461),> 1%,PASS
-Key uniqueness — date,"unique=true, 0 duplicates (0/1461)",any violation,PASS
-Time coverage — missing daily periods (2012-01-01 to 2015-12-31),0 missing (0/1461 expected days),"any missing, inside requested range",PASS
+Null share — date,0.0% (0/1461),> 20% fails,PASS
+Null share — precipitation,0.0% (0/1461),> 20% fails,PASS
+Null share — temp_max,0.0% (0/1461),> 20% fails,PASS
+Null share — temp_min,0.0% (0/1461),> 20% fails,PASS
+Null share — wind,0.0% (0/1461),> 20% fails,PASS
+Null share — weather,0.0% (0/1461),> 20% fails,PASS
+Exact duplicate rows,0.0% (0/1461),> 1% fails,PASS
+Key uniqueness (date),"unique=true, 0 duplicates (0/1461)",any violation fails,PASS
+Time coverage / missing periods,"0 missing days (1461/1461 expected daily periods observed, 2012-01-01 to 2015-12-31)",any missing period inside requested range fails,PASS

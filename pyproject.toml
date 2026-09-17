@@ -44,6 +44,11 @@ ui = [
     # same line. Move both together or neither.
     "altair>=5.5,<6",
     "jsonschema>=4",
+    # The other half of validating a chart: `altair` checks the schema,
+    # `vl-convert` compiles and draws it once. A spec can satisfy the schema and
+    # still not be a chart — see `charts.validate_spec`. It is also what renders
+    # PNG/SVG for a PDF export.
+    "vl-convert-python>=1.7",
 ]
 anthropic = ["langchain-anthropic"]
 openai = ["langchain-openai"]

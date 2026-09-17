@@ -15,7 +15,7 @@ import { FileView } from "./file-view";
  * is the third option — everything is reachable in one click from the thing it
  * belongs to, and nothing arrives unasked.
  */
-export type Detail = { kind: "file" | "step"; id: string } | null;
+export type Detail = { kind: "file" | "step" | "spec"; id: string } | null;
 
 export function Drawer({
   runId,
@@ -35,17 +35,51 @@ export function Drawer({
   return (
     <aside className="drawer" aria-label="Detail">
       <header className="drawer-head">
-        <b className="drawer-title">{detail.kind === "file" ? detail.id : `Step · ${detail.id}`}</b>
+        <b className="drawer-title">
+          {detail.kind === "file"
+            ? detail.id
+            : detail.kind === "spec"
+              ? `Vega-Lite · ${detail.id}`
+              : `Step · ${detail.id}`}
+        </b>
         <button type="button" className="btn btn-quiet btn-small" onClick={onClose}>
           Close
         </button>
       </header>
       {detail.kind === "file" ? (
         <FileView runId={runId} path={detail.id} />
+      ) : detail.kind === "spec" ? (
+        <SpecDetail id={detail.id} view={view} />
       ) : (
         <StepDetail id={detail.id} view={view} run={run} />
       )}
     </aside>
+  );
+}
+
+/**
+ * A chart's spec, as the persona wrote it.
+ *
+ * This is the answer to "hidden code is a complaint" (research part A, listed as
+ * table stakes): the thing on screen is a document, and its source is one click
+ * away, unedited.
+ */
+function SpecDetail({ id, view }: { id: string; view: RunView }) {
+  const card = view.cards.find((c) => c.chartId === id);
+  if (!card) return <p className="view-note dim">No such chart.</p>;
+  return (
+    <div className="drawer-body">
+      <dl className="drawer-facts">
+        <Fact label="chart_id" value={card.chartId} mono />
+        <Fact label="version" value={String(card.version)} mono />
+        <Fact label="by" value={card.persona} />
+        <Fact label="data" value={card.dataRef} mono />
+        <Fact label="rows" value={card.rows == null ? "—" : String(card.rows)} mono />
+      </dl>
+      <Block title="Specification">
+        <pre className="drawer-pre">{JSON.stringify(card.spec, null, 2)}</pre>
+      </Block>
+    </div>
   );
 }
 

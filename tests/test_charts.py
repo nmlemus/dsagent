@@ -7,6 +7,7 @@ with its data left on disk, and a second emission of the same id is a version
 rather than a twin.
 """
 
+import json
 from pathlib import Path
 
 import pytest
@@ -368,3 +369,87 @@ def test_every_step_event_carries_the_section_its_workflow_declared(tmp_path, mo
                 for e in lines if e["name"] == "dsagent.step"}
     assert sections == {"profile": "The data", "data-gate": "Data quality",
                         "analyze": "Findings", "report": "Report"}
+
+
+# ---- the second half of validation: does it actually draw? ------------------
+
+
+def test_a_spec_the_schema_accepts_but_vega_refuses_is_caught():
+    """Run 1 of M2.6 emitted this shape twice, and both charts drew nothing.
+
+    A selection `param` at the top level of a *layered* spec is copied into every
+    layer by Vega-Lite, and Vega then refuses the duplicate signal. The schema
+    has no opinion about it — which is why validating against the schema alone
+    was not enough, and why every spec is now drawn once, headless, before it is
+    recorded.
+    """
+    pytest.importorskip("vl_convert")
+    layered = {
+        "$schema": VL,
+        "data": {"name": "table"},
+        "params": [{"name": "zoom", "select": {"type": "interval", "encodings": ["x"]},
+                    "bind": "scales"}],
+        "layer": [
+            {"mark": "line", "encoding": {"x": {"field": "month", "type": "temporal"},
+                                          "y": {"field": "temp", "type": "quantitative"}}},
+            {"mark": "line", "encoding": {"x": {"field": "month", "type": "temporal"},
+                                          "y": {"field": "fit", "type": "quantitative"}}},
+        ],
+    }
+    message = validate_spec(layered)
+
+    assert "Duplicate signal name" in message
+    # Which signal duplicates depends on how the selection is bound; that it
+    # names one is what lets the persona find it.
+    assert "zoom_" in message
+    # The persona is told what is wrong, not shown a JavaScript stack trace
+    # through a library it cannot edit.
+    assert "    at " not in message
+    assert len(message.splitlines()) <= 4
+
+
+def test_the_same_chart_with_the_param_in_a_layer_is_fine():
+    pytest.importorskip("vl_convert")
+    layered = {
+        "$schema": VL,
+        "data": {"name": "table"},
+        "layer": [
+            {
+                "params": [{"name": "zoom", "select": {"type": "interval", "encodings": ["x"]},
+                            "bind": "scales"}],
+                "mark": "line",
+                "encoding": {"x": {"field": "month", "type": "temporal"},
+                             "y": {"field": "temp", "type": "quantitative"}},
+            },
+            {"mark": "line", "encoding": {"x": {"field": "month", "type": "temporal"},
+                                          "y": {"field": "fit", "type": "quantitative"}}},
+        ],
+    }
+    assert validate_spec(layered) == ""
+
+
+def test_the_smoke_test_compiles_against_the_version_the_browser_renders():
+    """Server and client must speak one grammar, or validation is theatre."""
+    from dsagent.runner.charts import VEGA_LITE
+
+    package = Path(__file__).resolve().parents[1] / "ui" / "package.json"
+    pinned = json.loads(package.read_text())["dependencies"]["vega-lite"]
+
+    assert VEGA_LITE.startswith("v5"), VEGA_LITE
+    assert pinned.startswith(("^5", "5")), pinned
+
+
+def test_the_smoke_test_is_not_a_reason_to_reach_the_network():
+    """A persona's spec may name a URL; validating it must not fetch one."""
+    pytest.importorskip("vl_convert")
+    spec = {
+        "$schema": VL,
+        "data": {"url": "https://example.invalid/data.json"},
+        "mark": "bar",
+        "encoding": {"x": {"field": "a", "type": "nominal"},
+                     "y": {"field": "b", "type": "quantitative"}},
+    }
+    # The rewrite to `{"name": "table"}` happens in the tool; the validator is
+    # handed whatever it is given, and still may not go out.
+    message = validate_spec(spec)
+    assert "example.invalid" not in message or "not allowed" in message.lower()

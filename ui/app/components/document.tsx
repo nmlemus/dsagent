@@ -11,6 +11,7 @@ import type { RunView, StepRow } from "../lib/run-state";
 import { useClock } from "../lib/use-run";
 
 import { useAsk } from "./ask";
+import { ChartCard, TableCard } from "./cards";
 import { GateCard, GateVerdict } from "./gate-card";
 
 /**
@@ -40,8 +41,8 @@ export function Document({
   runId: string;
   detail: RunDetail | null;
   view: RunView;
-  /** Point the drawer at something: a file, a step, a spec. */
-  onOpen: (what: { kind: "file" | "step"; id: string }) => void;
+  /** Point the drawer at something: a file, a step, a chart's spec. */
+  onOpen: (what: { kind: "file" | "step" | "spec"; id: string }) => void;
   onDecide: (decision: "approve" | "reject", note: string) => void;
   deciding: boolean;
   onResume: () => void;
@@ -77,6 +78,19 @@ export function Document({
             {state === "pending" && <p className="sec-plan">{promise(step, section)}</p>}
             {state === "running" && step && <AtWork step={step} now={now} />}
             {state !== "pending" && step && <Prose runId={runId} step={step} />}
+            {/* The cards the step emitted, in the order it emitted them — the
+                chart under the paragraph that describes it, which is where a
+                figure belongs and where a file list can never put it. */}
+            {step &&
+              view.cards
+                .filter((card) => card.step === step.step)
+                .map((card) =>
+                  card.kind === "chart" ? (
+                    <ChartCard key={card.chartId} card={card} onOpen={onOpen} />
+                  ) : (
+                    <TableCard key={card.chartId} card={card} />
+                  ),
+                )}
             {children?.(step as StepRow, state)}
             {state === "done" && step && (
               <Sources step={step} onOpen={(id) => onOpen({ kind: "file", id })} />

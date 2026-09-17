@@ -84,9 +84,15 @@ Rules that are specific to this tool:
   to pick a range. Give every encoded field a `tooltip`.
 - The `title` is the sentence above the chart, and it follows the trend rule above:
   it states the message, and never a trend the intervals do not support.
-- A spec that fails the schema comes back with the validator's message. Fix it and
-  call again **with the same `chart_id`** — that is what makes the second call a
-  correction rather than a second chart.
+- **On a layered chart, a selection `param` goes inside one layer, never at the
+  top level.** Vega-Lite copies a top-level param into *every* layer, and Vega
+  then refuses the result with `Duplicate signal name: "<param>_tuple"`. The spec
+  satisfies the schema and draws nothing. Put `params` on the layer the reader
+  interacts with — usually the one with the points.
+- A spec that fails validation comes back with the validator's message — the
+  schema's, or the compiler's, since every spec is drawn once headless before it
+  is recorded. Fix it and call again **with the same `chart_id`**: that is what
+  makes the second call a correction rather than a second chart.
 - A table a reader will look *through* rather than *at* — a column profile, a check
   table, a ranked list — goes through `show_table` on the same file.
 

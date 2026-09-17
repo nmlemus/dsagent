@@ -13,11 +13,17 @@
     "@ag-ui/client": "0.0.59",
     "@copilotkit/react-core": "1.72.0",
     "@copilotkit/runtime": "1.72.0",
+    "@finos/perspective": "^3.8.0",
+    "@finos/perspective-viewer": "^3.8.0",
+    "@finos/perspective-viewer-datagrid": "^3.8.0",
     "next": "16.3.5",
     "react": "19.3.0",
     "react-dom": "19.3.0",
     "react-markdown": "10.1.0",
-    "remark-gfm": "4.0.1"
+    "remark-gfm": "4.0.1",
+    "vega": "^5.33.1",
+    "vega-embed": "^6.29.0",
+    "vega-lite": "^5.23.0"
   },
   "devDependencies": {
     "@types/node": "22.20.3",
