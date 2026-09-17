@@ -22,18 +22,29 @@ extra — so FastAPI is a module-level import here, and route annotations resolv
 from __future__ import annotations
 
 import asyncio
+import io
 import json
+import math
 import re
 import time
+import zipfile
 from pathlib import Path
 from typing import Any
 
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import PlainTextResponse, StreamingResponse
+from fastapi.responses import PlainTextResponse, Response, StreamingResponse
 
 from dsagent.cartridge.models import Cartridge
-from dsagent.runs import is_live, list_runs, read_events, read_log, read_state, summarize
-from dsagent.serve import decision_of
+from dsagent.runs import (
+    deliverables,
+    is_live,
+    list_runs,
+    read_events,
+    read_log,
+    read_state,
+    summarize,
+)
+from dsagent.serve import decision_of, resolve_run_file
 
 POLL_SECONDS = 0.25
 """How often the SSE stream looks for new lines in a run's event log.
@@ -46,6 +57,11 @@ the writer and the reader are the same process in every mode we ship.
 HEARTBEAT_SECONDS = 15.0
 """A comment line while nothing is happening, so a proxy does not close the stream
 during `analyze`'s three silent minutes."""
+
+PREVIEW_ROWS = 200
+PREVIEW_MAX_ROWS = 2000
+"""How much of a table is a preview. 200 is what `docs/ui-product.md` §4.4 asks
+for; the ceiling is there because the parameter arrives from a URL."""
 
 
 def workflow_shape(cartridge: Cartridge, name: str) -> dict[str, Any]:
@@ -286,6 +302,96 @@ def add_runs_routes(
     @app.get("/runs/{run_id}/log", response_class=PlainTextResponse)
     def run_log(run_id: str) -> str:
         return read_log(run_dir_of(run_id)) or "(this run has written no log)"
+
+    @app.get("/runs/{run_id}/preview/{path:path}")
+    def preview(run_id: str, path: str, rows: int = PREVIEW_ROWS) -> dict[str, Any]:
+        """The first rows of a tabular file, as JSON, for a browser that cannot read it.
+
+        Parquet is the case that needs it: there is no reader in a browser, and
+        the M2.2 canvas could only offer a download link. The reading is pandas',
+        which the kernel env's cartridge already requires — and when the
+        interpreter serving this does not have it, the honest answer is 415 rather
+        than a guess at the format.
+        """
+        run_dir = run_dir_of(run_id)
+        target = resolve_run_file(runs_dir, run_id, path)
+        if target is None:
+            raise HTTPException(status_code=404, detail="not found")
+        try:
+            import pandas as pd
+        except ImportError:
+            raise HTTPException(
+                status_code=415,
+                detail="this server has no pandas, so it cannot preview a table",
+            ) from None
+
+        wanted = max(1, min(rows, PREVIEW_MAX_ROWS))
+        try:
+            frame = pd.read_parquet(target)
+        except Exception as e:
+            raise HTTPException(status_code=415, detail=f"cannot read {path}: {e}") from e
+
+        head = frame.head(wanted)
+        return {
+            "path": path,
+            "run_id": run_dir.name,
+            "columns": [str(c) for c in head.columns],
+            "rows": [[_jsonable(v) for v in record] for record in head.itertuples(index=False)],
+            "total_rows": int(frame.shape[0]),
+            "shown_rows": int(head.shape[0]),
+        }
+
+    @app.get("/runs/{run_id}/download")
+    def download_all(run_id: str, everything: bool = False):
+        """Every deliverable this run declared, as one zip.
+
+        Deliverables by default and the whole workspace on request: what a
+        stakeholder wants is the report and the figures, not the scratch files,
+        and the run already knows which is which — the file events carry `kind`.
+        """
+        run_dir = run_dir_of(run_id)
+        workspace = run_dir / "workspace"
+        wanted = _archive_members(run_dir, workspace, everything=everything)
+        if not wanted:
+            raise HTTPException(status_code=404, detail="this run has produced nothing yet")
+
+        buffer = io.BytesIO()
+        with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as archive:
+            for rel in wanted:
+                archive.write(workspace / rel, arcname=f"{run_dir.name}/{rel}")
+        payload = buffer.getvalue()
+        return Response(
+            content=payload,
+            media_type="application/zip",
+            headers={
+                "Content-Disposition": f'attachment; filename="{run_dir.name}.zip"',
+                "Content-Length": str(len(payload)),
+            },
+        )
+
+
+def _archive_members(run_dir: Path, workspace: Path, *, everything: bool) -> list[str]:
+    """What goes into a run's zip, workspace-relative and in a stable order."""
+    if everything:
+        return sorted(
+            f.relative_to(workspace).as_posix()
+            for f in workspace.rglob("*")
+            if f.is_file() and ".dsagent" not in f.relative_to(workspace).parts
+        )
+    return [rel for rel in deliverables(run_dir) if (workspace / rel).is_file()]
+
+
+def _jsonable(value: Any) -> Any:
+    """One cell, as JSON. Anything exotic becomes its own repr rather than a 500."""
+    if value is None:
+        return None
+    if isinstance(value, bool | int | str):
+        return value
+    if isinstance(value, float):
+        # NaN and infinities are not JSON, and a table full of them is exactly
+        # what a data-quality preview is for.
+        return value if math.isfinite(value) else None
+    return str(value)
 
 
 def _is_replay(driver: Any) -> bool:

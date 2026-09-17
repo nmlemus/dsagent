@@ -1424,3 +1424,34 @@ body.is-resizing iframe {
 .chat.is-loading {
   flex: 1;
 }
+
+/* --- canvas extras --------------------------------------------------------- */
+
+/* A finished run's report deserves the pane: the file list is history by then. */
+.canvas.is-full {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.view-actions {
+  display: flex;
+  gap: var(--gap-2);
+}
+
+.view-foot {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--gap-2);
+  padding: var(--gap-2) var(--gap-3);
+  border-top: 1px solid var(--rule);
+  font-size: 12px;
+}
+
+.download-all {
+  margin: var(--gap-2) var(--gap-3) 0;
+}
+
+.view-table td.is-null {
+  color: var(--ink-faint);
+  font-style: italic;
+}

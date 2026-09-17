@@ -37,6 +37,7 @@ export default function RunScreen() {
   const runId = decodeURIComponent(String(params.runId ?? ""));
   const run = useRun(runId);
   const replay = useReplayMode();
+  const [reportFull, setReportFull] = useState(false);
   const [chatWidth, setChatWidth] = useSplit("chat", 380, CHAT_RANGE);
   const [progressHeight, setProgressHeight] = useSplit("progress", 380, PROGRESS_RANGE);
 
@@ -87,6 +88,9 @@ export default function RunScreen() {
           focused={run.focused}
           onFocus={run.pin}
           waiting={<Waiting run={run} />}
+          finished={run.detail?.status === "done"}
+          reportFull={reportFull}
+          onReportFull={setReportFull}
         />
       </div>
     </main>

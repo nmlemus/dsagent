@@ -229,23 +229,59 @@ def resolve_run_file(runs_dir: Path, run_id: str, rel: str) -> Path | None:
     return target if target.is_file() else None
 
 
+SCRIPTED_PREFIX = "/runs-x"
+"""Second route prefix for artifacts the canvas frames with `allow-scripts`.
+
+`docs/ui-product.md` §4.5: a Plotly dashboard is useless without scripts, and an
+iframe that has both `allow-scripts` and `allow-same-origin` is not sandboxed at
+all. So the canvas frames an interactive artifact with `allow-scripts` *only*,
+which gives the frame an opaque origin — and this prefix exists so that choice is
+visible in the URL rather than hidden in an attribute, and so the response can
+carry a matching `Content-Security-Policy` of its own.
+
+The two prefixes serve the same bytes with the same path rules. What differs is
+what the page around them permits.
+"""
+
+SCRIPTED_CSP = "sandbox allow-scripts; base-uri 'none'; form-action 'none'"
+"""What the served document may do, said by the server as well as by the frame.
+
+A run's artifacts are written by a model. Belt and braces is the right posture:
+the header sandboxes the document even if a future canvas forgets the attribute,
+and denies it a base URI and anywhere to post a form.
+"""
+
+
 def _add_files_route(app, runs_dir: Path) -> None:
     from fastapi import HTTPException
     from fastapi.responses import FileResponse
 
-    @app.get("/runs/{run_id}/files/{path:path}")
-    def run_file(run_id: str, path: str):
-        """Serve one file from a run's workspace, for the canvas to render."""
+    def serve_file(run_id: str, path: str, headers: dict[str, str] | None = None):
         target = resolve_run_file(runs_dir, run_id, path)
         if target is None:
             raise HTTPException(status_code=404, detail="not found")
         media_type, _ = mimetypes.guess_type(target.name)
-        return FileResponse(target, media_type=media_type or "application/octet-stream")
+        return FileResponse(
+            target,
+            media_type=media_type or "application/octet-stream",
+            headers=headers,
+        )
+
+    @app.get("/runs/{run_id}/files/{path:path}")
+    def run_file(run_id: str, path: str):
+        """Serve one file from a run's workspace, for the canvas to render."""
+        return serve_file(run_id, path)
+
+    @app.get(SCRIPTED_PREFIX + "/{run_id}/files/{path:path}")
+    def run_file_scripted(run_id: str, path: str):
+        """The same file, for a frame that is allowed to run its scripts."""
+        return serve_file(run_id, path, headers={"Content-Security-Policy": SCRIPTED_CSP})
 
 
 __all__ = [
     "GATE_REASON",
     "GATE_RESPONSE_SCHEMA",
+    "SCRIPTED_PREFIX",
     "RunnerEvent",
     "build_app",
     "decision_of",

@@ -295,3 +295,111 @@ def test_an_unknown_run_is_a_404_everywhere(client):
 
 def test_an_empty_install_lists_no_runs(client):
     assert client.get("/runs").json() == {"runs": []}
+
+
+# --- the canvas's server side -------------------------------------------------
+
+
+def test_a_run_downloads_as_one_zip_of_its_deliverables(client):
+    import io
+    import zipfile
+
+    run_id = start_a_run(client)
+    assert wait_for(lambda: client.get(f"/runs/{run_id}").json().get("awaiting"))
+    client.post(f"/runs/{run_id}/gate", json={"decision": "approve"})
+    assert wait_for(lambda: client.get(f"/runs/{run_id}").json()["status"] == "done", timeout=20)
+
+    r = client.get(f"/runs/{run_id}/download")
+    assert r.status_code == 200
+    assert r.headers["content-type"] == "application/zip"
+    assert run_id in r.headers["content-disposition"]
+
+    with zipfile.ZipFile(io.BytesIO(r.content)) as archive:
+        names = sorted(n.split("/", 1)[1] for n in archive.namelist())
+        assert names == [
+            "artifacts/data-gate.md",
+            "artifacts/data-profile.json",
+            "artifacts/data-profile.md",
+            "artifacts/figures/fig1_precip_by_category.png",
+            "artifacts/figures/fig2_temp_by_category.png",
+            "artifacts/figures/fig3_temp_trend.png",
+            "artifacts/figures/fig4_precip_trend.png",
+            "artifacts/findings.md",
+            "report/findings.html",
+            "report/findings.md",
+        ]
+        # the report is the deliverable, and it is whole
+        report = archive.read(f"{run_id}/report/findings.html")
+        assert report.startswith(b"<!doctype html>") and len(report) > 200_000
+
+    # …and the dataset the operator uploaded is *not* in it: a deliverable is what
+    # the run produced, not what it was given
+    assert not any("seattle" in n for n in names)
+
+    everything = client.get(f"/runs/{run_id}/download", params={"everything": True})
+    with zipfile.ZipFile(io.BytesIO(everything.content)) as archive:
+        assert any("data/seattle-weather.csv" in n for n in archive.namelist())
+
+
+def test_downloading_a_run_that_has_produced_nothing_is_a_404(client):
+    run_id = client.post("/runs", json={"workflow": "eda-to-report", "inputs": {}}).json()["run_id"]
+    assert client.get(f"/runs/{run_id}/download").status_code == 404
+
+
+def test_parquet_is_previewed_server_side(client, tmp_path):
+    """No browser reads parquet; the M2.2 canvas could only offer a link (§4.4)."""
+    pd = pytest.importorskip("pandas")
+    pytest.importorskip("pyarrow", reason="pandas needs an engine to write parquet")
+
+    run_id = client.post("/runs", json={"workflow": "eda-to-report", "inputs": {}}).json()["run_id"]
+    frame = pd.DataFrame({
+        "date": ["2012-01-01", "2012-01-02", "2012-01-03"],
+        "precipitation": [0.0, 10.9, float("nan")],
+        "weather": ["drizzle", "rain", "rain"],
+    })
+    target = tmp_path / "runs" / run_id / "workspace" / "data" / "weather.parquet"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    frame.to_parquet(target)
+
+    body = client.get(f"/runs/{run_id}/preview/data/weather.parquet").json()
+    assert body["columns"] == ["date", "precipitation", "weather"]
+    assert body["rows"][0] == ["2012-01-01", 0.0, "drizzle"]
+    # NaN is not JSON, and a quality preview is exactly where it turns up
+    assert body["rows"][2][1] is None
+    assert (body["total_rows"], body["shown_rows"]) == (3, 3)
+
+    assert client.get(f"/runs/{run_id}/preview/data/weather.parquet", params={"rows": 1}).json()[
+        "shown_rows"
+    ] == 1
+
+
+def test_previewing_something_that_is_not_a_table_says_so(client, tmp_path):
+    pytest.importorskip("pandas")
+    run_id = start_a_run(client, upload=False)
+    assert wait_for(lambda: (tmp_path / "runs" / run_id / "workspace" / "artifacts").is_dir())
+    assert wait_for(
+        lambda: (tmp_path / "runs" / run_id / "workspace" / "artifacts" / "data-gate.md").is_file(),
+        timeout=20,
+    )
+    r = client.get(f"/runs/{run_id}/preview/artifacts/data-gate.md")
+    assert r.status_code == 415
+    assert "cannot read" in r.json()["detail"]
+    assert client.get(f"/runs/{run_id}/preview/nope.parquet").status_code == 404
+
+
+def test_an_interactive_artifact_is_served_under_its_own_prefix(client):
+    """`/runs-x` is where the canvas points a frame that may run scripts (§4.5)."""
+    run_id = start_a_run(client)
+    assert wait_for(
+        lambda: client.get(f"/runs/{run_id}/files/artifacts/data-gate.md").status_code == 200,
+        timeout=20,
+    )
+    plain = client.get(f"/runs/{run_id}/files/artifacts/data-gate.md")
+    scripted = client.get(f"/runs-x/{run_id}/files/artifacts/data-gate.md")
+
+    assert scripted.status_code == 200
+    assert scripted.content == plain.content
+    assert "sandbox allow-scripts" in scripted.headers["content-security-policy"]
+    assert "content-security-policy" not in plain.headers
+    # and the same path rules apply: nothing escapes the workspace
+    assert client.get(f"/runs-x/{run_id}/files/../../run.json").status_code == 404

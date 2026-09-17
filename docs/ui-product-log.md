@@ -419,3 +419,50 @@ All checks green. Live against the replay (`docs/runs/ui-product/t6-gate-inline.
 `t6-run-done.jpg`): the gate card sits inline at its step, fully visible, with its
 report rendered beside it and a live "waiting 2m 08s"; approving leaves the wait
 on the run header; the chips walk green left to right; narration opens per step.
+
+---
+
+## Task 7 — the canvas
+
+### Backend (§4.4, §4.5)
+
+- **`GET /runs/{id}/preview/{path}?rows=200`** — a parquet file as JSON columns
+  and rows, read with pandas (which the cartridge's own kernel env requires).
+  No browser reads parquet, so M2.2's canvas could only offer a link out of
+  itself. `NaN` and infinities become `null`, because they are not JSON and a
+  data-quality preview is exactly where they turn up. A server without pandas
+  answers 415 rather than guessing, and so does a file that is not a table.
+- **`GET /runs/{id}/download[?everything=true]`** — the run's declared
+  deliverables as one zip, named after the run. Deliverables by default: what a
+  stakeholder wants is the report and the figures, and the run already knows
+  which files are which because the file events carry `kind`. The uploaded
+  dataset is *not* in the default zip — a deliverable is what the run produced,
+  not what it was given.
+- **`/runs-x/{id}/files/{path}`** — the same bytes as `/runs/…`, with
+  `Content-Security-Policy: sandbox allow-scripts`. §4.5's second prefix: a
+  Plotly dashboard is useless without scripts, and `allow-scripts` together with
+  `allow-same-origin` is not a sandbox at all. Putting the choice in the URL
+  makes it visible, and the header sandboxes the document even if a future canvas
+  forgets the attribute.
+
+### Frontend
+
+The HTML viewer defaults to `sandbox=""` and offers **Run scripts**, which swaps
+the frame to `/runs-x/…` with `allow-scripts` and says plainly that scripts are
+running in an isolated frame. Parquet renders through the preview endpoint, with
+nulls marked. Every file has Download; a finished run has **Download all as
+zip**; and the report can take the whole pane with a **Report** toggle, back with
+**Show files** (§2.4).
+
+### Verified
+
+`pytest` 227 (one skipped: this venv has no parquet engine, so the parquet test
+skips — the endpoint's failure path is covered instead, and a server without
+pandas is a 415 by design). New API tests cover the zip's exact contents, the
+dataset's absence from it, the 404 on a run that has produced nothing, the
+preview's shapes and its 415s, and that `/runs-x` serves identical bytes with the
+CSP while refusing the same traversal.
+
+In the browser: Download all yields a 378 kB zip of ten deliverables through the
+proxy; the report opens full-width (`docs/runs/ui-product/t7-report-full.jpg`)
+and comes back; Run scripts re-points the frame at `/runs-x` and keeps rendering.
