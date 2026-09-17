@@ -68,6 +68,7 @@ export default function RunScreen() {
             setOpenStep(step);
             if (step) setDetail({ kind: "step", id: step });
           }}
+          onChanged={run.refresh}
         >
           <Chat runId={runId} detail={run.detail} replay={replay} />
         </Rail>

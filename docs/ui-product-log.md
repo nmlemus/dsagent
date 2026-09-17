@@ -1036,3 +1036,47 @@ to climb out of the version directory · `ruff` · `dsagent cartridge validate` 
 
 The diff itself cannot be shown against the replay — a recording does not re-run
 a step — so it is demonstrated on a real run in §6.11.
+
+## Task 8 (completed) — a plan you can read before anything runs
+
+New run is one surface: drop a file, say what you want to know, read the plan,
+press Start. Between the file and the button there is exactly one thing, and it
+is not a wizard — it is **a proposal**, which is the pattern the research puts at
+the top of what a new entrant can own: approval *before* execution rather than
+review after it.
+
+`POST /runs/{id}/plan` executes nothing and costs nothing. Everything in it is
+derivable and so nothing in it can be hallucinated:
+
+| | where it comes from |
+|---|---|
+| the steps, their personas, their sections, which one stops for you | the workflow the cartridge declares |
+| rows, columns, types, what repeats | the file already uploaded into this run, read by the server the operator is running |
+| the likely cost and time | past runs of **this workflow** that actually finished |
+| `key_column` | a *guess*, labelled as one, from the column with no repeats and nothing missing — editable before Start |
+
+**It is deliberately not a model call.** A proposal a person is about to approve
+should not itself be a thing that can hallucinate, and there is nothing here a
+model could add that the cartridge and the file do not already say. When no run
+of this workflow has ever finished, the estimate says *"no past run"* rather than
+inventing a number — "cheap until it isn't" is the complaint the research records
+about every platform in this category, and a made-up estimate is how you earn it.
+
+The plan is stored on the run: it is the first entry in the audit trail — what
+was offered, and what it was expected to cost.
+
+**Stop is a first-class button**, on the rail beside the run's own state.
+`POST /runs/{id}/stop` asks; the runner honours it *between steps*. Not a kill: a
+step is a persona holding a kernel and half a written file, and ending it there
+leaves a workspace nothing can describe. The step in flight finishes and the run
+halts before the next one — which is what makes §1.7's "stopping never costs more
+than what already ran" true rather than nearly true. `stopped` is a status of its
+own, because a run somebody stopped is not a run that failed.
+
+### Verified
+
+`m26-t8-plan.jpg`: seattle-weather read in place — 1,461 rows × 6 columns, 47.1 kB,
+its column names — the four steps with `data-gate` marked *"then it asks you"*, and
+**$0.54 · 4m 35s · 1 decision · based on 8 runs**. `pytest` 290 / 8 skipped (seven
+new, including the key guess, the "None" default that means unfilled, and a plan
+with nothing to compare against) · `ruff` · `npm run build`, `typecheck`, `lint`.

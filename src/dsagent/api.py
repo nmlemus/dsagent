@@ -72,6 +72,17 @@ working; a closed connection in the middle of that is a screen that stops."""
 
 PREVIEW_ROWS = 200
 PREVIEW_MAX_ROWS = 2000
+PROFILE_ROWS = 500
+"""How much of an uploaded file the plan reads to describe its shape.
+
+Enough for "is this column unique" to mean something and cheap enough to answer
+while the operator is still looking at the drop zone. The row *count* is the
+file's real one; the column descriptions are of this head, and the screen says
+so."""
+PREVIEW_PROFILE_ROWS = 20
+EMPTY_VALUES = {"", "none", "null", "nil"}
+"""Workflow defaults that mean "nothing". `key_column` defaults to the string
+"None" in the ds cartridge, and a guess has to treat that as unfilled."""
 """How much of a table is a preview. 200 is what `docs/ui-product.md` §4.4 asks
 for; the ceiling is there because the parameter arrives from a URL."""
 
@@ -172,6 +183,7 @@ def add_runs_routes(
             **summary.dict(),
             "steps": state.get("steps", {}),
             "workflow_shape": workflow_shape(cartridge, workflow) if cartridge else None,
+            "plan": state.get("plan"),
             "driver_error": getattr(driver, "error_for", lambda _: None)(run_id),
         }
 
@@ -265,6 +277,76 @@ def add_runs_routes(
         resume = state.get("status") not in ("pending",)
         driver.start(run_id, resume=resume)
         return {"started": True, "resumed": resume}
+
+    @app.post("/runs/{run_id}/plan")
+    def plan_run(run_id: str) -> dict[str, Any]:
+        """What this run will do, before it does any of it.
+
+        The plan-first gate the research puts at the top of what a new entrant
+        can own (part C: plan-as-artifact with one Start gate). It executes
+        nothing and costs nothing: every part of it is derivable — the steps and
+        their gates from the workflow the cartridge declares, the shape of the
+        data from the file already uploaded into this run, and the money from
+        what past runs of the same workflow actually cost.
+
+        It is deliberately not a model call. A proposal a person is about to
+        approve should not itself be a thing that can hallucinate, and there is
+        nothing here for a model to add that the cartridge and the file do not
+        already say. The one judgement in it — which column is the key — is
+        offered as a *guess*, named as one, and editable before Start.
+
+        Stored on the run, because it is the first entry in its audit trail:
+        what was offered, and what it was expected to cost.
+        """
+        run_dir = run_dir_of(run_id)
+        state = read_state(run_dir)
+        workflow = state.get("workflow", "")
+        cartridge = by_workflow.get(workflow)
+        if cartridge is None:
+            raise HTTPException(status_code=400, detail=f"unknown workflow {workflow!r}")
+
+        shape = workflow_shape(cartridge, workflow)
+        inputs = dict(state.get("inputs") or {})
+        profile = _profile_inputs(runs_dir, run_id, inputs)
+        plan = {
+            "workflow": workflow,
+            "description": shape["description"],
+            "inputs": inputs,
+            "steps": shape["steps"],
+            "personas": shape["personas"],
+            "gates": [s["id"] for s in shape["steps"] if s["gate"]],
+            "profile": profile,
+            "guesses": _guesses(shape, inputs, profile),
+            "estimate": _estimate(runs_dir, workflow),
+        }
+        state["plan"] = plan
+        _rewrite_state(run_dir, state)
+        return plan
+
+    @app.post("/runs/{run_id}/stop")
+    def stop_run(run_id: str) -> dict[str, Any]:
+        """Ask a run to stop. It stops between steps, and says so.
+
+        Not a kill: a step is a persona holding a kernel and half a written
+        file, and ending it there leaves a workspace nothing can describe. The
+        step in flight finishes and the run stops before the next one — which is
+        also what makes "stopping never costs more than what already ran" true
+        rather than approximately true (§1.7).
+
+        A run nobody is driving is simply marked stopped.
+        """
+        run_dir = run_dir_of(run_id)
+        state = read_state(run_dir)
+        if state.get("status") in ("done", "failed", "stopped"):
+            return {"stopping": False, "status": state.get("status")}
+        if driver.is_running(run_id):
+            state["stop_requested"] = True
+            _rewrite_state(run_dir, state)
+            return {"stopping": True, "status": state.get("status")}
+        state["status"] = "stopped"
+        state["gate"] = None
+        _rewrite_state(run_dir, state)
+        return {"stopping": False, "status": "stopped"}
 
     @app.post("/runs/{run_id}/gate")
     async def answer_gate(run_id: str, request: Request) -> dict[str, Any]:
@@ -430,6 +512,112 @@ def add_runs_routes(
                 "Content-Length": str(len(payload)),
             },
         )
+
+
+def _profile_inputs(runs_dir: Path, run_id: str, inputs: dict[str, Any]) -> dict[str, Any] | None:
+    """The shape of whatever table this run was given, read where it landed.
+
+    Domain-agnostic on purpose: rows, columns, how many distinct values each
+    holds and how many are empty, plus a few rows to look at. What those columns
+    *mean* is the cartridge's business — the harness reports the shape of a file
+    and nothing about its subject.
+
+    Local in the sense that matters: the file is read by the server the operator
+    is already running, and nothing about it leaves this process.
+    """
+    for name, value in inputs.items():
+        if not isinstance(value, str):
+            continue
+        target = resolve_run_file(runs_dir, run_id, value)
+        if target is None or target.suffix.lower() not in READERS:
+            continue
+        try:
+            columns, rows, total = read_table(target, PROFILE_ROWS)
+        except TableUnreadable:
+            continue
+        return {
+            "input": name,
+            "path": value,
+            "bytes": target.stat().st_size,
+            "rows": total,
+            "columns": [_column(columns[i], [r[i] for r in rows]) for i in range(len(columns))],
+            "preview": rows[:PREVIEW_PROFILE_ROWS],
+            "preview_columns": columns,
+        }
+    return None
+
+
+def _column(name: str, values: list[Any]) -> dict[str, Any]:
+    """One column, described by what is in it rather than by what it is called."""
+    present = [v for v in values if v not in (None, "")]
+    numeric = bool(present) and all(_numberish(v) for v in present)
+    return {
+        "name": name,
+        "type": "number" if numeric else "text",
+        "distinct": len({str(v) for v in present}),
+        "empty": len(values) - len(present),
+        "sample": str(present[0]) if present else "",
+    }
+
+
+def _numberish(value: Any) -> bool:
+    if isinstance(value, bool):
+        return False
+    if isinstance(value, int | float):
+        return True
+    try:
+        float(str(value))
+    except ValueError:
+        return False
+    return True
+
+
+def _guesses(shape: dict[str, Any], inputs: dict[str, Any], profile: dict[str, Any] | None
+             ) -> dict[str, dict[str, str]]:
+    """Values the operator has not given, offered as guesses and labelled as such.
+
+    Only one kind of guess is made, and only from the file's own shape: an input
+    the workflow declares but nobody filled, whose name the profile answers —
+    a column that is unique across every row it was shown. The harness does not
+    know what a "key" is; it knows which column has no repeats.
+    """
+    if not profile:
+        return {}
+    unique = [
+        c["name"] for c in profile["columns"]
+        if c["distinct"] and c["distinct"] == min(profile["rows"], PROFILE_ROWS) and not c["empty"]
+    ]
+    out: dict[str, dict[str, str]] = {}
+    for key, spec in shape["inputs"].items():
+        given = str(inputs.get(key) or "").strip()
+        if given and given.lower() not in EMPTY_VALUES:
+            continue
+        if spec["type"] == "string" and unique and key.endswith("column"):
+            out[key] = {
+                "value": unique[0],
+                "why": f"unique across all {profile['rows']} rows, with nothing missing",
+            }
+    return out
+
+
+def _estimate(runs_dir: Path, workflow: str) -> dict[str, Any]:
+    """What this has cost before. The only honest source there is.
+
+    Not a price list and not a guess from token counts: the same workflow, on
+    this machine, finished. When it has never finished, the estimate says so —
+    an invented number is how a product earns "cheap until it isn't".
+    """
+    past = [
+        s for s in list_runs(runs_dir, limit=50)
+        if s.workflow == workflow and s.status == "done" and s.cost_usd
+    ]
+    if not past:
+        return {"runs": 0, "cost_usd": None, "seconds": None}
+    return {
+        "runs": len(past),
+        "cost_usd": round(sum(s.cost_usd or 0 for s in past) / len(past), 3),
+        "seconds": round(sum(s.duration or 0 for s in past) / len(past)),
+    }
 
 
 def _archive_members(run_dir: Path, workspace: Path, *, everything: bool) -> list[str]:

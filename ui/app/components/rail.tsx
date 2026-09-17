@@ -1,9 +1,12 @@
 "use client";
 
 import type { RunDetail, StepRecord } from "../lib/api";
+import { stopRun } from "../lib/api";
 import { duration, initial, money, percent, tokens } from "../lib/format";
 import type { StepRow } from "../lib/run-state";
 import { useClock } from "../lib/use-run";
+
+import { useState } from "react";
 
 /**
  * The team rail: who is working, on what, what it costs, and where it stopped.
@@ -22,12 +25,15 @@ export function Rail({
   steps,
   openStep,
   onOpenStep,
+  onChanged,
   children,
 }: {
   detail: RunDetail | null;
   steps: StepRow[];
   openStep: string | null;
   onOpenStep: (step: string | null) => void;
+  /** Re-read the run after something on the rail changed it. */
+  onChanged: () => void;
   /** The conversation, mounted by the page so the rail does not pull it in. */
   children?: React.ReactNode;
 }) {
@@ -47,6 +53,7 @@ export function Rail({
         <p className="rail-status">
           <RunPill detail={detail} />
           <span className="mono rail-elapsed">{duration(elapsed)}</span>
+          {detail?.live && <Stop runId={detail.run_id} onStopped={onChanged} />}
         </p>
         <Metrics detail={detail} />
       </header>
@@ -79,7 +86,7 @@ function RunPill({ detail }: { detail: RunDetail | null }) {
     status === "awaiting_gate" && detail?.awaiting
       ? "needs you"
       : stale
-        ? "stopped"
+        ? "interrupted"
         : status === "awaiting_gate"
           ? "sent back"
           : status;
@@ -88,6 +95,33 @@ function RunPill({ detail }: { detail: RunDetail | null }) {
       <i className="pill-dot" />
       {label}
     </span>
+  );
+}
+
+/**
+ * Stop, as a first-class button rather than a thing you do by closing the tab.
+ *
+ * It takes effect between steps: the step in flight finishes, because a persona
+ * holding a kernel and half a written file cannot be ended anywhere else without
+ * leaving a workspace nothing can describe. That is also what makes "stopping
+ * never costs more than what already ran" (§1.7) true rather than nearly true,
+ * and the button says which it is before you press it.
+ */
+function Stop({ runId, onStopped }: { runId: string; onStopped: () => void }) {
+  const [asked, setAsked] = useState(false);
+  return (
+    <button
+      type="button"
+      className="rail-stop"
+      disabled={asked}
+      title="The step running now finishes; the run stops before the next one"
+      onClick={() => {
+        setAsked(true);
+        void stopRun(runId).then(onStopped).catch(() => setAsked(false));
+      }}
+    >
+      {asked ? "stopping…" : "Stop"}
+    </button>
   );
 }
 

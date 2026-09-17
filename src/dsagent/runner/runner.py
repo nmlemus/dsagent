@@ -226,6 +226,22 @@ class RunState:
     than a second chart with the same title. The log keeps every version; this
     keeps the standing one.
     """
+    stop_requested: bool = False
+    """Somebody pressed stop. Honoured between steps, and cleared when it is.
+
+    Between steps, not inside one: a step is a persona holding a kernel and half
+    a file, and killing it there leaves a workspace nothing can describe. So the
+    step in flight finishes and the run stops before the next one — which is
+    also the only point at which "stopping never costs more than what already
+    ran" is a promise the runner can keep.
+    """
+    plan: dict[str, Any] | None = None
+    """The proposal this run was started from, if it was started from one.
+
+    Kept on the run because it is the *audit trail's* first entry: what was
+    offered, what it was expected to cost, and — once the run has happened —
+    what it actually did. A plan the operator edited is the edited one.
+    """
     gate: dict[str, Any] | None = None
     """The gate being asked right now: step, persona, prompt, produces, asked_at.
 
@@ -517,6 +533,8 @@ class WorkflowRunner:
 
         try:
             for step in wf.ordered_steps():
+                if self._stopped(state):
+                    return state
                 rec = state.steps[step.id]
                 # The work is skipped once it is done; the gate never is. A gate
                 # is a `interrupt()` call under `dsagent serve`, and LangGraph
@@ -530,12 +548,32 @@ class WorkflowRunner:
                         return state
                 if step.gate and not self._gate(wf, step, rec, state, dry_run):
                     return state
+                if self._stopped(state):
+                    return state
             state.status = "done"
             state.save(self.run_dir)
             return state
         finally:
             if not dry_run:
                 self.close()
+
+    def _stopped(self, state: RunState) -> bool:
+        """Whether somebody asked this run to stop. Read from disk, not memory.
+
+        The request arrives over HTTP, in another thread, and `run.json` is the
+        only thing both sides agree on — the same reason a gate lives there.
+        """
+        try:
+            asked = RunState.load(self.run_dir).stop_requested
+        except (OSError, ValueError, TypeError):
+            return False
+        if not asked:
+            return False
+        state.stop_requested = False
+        state.status = "stopped"
+        state.save(self.run_dir)
+        self.log("[run] stopped between steps, as asked")
+        return True
 
     def _resolve_inputs(self, wf: Workflow, given: dict[str, Any]) -> dict[str, Any]:
         out = dict(given)
