@@ -31,7 +31,7 @@ Status legend: `[ ]` todo · `[~]` in progress · `[x]` done. One task per PR.
 - [x] Dispatch runner events as LangChain custom events (`dsagent/runner/dispatch.py`), which `ag-ui-langgraph` forwards as AG-UI `CUSTOM` with the same name and value. Pinned by a test that runs the runner inside a sync tool under an async `astream_events` consumer, and by a timing test: the first event arrives while the tool is still working
 - [x] Human gates become LangGraph `interrupt()`s answered from the UI (`ask_human` → `interrupt`), on the resume rules already built. `GateRequest` gives the hook the step context a gate card needs
 - [x] `ui/` Next.js + CopilotKit shell: chat left, empty canvas right, `/api/copilotkit` relaying to `dsagent serve` via `HttpAgent`. Verified from the browser against a real model (`docs/runs/ui-shell-001.png`)
-- [ ] Canvas contents: workspace files from `dsagent.file` (iframe for `.html`, markdown, PNG, table for `.csv/.parquet`)
+- [x] Canvas contents: workspace files from `dsagent.file` — deliverables and working files grouped by `kind`, sandboxed iframe for `.html`, react-markdown for `.md`, `<img>` for figures, a table for `.csv/.tsv`, `<pre>` for json/text. Verified end to end (`docs/runs/ui-canvas-001.png`, `-002.png`). Parquet still has no browser reader; it links out
 - [x] Gate card: `useInterrupt` in the right pane — step, persona, message, `produces` links to `/runs/{id}/files/{path}`, approve/reject with a note. Verified end to end from the browser (`docs/runs/ui-gate-001.png`)
 - [ ] Workflow progress render: DAG with step status from `dsagent.step` events
 - [ ] Run `eda-to-report` end to end from the browser; screenshot in `docs/runs/`
@@ -133,3 +133,14 @@ Status legend: `[ ]` todo · `[~]` in progress · `[x]` done. One task per PR.
   wrong persona's messages. Caught in the first real browser run: `analyze` failed its `produces` carrying
   `profile`'s telemetry and marie's `skills_read`. Same positional-identity trap as the gate-sequence bug, one
   level down; only reachable under `serve`, because the CLI has no checkpointer.
+- 2026-09-16 — `/runs/*` is rewritten through Next onto `dsagent serve` rather than fetched cross-origin. The
+  canvas reads `.md` and `.csv` with `fetch`, which CORS governs; `<iframe>` and `<img>` do not, which is why the
+  first canvas showed figures and failed on text with "Failed to fetch". A rewrite makes every artifact
+  same-origin, so nothing is relaxed on the Python side and there is no CORS policy to get wrong later. The
+  report iframe keeps `sandbox=""`, which denies same-origin access anyway. `fileUrl` is now relative and
+  `NEXT_PUBLIC_DSAGENT_ORIGIN` is gone.
+- 2026-09-16 — Canvas focus follows step completion, never a file event, and lands on the step's *last*
+  `produces`. Confirmed live: `report` wrote `findings.md` then `findings.html` three seconds apart and the pane
+  went straight to the HTML, and the four figures of the analyze burst appended without stealing focus — run
+  001's observations 2 and 3, now enforced rather than noted. A user click pins the pane until the next step
+  finishes.
