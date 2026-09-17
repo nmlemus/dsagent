@@ -211,6 +211,20 @@ The check is distribution metadata, not `import`: what a cartridge declares is w
 
 Because the sandbox protocol is provider-agnostic, `kind: modal` or `kind: langsmith` can be added later without touching workflows.
 
+#### What a Docker env has to honour (M2.3 design)
+
+M2.5 and M2.6 added three things to the harness that were written against the kernel env, where "inside the env" and "on this machine" are the same place. In a container they are not, and each has to be settled before the backend is worth testing.
+
+**The workspace is a bind-mount, never a copy.** Everything else here depends on it. The run directory is the single record a run keeps — `produces` is verified on the host after a step, the files endpoint serves from it, `show_chart` names a file in it, the zip is built from it — so a container that writes to its own copy produces a run whose evidence does not exist. `-v <run>/workspace:/workspace -w /workspace`, and the step's files are on disk the moment it writes them.
+
+**Skills are already inside it.** `materialize_skills` copies each persona's granted skills to `<workspace>/.dsagent/skills/<persona>/`, which is *within* the bind-mount, and `run_skill_script` runs `<env.python> <path relative to the workspace root>` through `env.backend.execute()` with the container's working directory set to the mount. So the tool needs no change at all and no second mount to be reachable — a mount "at the same absolute path" would be solving a problem that does not exist. What is worth adding is the *read-only* guarantee: a second bind of the same directory with `:ro` over the first, so a persona cannot rewrite the skill it was granted. That is a containment property, not a plumbing one.
+
+**Auto-gate scripts are not inside it.** `gate.check` resolves against the workflow directory (`wf.path / gate.check`) — in the cartridge, outside the workspace — and `_auto_gate` runs it with `subprocess.run(["python3", …])` on the host, ignoring the env entirely. In a Docker env that is the wrong machine, the wrong interpreter and the wrong dependencies: an R-hat check that needs the fitted posterior needs the image that produced it. The gate script is therefore **materialized like a skill** — copied to `<workspace>/.dsagent/gates/<workflow>/` when the run starts — and run through `env.backend.execute()` with `env.python`, in the step's own env. Materializing rather than mounting the cartridge keeps one rule for both env kinds: the kernel env runs the identical command and nothing about it changes.
+
+**Chart validation stays on the host, and says so when it cannot happen.** `show_chart` writes nothing into the env: it reads a table the step already wrote and checks a Vega-Lite spec with `altair` and `vl-convert` in the harness's own process. That is correct — validation belongs where the answer is recorded, not where the data was computed — and it is another reason the workspace must be shared rather than copied. The consequence is that the *harness* needs the `[ui]` extra whenever a cartridge draws charts, even if every step runs in Docker. Today `validate_spec` returns "no problem" when either package is missing, which turns a missing install into silently unvalidated charts. It must be loud instead: a warning in `runner.log` the first time a chart is recorded unvalidated, and a note from `dsagent cartridge validate` when the harness cannot validate what this cartridge's personas are told to emit.
+
+**One container per run, removed on the way out.** A container is provisioned on the first step that needs its env and reused by every later step in the same run — a fit and the optimizer that reads its posterior are the same machine — and removed in a `finally` on exit, failure or stop. Resuming after a server restart starts a fresh container: the workspace is on disk and the container held nothing that was not also there. The container id and image go into `runner.log` and onto a `dsagent.env` event, because "which image produced this" is part of what makes a run auditable.
+
 ## 4. Harness (`dsagent-core`)
 
 The harness has five modules and deliberately nothing else.
