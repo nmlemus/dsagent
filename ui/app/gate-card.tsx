@@ -19,18 +19,15 @@ export type GatePayload = {
 export const GATE_REASON = "dsagent.gate";
 
 /**
- * Where `dsagent serve` is, as the *browser* sees it.
+ * A workspace file's URL, relative on purpose.
  *
- * Not `DSAGENT_URL`: that one is read server-side by the CopilotKit route, and
- * may well be a hostname only the Next process can resolve. These links open in
- * the user's own tab, so they need a public origin.
+ * `next.config.mjs` rewrites `/runs/*` onto `dsagent serve`, so artifacts are
+ * same-origin: `fetch` works without CORS, and the browser needs to know nothing
+ * about where the agent actually lives.
  */
-const FILES_ORIGIN =
-  process.env.NEXT_PUBLIC_DSAGENT_ORIGIN ?? "http://localhost:8000";
-
 export function fileUrl(runId: string, path: string): string {
   const segments = path.split("/").map(encodeURIComponent).join("/");
-  return `${FILES_ORIGIN}/runs/${encodeURIComponent(runId)}/files/${segments}`;
+  return `/runs/${encodeURIComponent(runId)}/files/${segments}`;
 }
 
 /**
