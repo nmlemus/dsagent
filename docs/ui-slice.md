@@ -169,6 +169,37 @@ A single resolved answer becomes `Command(resume=payload)`
 (`_build_command_from_agui_resume`), so `interrupt()` returns the `{"decision": …}` object
 the card sent, verbatim.
 
+### Amended in M2.5 (`docs/ui-product.md`)
+
+Three additions, all additive — an M2.2 consumer reading these events still works.
+
+**A fourth event, `dsagent.note`.** A persona's narration, emitted by the runner as the
+persona writes it:
+
+```jsonc
+{"run_id": "…", "step": "analyze", "persona": "noel",
+ "text": "Four figures written; the temp_min trend clears zero by a hair.", "ts": …}
+```
+
+§4 above attributed narration *by time* — a message that started between a step's
+`started` and its end was that step's — because the AG-UI stream carries nothing that says
+who is talking. The runner knows, so it says so. Attribution stops being a guess, and the
+narration survives a reload, a second tab and a run nobody was attached to, none of which
+a live message stream does.
+
+**`dsagent.step` gains `gate`.** `null` on a step without one; otherwise
+`{kind, prompt, asked_at, decision, note, decided_at}`, with `decision: null` while the
+answer is missing. The runner emits `status: "awaiting_gate"` with a pending gate *before*
+calling `ask_human`, and the step again with the answer once it arrives. The interrupt is
+still how a browser-held gate is answered; this is how every *other* reader learns that
+the run stopped, what it stopped for, and how long it stood there.
+
+**The events are written to `<run_dir>/events.jsonl`** by the runner itself, along with
+`runner.log`. `docs/ui-product.md` §4.2: the UI rebuilds a screen from the log and then
+follows it, which is what makes a reload, a second tab and a CLI-started run show the same
+thing. `dsagent.step`'s payload is unchanged otherwise, so the file and the wire carry the
+same objects.
+
 ## 4. Frontend (`ui/`)
 
 Next.js app router. `app/api/copilotkit/route.ts` uses

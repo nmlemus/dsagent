@@ -38,18 +38,36 @@ Status legend: `[ ]` todo · `[~]` in progress · `[x]` done. One task per PR.
 - [x] Run `eda-to-report` end to end from the browser — `docs/runs/eda-to-report-003.md`, with the gate approved from the card and screenshots in `docs/runs/eda-to-report-003/`. $0.47 against run 002's $0.85; all four run-001 canvas observations answered
 - [ ] Then: A2UI panels for agent-composed views; MCP Apps later if needed *(deferred past M2.2 — the slice does not need them)*
 
-### M2.2.1 UX debt — from run 003, unstarted
+### M2.2.1 UX debt — from run 003; all seven closed in M2.5
 
 The slice works end to end; these are what an operator hits while using it. Ordered as
 `docs/runs/eda-to-report-003.md` orders them.
 
 - [x] **A successful run ends in a red error.** Fixed: the served graph runs at `recursion_limit=150` (`dsagent serve --recursion-limit` to change it). The limit is per invocation and applies to the orchestrator alone — a persona is compiled with `checkpointer=False` and spends its own budget. Measured: ~3 super-steps fixed plus ~2 per model↔tool round, and `CopilotKitMiddleware` adds an `after_model` node to each round, so LangGraph's default 25 buys about ten rounds
-- [ ] **A served run leaves no readable log.** `dsagent serve` passes `log=lambda m: None`, so a run directory has `run.json` and no `runner.log`; the CLI writes one. Reading a run after the fact is worse from the browser than from the terminal
-- [ ] **`produces` ticks read ○ while the files are visibly landing.** `produces_matched` is empty on `started` by design, so mid-step the DAG row and the file list disagree in front of the operator
-- [ ] **A reload loses the run.** Canvas state is reduced from the live event stream only; refreshing mid-run shows an empty canvas while the run continues server-side, with no way to re-attach. Related: nothing outside the gate card names the run (see M4's multi-run management)
-- [ ] **The human wait is invisible.** Run 003 spent 37 s waiting for the gate decision and no surface shows it — exactly the number needed to judge whether a gate earns its cost
-- [ ] **The error toast shows a stack trace** from a minified bundle. It should name the step and the reason
-- [ ] **A failed step's presentation is unexercised.** The DAG row renders `error`, but no run has failed in the browser, so that path has never been looked at
+- [x] **A served run leaves no readable log.** `dsagent serve` passes `log=lambda m: None`, so a run directory has `run.json` and no `runner.log`; the CLI writes one. Reading a run after the fact is worse from the browser than from the terminal
+- [x] **`produces` ticks read ○ while the files are visibly landing.** `produces_matched` is empty on `started` by design, so mid-step the DAG row and the file list disagree in front of the operator
+- [x] **A reload loses the run.** Canvas state is reduced from the live event stream only; refreshing mid-run shows an empty canvas while the run continues server-side, with no way to re-attach. Related: nothing outside the gate card names the run (see M4's multi-run management)
+- [x] **The human wait is invisible.** Run 003 spent 37 s waiting for the gate decision and no surface shows it — exactly the number needed to judge whether a gate earns its cost
+- [x] **The error toast shows a stack trace** from a minified bundle. It should name the step and the reason
+- [x] **A failed step's presentation is unexercised.** The DAG row renders `error`, but no run has failed in the browser, so that path has never been looked at
+
+### M2.5 UI product pass (see docs/ui-product.md) — DONE 2026-09-17 (PR #75)
+
+Turning the M2.2 slice into something a stakeholder can watch for ten minutes and want.
+§7 of the spec is the exit condition; `docs/ui-product-log.md` is the working log.
+
+- [x] Replay fixture + replay engine: the runner writes `events.jsonl` and `runner.log`
+      per run, a gate is announced before it is asked, persona narration becomes
+      `dsagent.note`, and `ui/fixtures/run-eda-003` replays run 003 at 10× with no model
+- [x] Runs API + event-log SSE (§4.1, §4.2) and `dsagent serve --replay`
+- [x] Home screen + run restore on load
+- [x] Launcher: cartridges endpoint, upload, form from declared inputs, start
+- [x] Run screen layout + the Aiuda visual system
+- [x] Progress region: stepper, header metrics, inline gate card, narration
+- [x] Canvas: parquet preview, interactive HTML, downloads, zip
+- [x] Failure / reject / resume presentation
+- [x] SQLite checkpointer + cost in telemetry (§4.3, §4.6)
+- [x] Demo script run, evidence, `docs/runs/ui-product/DEMO.md`, PR
 
 ### M2.3 Docker env — next
 - [ ] `DockerBackend` integration test behind `DSAGENT_DOCKER=1` (build `envs/meridian`, `execute("python -c 'import meridian'")`)
@@ -77,6 +95,79 @@ The slice works end to end; these are what an operator hits while using it. Orde
 - [ ] chore: `dsagent --version` prints "Missing command" (eager callback vs `no_args_is_help`)
 
 ## Decisions log
+
+- 2026-09-17 — The human wait at a gate is measured from the *pending record in `run.json`*, not
+  from a clock read when the answer arrives, and `RunState.gate_wait` accumulates across answers.
+  Under `serve` the first `ask_human` never returns — it raises a LangGraph interrupt — and the
+  tool re-executes on resume, so reading the clock there measured the resume and every gate
+  reported 0 s (M2.2.1 item 5, closed in the CLI and the replay but not in the product). A step
+  keeps only its standing decision, so a gate sent back and later approved would also forget the
+  first wait, which is the one where somebody read the report and said no.
+- 2026-09-17 — The run driver and the AG-UI bridge take **different checkpointers** over the same
+  server: `SqliteSaver` for the driver (sync `.invoke`) and `InMemorySaver` for the bridge (async
+  `astream_events`). LangGraph's SQLite savers implement one calling style each, and
+  `AsyncSqliteSaver` cannot be constructed outside a running event loop — an app is built before
+  uvicorn has one. `InMemorySaver` implements both, which is why nothing caught the mismatch until
+  the first real chat message raised "does not support async methods". What it costs, stated: a run
+  started *from the chat* still loses its gate on a restart; a run started from the launcher does
+  not. Giving the chat the same durability means building the agent inside the server's lifespan.
+
+- 2026-09-17 — A run belongs to the server, not to the browser tab that started it. `POST /runs`
+  creates the directory, `POST /runs/{id}/start` drives the orchestrator on a background thread,
+  and the browser follows `events.jsonl` over SSE and answers gates over `POST /runs/{id}/gate`.
+  Reload, a second tab and a CLI-started run cannot show the same screen if the run exists only
+  inside one browser's event stream (`docs/ui-product.md` §4.2, §7.6, §7.11). The run still goes
+  through the orchestrator — the path the chat takes — so it exists in a thread that can be asked
+  about afterwards; the only thing the server decides for it is which directory it writes to.
+- 2026-09-17 — The run id travels to `run_workflow` in the graph config (`dsagent_run_id`), read
+  with `ensure_config()` and **not** with a `config: RunnableConfig` parameter. Under
+  `from __future__ import annotations` that parameter's annotation is a string, LangChain does not
+  recognise the injection, and the tool is silently handed `None` — the run then lands in a
+  directory named after the tool call while the operator's uploaded dataset sits in another.
+  Probed both ways on langchain-core 1.6.3.
+- 2026-09-17 — A run keeps the inputs it started with: on resume they are merged from `run.json`
+  *before* validation, not after. A re-entering caller is the accident-prone half — `--resume`
+  without the original `-i`, or a model retyping `inputs={}` — and this is what makes the
+  launcher's form, rather than the model, authoritative about what a run is running on.
+- 2026-09-17 — File uploads are a raw-body `PUT /runs/{id}/data/{input}`, not multipart. Multipart
+  means adding `python-multipart` for a form with one file in it, and a drag-and-drop already has
+  the `File` in hand. The input name is in the path, so a workflow with two datasets needs no new
+  convention. Revisit if a form ever needs several files in one request.
+- 2026-09-17 — The runs API lives in `src/dsagent/api.py`, not in `serve.py`. FastAPI resolves route
+  annotations against module globals, so importing `Request` inside the registering function made
+  every route take `request` as a query parameter (422 "Field required"). `api.py` is imported only
+  from `build_app`, which already requires the `[ui]` extra.
+
+- 2026-09-17 — The runner writes `<run_dir>/events.jsonl` and `<run_dir>/runner.log` itself,
+  rather than leaving both to whichever front end drove the run. `dsagent serve` passed
+  `log=lambda m: None`, so a browser-driven run left nothing readable while a CLI run did
+  (M2.2.1 item 2). The event log is what a late reader gets — a reload, a second tab, a
+  stakeholder on a link, a run started by the CLI — and reconstructing the screen from it is
+  what makes those the same screen. `RunState.save` became atomic in the same change: the runs
+  API reads `run.json` while the run is rewriting it.
+- 2026-09-17 — A human gate is announced on the event stream *before* anyone is asked
+  (`dsagent.step` with `status: awaiting_gate` and a `gate` object whose `decision` is null),
+  and again once answered. The interrupt is still how the browser holding it answers; it was
+  also the only thing that knew the run had stopped, which left every other reader watching a
+  run go silently quiet. The same pending question is written to `run.json` (`RunState.gate`),
+  because a run waiting for a person is the one most likely to still be waiting when the
+  process dies (§7.11), and `GateRecord.asked_at` makes the human wait a number rather than a
+  thing nobody can see (M2.2.1 item 5).
+- 2026-09-17 — `ask_human` may return `GateAnswer(decision, note)`. The gate card always
+  collected a note on a rejection and the runner dropped it on the floor; §7.10 asks for that
+  note to be visible in the step's history, which cannot be built from a decision alone.
+- 2026-09-17 — Persona narration is a runner event (`dsagent.note`), not an inference from the
+  message stream. M2.2 attributed it by time — a message starting inside a step's window was
+  that step's — because nothing on the wire says who is talking. The runner opened the window,
+  so it says so directly; and unlike a message stream a note survives a reload, a second tab
+  and a run nobody was attached to. The `messageView` filter stays: it is what keeps a
+  chat-started run's persona messages out of the transcript.
+- 2026-09-17 — The replay fixture is run 003's own record, reconstructed by
+  `tools/make_replay_fixture.py`, not a fresh capture. Real: step boundaries, the 37-second
+  gate wait, file mtimes, per-step tool counts and token usage, each persona's closing summary.
+  Reconstructed: the order and individual timestamps of tool calls inside a step, which
+  `run.json` does not record. It buys the same fixture for none of the six-run budget, which §7
+  needs more than a fifth recording of a run we already have.
 
 - 2026-09-16 — v2 lives as branch `v2` in `nmlemus/dsagent` (not a new repo). `main` keeps v1 and the `datascience-agent` PyPI line until 2.0 ships, then `v2` merges to `main` as 2.0.0.
 - 2026-09-16 — Backend on Deep Agents (not Claude Agent SDK): model-agnostic, sandbox protocol fits Docker-per-workflow, same SKILL.md standard as Claude Code.

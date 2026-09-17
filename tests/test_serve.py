@@ -183,8 +183,20 @@ def test_serve_mode_ask_human_interrupts_with_that_payload(monkeypatch):
         return {"decision": "approve"}
 
     monkeypatch.setattr("langgraph.types.interrupt", fake_interrupt)
-    assert serve.interrupt_gate(_request()) is GateDecision.APPROVE
+    answer = serve.interrupt_gate(_request())
+    assert answer.decision is GateDecision.APPROVE
     assert seen == [serve.gate_payload(_request())]
+
+
+def test_a_rejection_carries_its_note_back_to_the_runner(monkeypatch):
+    """A rejection whose reason is dropped is one nobody can act on tomorrow."""
+    monkeypatch.setattr(
+        "langgraph.types.interrupt",
+        lambda value: {"decision": "reject", "note": "the fog rows look wrong"},
+    )
+    answer = serve.interrupt_gate(_request())
+    assert answer.decision is GateDecision.REJECT
+    assert answer.note == "the fog rows look wrong"
 
 
 @pytest.mark.parametrize(

@@ -28,6 +28,7 @@ turns these into `CUSTOM` events.
 from __future__ import annotations
 
 import json
+import os
 import re
 import subprocess
 import time
@@ -39,6 +40,7 @@ from typing import Any
 
 from dsagent.cartridge.models import Cartridge, Step, Workflow
 from dsagent.envs.base import Env, make_env
+from dsagent.models import default_model
 
 
 class GateDecision(str, Enum):
@@ -49,6 +51,34 @@ class GateDecision(str, Enum):
 STEP_EVENT = "dsagent.step"
 TOOL_EVENT = "dsagent.tool"
 FILE_EVENT = "dsagent.file"
+NOTE_EVENT = "dsagent.note"
+"""A persona saying something while it works, attributed to its step.
+
+M2.2 read persona narration off the AG-UI message stream and attributed it by
+time — a message that started inside a step's window was that step's — because
+nothing on the wire says who is talking (`docs/ui-slice.md` §4). The runner does
+know, so it says so: attribution by construction rather than by clock, and it
+survives a reload, a second tab and a run nobody was watching, none of which a
+message stream does.
+"""
+
+EVENT_LOG = "events.jsonl"
+"""Every `RunnerEvent` of a run, one JSON object per line, in the run directory.
+
+The live `on_event` callback reaches whoever is attached *now*; this file is what
+a reader gets who attached late, reloaded the page, opened a second tab, or is
+looking at a run the CLI started. Reconstructing a screen from it is what makes
+those three the same screen — `docs/ui-product.md` §4.2.
+"""
+
+RUN_LOG = "runner.log"
+"""The `log()` lines of a run, in the run directory.
+
+Written by the runner rather than by a front end, because otherwise it depends on
+which front end drove the run: `dsagent serve` passes `log=lambda m: None`, so a
+browser-driven run left nothing to read afterwards while a CLI run did — backwards,
+and M2.2.1's second item.
+"""
 
 ARG_PREVIEW_CHARS = 120
 """Per-argument cap in a `dsagent.tool` preview. A `write_file` call carries the
@@ -88,6 +118,25 @@ class GateRequest:
 
 
 @dataclass
+class GateAnswer:
+    """A gate decision with the words that came with it.
+
+    `ask_human` may return a bare `GateDecision` — that is all a y/n terminal
+    prompt has — or this, which is what a gate card sends: a rejection is only
+    actionable if the note saying *why* survives into `run.json` and onto the
+    step's history in the browser.
+    """
+
+    decision: GateDecision
+    note: str = ""
+
+
+def as_answer(value: GateDecision | GateAnswer) -> GateAnswer:
+    """Normalise whatever `ask_human` returned."""
+    return value if isinstance(value, GateAnswer) else GateAnswer(decision=value)
+
+
+@dataclass
 class GateRecord:
     """What a human (or a check script) decided about a step, and when.
 
@@ -95,11 +144,17 @@ class GateRecord:
     `status` is whether the step's *work* finished, `gate` is whether anyone
     agreed to go on. Conflating them is what made a re-entered run skip a decided
     gate along with its step — see `_gate`.
+
+    `asked_at` is when the run stopped and `ts` when someone answered, so
+    `ts - asked_at` is the time a run spent waiting for a person. Run 003 spent
+    37 seconds there and no surface showed it, which is exactly the number needed
+    to judge whether a gate earns its cost (M2.2.1, item 5).
     """
 
     decision: str  # GateDecision value: "approve" | "reject"
     note: str = ""
     ts: float = 0.0
+    asked_at: float = 0.0
 
 
 @dataclass
@@ -126,6 +181,11 @@ class StepRecord:
     """Paths of SKILL.md files the step read, in first-read order."""
     files: list[dict[str, Any]] = field(default_factory=list)
     """`{path, mtime}` for workspace files the step created or modified, oldest first."""
+    model: str = ""
+    """The model this step actually ran on — the persona's, or the default."""
+    cost_usd: float | None = None
+    """What the step's tokens cost, by `prices.yaml`. `None` when the model has no
+    rate there: an unknown price is not zero."""
 
 
 @dataclass
@@ -135,6 +195,23 @@ class RunState:
     inputs: dict[str, Any]
     status: str = "pending"  # pending | running | done | failed | awaiting_gate
     steps: dict[str, StepRecord] = field(default_factory=dict)
+    gate_wait: float = 0.0
+    """Seconds this run has spent waiting for a person, accumulated.
+
+    A total rather than something derived from the step records, because a step
+    keeps only its *standing* decision: a gate sent back and later approved would
+    otherwise report the second wait and forget the first, and the first is the
+    one where somebody read the report and said no."""
+    gate: dict[str, Any] | None = None
+    """The gate being asked right now: step, persona, prompt, produces, asked_at.
+
+    `run.json` is the only thing that outlives the process, so a gate that exists
+    solely as a blocked `ask_human` call is invisible the moment the server is
+    restarted — and a run waiting for a person is exactly the run most likely to
+    still be waiting when that happens. Cleared as soon as an answer arrives; a
+    *rejected* gate leaves `status` at `awaiting_gate` with nothing pending,
+    because nobody is being asked until the run is resumed.
+    """
 
     @classmethod
     def load(cls, run_dir: Path) -> RunState:
@@ -143,8 +220,17 @@ class RunState:
         return cls(**d)
 
     def save(self, run_dir: Path) -> None:
-        d = asdict(self)
-        (run_dir / "run.json").write_text(json.dumps(d, indent=2))
+        """Write `run.json`, atomically.
+
+        A run is written while it is being read: the runs API reads this file on
+        every list and every poll, and a plain overwrite has a window where the
+        reader gets a truncated — or empty — file. Same-directory temp plus
+        `os.replace`, which is atomic on POSIX and on Windows.
+        """
+        path = run_dir / "run.json"
+        tmp = path.with_name(f".{path.name}.tmp")
+        tmp.write_text(json.dumps(asdict(self), indent=2), encoding="utf-8")
+        os.replace(tmp, path)
 
 
 def _step_record(d: dict[str, Any]) -> StepRecord:
@@ -172,9 +258,10 @@ class WorkflowRunner:
         run_dir: Path,
         *,
         agent_factory: AgentFactory | None = None,
-        ask_human: Callable[[GateRequest], GateDecision] | None = None,
+        ask_human: Callable[[GateRequest], GateDecision | GateAnswer] | None = None,
         log: Callable[[str], None] = print,
         on_event: Callable[[RunnerEvent], None] | None = None,
+        prices: Any = None,
     ) -> None:
         self.cartridge = cartridge
         self.run_dir = run_dir
@@ -182,29 +269,61 @@ class WorkflowRunner:
         self.workspace.mkdir(parents=True, exist_ok=True)
         self.agent_factory = agent_factory or self._default_factory
         self.ask_human = ask_human or (lambda request: GateDecision.APPROVE)
-        self.log = log
+        self._log = log
         self.on_event = on_event
         self.run_id = run_dir.name
+        self.event_log = run_dir / EVENT_LOG
+        self.run_log = run_dir / RUN_LOG
+        self.prices = prices
         self._envs: dict[str, Env] = {}
         self._reported: dict[str, float] = {}
         """Workspace mtimes already announced via `dsagent.file` for the running step."""
 
     # ---- events -------------------------------------------------------------
 
+    def log(self, message: str) -> None:
+        """One line of run narration: to `runner.log`, then to the front end.
+
+        The file first, because that is the record; a front end that raises (a
+        closed terminal, a disconnected browser) must not cost the run its log.
+        """
+        self._append(self.run_log, f"{time.strftime('%H:%M:%S')} {message}\n")
+        self._log(message)
+
     def emit(self, name: str, value: dict[str, Any]) -> None:
-        """Hand one event to the consumer, if there is one.
+        """Record one event, then hand it to the consumer if there is one.
 
         A consumer that raises must not take the run down with it: a browser
-        disconnecting mid-run is not a reason to lose four minutes of work.
+        disconnecting mid-run is not a reason to lose four minutes of work. The
+        event is written to `events.jsonl` either way — a run nobody is watching
+        still has to be readable afterwards.
         """
+        event = RunnerEvent(name=name, value={"run_id": self.run_id, **value, "ts": time.time()})
+        self._append(self.event_log, json.dumps({"name": event.name, "value": event.value}) + "\n")
         if self.on_event is None:
             return
         try:
-            self.on_event(RunnerEvent(name=name, value={"run_id": self.run_id, **value, "ts": time.time()}))
+            self.on_event(event)
         except Exception as e:  # noqa: BLE001 — a broken consumer is not a broken run
-            self.log(f"[event] consumer raised on {name}: {e}")
+            self._log(f"[event] consumer raised on {name}: {e}")
 
-    def _emit_step(self, wf: Workflow, step: Step, status: str, error: str = "") -> None:
+    def _append(self, path: Path, line: str) -> None:
+        """Append one line, and never fail the run over it.
+
+        Opened per line rather than held open: a run directory is written by
+        whoever drives it — CLI, server, a resumed second process — and a handle
+        held across a gate that lasts minutes is a handle held across a restart.
+        """
+        try:
+            with path.open("a", encoding="utf-8") as fh:
+                fh.write(line)
+        except OSError as e:
+            self._log(f"[run] could not write {path.name}: {e}")
+
+    def _emit_step(
+        self, wf: Workflow, step: Step, status: str, error: str = "",
+        gate: dict[str, Any] | None = None,
+    ) -> None:
         order = [s.id for s in wf.ordered_steps()]
         self.emit(
             STEP_EVENT,
@@ -219,6 +338,7 @@ class WorkflowRunner:
                 "needs": list(step.needs),
                 "produces": list(step.produces),
                 "produces_matched": self._produces_matched(step, status),
+                "gate": gate,
                 "error": error or None,
             },
         )
@@ -309,9 +429,21 @@ class WorkflowRunner:
 
     def run(self, workflow_name: str, inputs: dict[str, Any] | None = None, *, resume: bool = False, dry_run: bool = False) -> RunState:
         wf = self.cartridge.workflows[workflow_name]
-        inputs = self._resolve_inputs(wf, inputs or {})
-        if resume and (self.run_dir / "run.json").exists():
-            state = RunState.load(self.run_dir)
+        state = (
+            RunState.load(self.run_dir)
+            if resume and (self.run_dir / "run.json").exists()
+            else None
+        )
+        # A run keeps the inputs it started with, and they are resolved *after*
+        # the recorded ones are merged in — a re-entering caller is the
+        # accident-prone half. `--resume` without the original `-i`, or a
+        # re-executed tool call where a model retypes them, would otherwise fail
+        # validation for an input the run directory has recorded all along. Under
+        # `dsagent serve` this is what keeps the launcher's form, rather than the
+        # model, authoritative about what the run is running on.
+        inputs = self._resolve_inputs(wf, {**(inputs or {}), **(state.inputs if state else {})})
+        if state is not None:
+            state.inputs = inputs
         else:
             state = RunState(workflow=wf.name, cartridge=self.cartridge.name, inputs=inputs,
                              steps={s.id: StepRecord(id=s.id) for s in wf.steps})
@@ -398,6 +530,7 @@ class WorkflowRunner:
             rec.output = _last_text(result)
             # Before the produces check: a step that failed is the one worth reading.
             _record_telemetry(rec, result)
+            self._record_cost(rec, step)
             missing = [entry for entry in step.produces if not self.matched(entry)]
             if missing:
                 raise RuntimeError(f"step '{step.id}' did not produce: {', '.join(missing)}")
@@ -416,6 +549,18 @@ class WorkflowRunner:
             state.save(self.run_dir)
             self._emit_step(wf, step, rec.status, rec.error)
 
+    def _record_cost(self, rec: StepRecord, step: Step) -> None:
+        """Price the step's tokens, if this run was given a price list.
+
+        The model is the persona's own or the default — the same resolution
+        `build_persona_agent` makes — so a persona that opted into a stronger one
+        is priced as what it actually ran on.
+        """
+        persona = self.cartridge.personas.get(step.persona)
+        rec.model = (persona.model if persona and persona.model else default_model())
+        if self.prices is not None:
+            rec.cost_usd = self.prices.cost(rec.model, rec.usage)
+
     def _drive(self, agent: Any, message: str, step: Step) -> Any:
         """Run the persona, forwarding what it does as it does it.
 
@@ -430,6 +575,7 @@ class WorkflowRunner:
 
         result: Any = None
         seen_calls: set[str] = set()
+        seen_notes: set[str] = set()
         for mode, chunk in agent.stream(payload, stream_mode=["updates", "values"]):
             if mode == "values":
                 result = chunk
@@ -437,6 +583,7 @@ class WorkflowRunner:
             for node_update in (chunk or {}).values():
                 messages = node_update.get("messages") or [] if isinstance(node_update, dict) else []
                 self._emit_tools(step, messages, seen_calls)
+                self._emit_notes(step, messages, seen_notes)
             after = _snapshot(self.workspace)
             self._emit_files(step, self._reported, after)
             self._reported = after
@@ -462,6 +609,27 @@ class WorkflowRunner:
                     "tool": _attr(msg, "name") or "", "tool_call_id": call_id,
                     "phase": "finished", "args_preview": None,
                 })
+
+    def _emit_notes(self, step: Step, messages: list[Any], seen: set[str]) -> None:
+        """One `dsagent.note` per thing the persona says, as it says it.
+
+        A tool result is not narration and neither is an empty content block —
+        only what the persona wrote for a reader. Deduped by message id because
+        the same message reappears in later `updates` chunks; a message with no
+        id at all is keyed by its text, which is the best available and costs one
+        duplicate at worst.
+        """
+        for msg in messages:
+            if _attr(msg, "tool_call_id") is not None:
+                continue
+            text = _text_of(_attr(msg, "content"))
+            if not text.strip():
+                continue
+            key = str(_attr(msg, "id") or text)
+            if key in seen:
+                continue
+            seen.add(key)
+            self.emit(NOTE_EVENT, {"step": step.id, "persona": step.persona, "text": text})
 
     def _gate(self, wf: Workflow, step: Step, rec: StepRecord, state: RunState, dry_run: bool) -> bool:
         """Decide whether the run may go past this step. True = carry on.
@@ -491,16 +659,60 @@ class WorkflowRunner:
             run_id=self.run_id, workflow=wf.name, step=step.id, persona=step.persona,
             produces=list(step.produces), prompt=prompt,
         )
-        answer = GateDecision.APPROVE if dry_run else self.ask_human(request)
-        if decided == GateDecision.APPROVE.value:
-            return True  # asked for the sequence's sake; the decision already stands
-        rec.gate = GateRecord(decision=answer.value, ts=time.time())
+        standing = decided == GateDecision.APPROVE.value
+        if standing:
+            # This gate is already answered and is only being re-asked to keep the
+            # `interrupt()` sequence stable (see above). It must therefore touch
+            # *nothing*: not `state.gate`, which belongs to whichever later gate
+            # is actually waiting — gate 1 clearing it on re-entry is what left
+            # gate 2 without an `asked_at` and reporting a 0 s wait — not the
+            # accumulated wait, and not the event log, where a re-announced
+            # "awaiting" for a decided gate is a question nobody is being asked.
+            if not dry_run:
+                self.ask_human(request)  # the call is the point; the answer is discarded
+            self._emit_step(wf, step, rec.status, gate=_gate_event(gate.kind, prompt, rec.gate))
+            return True
+
+        # When the run stopped, not when it was resumed. Under `dsagent serve` the
+        # first pass never returns from `ask_human` — it raises a LangGraph
+        # interrupt — and the whole tool re-executes when the answer arrives, so
+        # a clock read here would measure the resume rather than the wait, and
+        # every gate would report 0s. The pending record written below is what
+        # remembers the real moment; on re-entry it is read back, and it is keyed
+        # by step so one gate never reads another's.
+        pending = state.gate if isinstance(state.gate, dict) else None
+        asked_at = (
+            float(pending["asked_at"])
+            if pending and pending.get("step") == step.id and pending.get("asked_at")
+            else time.time()
+        )
+        # Announced *before* asking, so a reader who is not the one being asked —
+        # a second tab, a reloaded page, a stakeholder on the link — sees the run
+        # stop and sees what it stopped for. Recorded in `run.json` for the same
+        # reason one step further out: a process that dies here must not take the
+        # question with it.
+        state.status = "awaiting_gate"
+        state.gate = {**asdict(request), "kind": "human", "asked_at": asked_at}
         state.save(self.run_dir)
-        if answer is GateDecision.APPROVE:
+        self._emit_step(wf, step, "awaiting_gate",
+                        gate={"kind": "human", "prompt": prompt, "asked_at": asked_at,
+                              "decision": None, "note": "", "decided_at": None})
+        answer = (
+            GateAnswer(GateDecision.APPROVE) if dry_run else as_answer(self.ask_human(request))
+        )
+        decided_at = time.time()
+        state.status, state.gate = "running", None
+        state.gate_wait = round(state.gate_wait + max(0.0, decided_at - asked_at), 3)
+        rec.gate = GateRecord(decision=answer.decision.value, note=answer.note,
+                              ts=decided_at, asked_at=asked_at)
+        state.save(self.run_dir)
+        if answer.decision is GateDecision.APPROVE:
+            self.log(f"[gate] approved after {decided_at - asked_at:.0f}s")
+            self._emit_step(wf, step, rec.status, gate=_gate_event(gate.kind, prompt, rec.gate))
             return True
         state.status = "awaiting_gate"
         state.save(self.run_dir)
-        self._emit_step(wf, step, "awaiting_gate")
+        self._emit_step(wf, step, "awaiting_gate", gate=_gate_event(gate.kind, prompt, rec.gate))
         self.log(f"[gate] run paused at '{step.id}'. Resume with --resume once approved.")
         return False
 
@@ -513,20 +725,45 @@ class WorkflowRunner:
         self.log(f"[gate] auto check {gate.check} after {step.id}")
         env = self.env_for(step.env or wf.env)  # noqa: F841  # M2.3: auto-gate runs inside the env
         script = wf.path / gate.check
+        asked_at = time.time()
         r = subprocess.run(
             ["python3", str(script)], cwd=self.workspace, capture_output=True, text=True, check=False
         )
         output = f"{r.stdout}{r.stderr}".strip()
+        prompt = f"auto check {gate.check}"
         if r.returncode != 0:
-            rec.gate = GateRecord(decision=GateDecision.REJECT.value, note=output[-500:], ts=time.time())
+            rec.gate = GateRecord(decision=GateDecision.REJECT.value, note=output[-500:],
+                                  ts=time.time(), asked_at=asked_at)
             rec.status, rec.error = "failed", f"auto gate failed:\n{output}"
             state.status = "failed"
             state.save(self.run_dir)
-            self._emit_step(wf, step, "failed", rec.error)
+            self._emit_step(wf, step, "failed", rec.error, gate=_gate_event("auto", prompt, rec.gate))
             return False
-        rec.gate = GateRecord(decision=GateDecision.APPROVE.value, note=output[-500:], ts=time.time())
+        rec.gate = GateRecord(decision=GateDecision.APPROVE.value, note=output[-500:],
+                              ts=time.time(), asked_at=asked_at)
         state.save(self.run_dir)
+        self._emit_step(wf, step, rec.status, gate=_gate_event("auto", prompt, rec.gate))
         return True
+
+
+def _gate_event(kind: str, prompt: str, record: GateRecord | None) -> dict[str, Any]:
+    """A decided gate, as it rides on `dsagent.step`.
+
+    The same shape as the pending form the runner emits before asking, with the
+    answer filled in — so a consumer keeps one reducer and a step row shows
+    "waiting" and then "approved after 37 s" without special-casing either.
+    """
+    if record is None:
+        return {"kind": kind, "prompt": prompt, "asked_at": None,
+                "decision": None, "note": "", "decided_at": None}
+    return {
+        "kind": kind,
+        "prompt": prompt,
+        "asked_at": record.asked_at or None,
+        "decision": record.decision,
+        "note": record.note,
+        "decided_at": record.ts or None,
+    }
 
 
 GLOB_CHARS = "*?["
@@ -674,6 +911,17 @@ def _fill(text: str, inputs: dict[str, Any]) -> str:
         return "None" if value is None else str(value)
 
     return _PLACEHOLDER.sub(substitute, text)
+
+
+def _text_of(content: Any) -> str:
+    """The readable text of a message's content, blocks or plain string.
+
+    A content list mixes text with whatever else the provider sends (thinking,
+    tool-use blocks, images); only `text` is narration.
+    """
+    if isinstance(content, list):
+        return "".join(c.get("text", "") for c in content if isinstance(c, dict))
+    return content if isinstance(content, str) else ""
 
 
 def _last_text(result: Any) -> str:

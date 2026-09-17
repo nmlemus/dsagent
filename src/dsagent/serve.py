@@ -1,17 +1,20 @@
-"""`dsagent serve` — the orchestrator over AG-UI, plus the run workspace over HTTP.
+"""`dsagent serve` — the orchestrator over AG-UI, and the runs API the UI is built on.
 
-Two surfaces on one FastAPI app:
+Three surfaces on one FastAPI app:
 
 * **`POST /agent`** (and `GET /agent/health`), registered by
-  `ag_ui_langgraph.add_langgraph_fastapi_endpoint`. It streams AG-UI events over
-  SSE: the orchestrator's own messages and tool calls, the runner's
-  `dsagent.step` / `dsagent.tool` / `dsagent.file` as `CUSTOM` events, and a
-  human gate as an interrupt.
-* **`GET /runs/{run_id}/files/{path}`**, which serves a run's workspace so the
-  canvas can render the artifacts those file events announce.
+  `ag_ui_langgraph.add_langgraph_fastapi_endpoint`. The chat: the orchestrator's
+  own messages and tool calls over AG-UI SSE, and a gate as an interrupt.
+* **The runs API** — `GET /cartridges`, `GET|POST /runs`, `GET /runs/{id}`,
+  `POST /runs/{id}/start`, `POST /runs/{id}/gate`, `GET /runs/{id}/events` (SSE)
+  and `/events.json`, `GET /runs/{id}/log`. A run belongs to the server, not to
+  the tab that started it, so a reload, a second tab and a CLI-started run all
+  show the same thing (`docs/ui-product.md` §4.1, §4.2).
+* **`GET /runs/{run_id}/files/{path}`**, a run's workspace, for the canvas.
 
 Everything domain-specific still comes from cartridges; this module only knows
-about workflows in the abstract. See `docs/ui-slice.md`.
+about workflows in the abstract — the launcher's form is generated from whatever
+inputs a workflow declares, and nothing here has heard of a dataset.
 
 The `[ui]` extra is required: `pip install -e ".[ui,anthropic]"`.
 """
@@ -25,6 +28,7 @@ from typing import Any
 from dsagent.cartridge.models import Cartridge
 from dsagent.envs.base import Env
 from dsagent.runner import (
+    GateAnswer,
     GateDecision,
     GateRequest,
     RunnerEvent,
@@ -107,22 +111,27 @@ def decision_of(answer: Any) -> GateDecision:
     return GateDecision.REJECT
 
 
-def interrupt_gate(request: GateRequest) -> GateDecision:
-    """`ask_human` for serve mode: stop the graph and wait for the browser.
+def interrupt_gate(request: GateRequest) -> GateAnswer:
+    """`ask_human` for serve mode: stop the graph and wait for an answer.
 
     Imported lazily so the module stays importable without a graph in scope.
     The runner calls this for every gate it reaches, decided or not — that is
     what keeps the interrupt sequence stable across the re-execution a resume
     causes; see `docs/ui-slice.md` §2 and `WorkflowRunner._gate`.
+
+    The note comes back with the decision. A rejection whose reason is dropped
+    here is a rejection nobody can act on when the run is resumed tomorrow.
     """
     from langgraph.types import interrupt
 
-    return decision_of(interrupt(gate_payload(request)))
+    answer = interrupt(gate_payload(request))
+    note = answer.get("note") if isinstance(answer, dict) else ""
+    return GateAnswer(decision=decision_of(answer), note=str(note or ""))
 
 
 def build_app(
     cartridges: list[Cartridge],
-    env: Env,
+    env: Env | None,
     workspace: Path,
     runs_dir: Path,
     *,
@@ -130,41 +139,130 @@ def build_app(
     path: str = "/agent",
     seed: Path | None = None,
     recursion_limit: int = RECURSION_LIMIT,
+    replay: Path | None = None,
+    replay_speed: float = 10.0,
+    memory_checkpointer: bool = False,
+    prices: Any = None,
 ):
-    """The FastAPI app: the orchestrator at `path`, the run files under `/runs`."""
-    from ag_ui_langgraph import add_langgraph_fastapi_endpoint
-    from copilotkit import CopilotKitMiddleware, LangGraphAGUIAgent
+    """The FastAPI app: the orchestrator at `path`, the runs API under `/runs`.
+
+    `replay` swaps the thing that drives runs for a recording (`dsagent.replay`)
+    and leaves every other route identical, which is the point: a screen built
+    against a replayed run is built against the same API. No model is loaded and
+    no agent endpoint is mounted in that mode — there is nothing behind it.
+    """
     from fastapi import FastAPI
-    from langgraph.checkpoint.memory import InMemorySaver
 
-    from dsagent.host import build_orchestrator
+    app = FastAPI(title="DSAgent")
 
-    graph = build_orchestrator(
-        cartridges, env, workspace, model=model,
-        workflow_tools=workflow_tools(
+    if replay is not None:
+        from dsagent.replay import Replay
+
+        driver: Any = Replay(replay, runs_dir, speed=replay_speed, prices=prices)
+    else:
+        from ag_ui_langgraph import add_langgraph_fastapi_endpoint
+        from copilotkit import CopilotKitMiddleware, LangGraphAGUIAgent
+
+        from dsagent.driver import GraphDriver
+        from dsagent.host import build_orchestrator
+
+        tools = workflow_tools(
             cartridges, runs_dir,
             ask_human=interrupt_gate, on_event=dispatch_runner_event, seed=seed,
-        ),
-        middleware=[CopilotKitMiddleware()],
-        # Interrupts need a checkpointer to resume from. In-memory for the slice:
-        # one `dsagent serve` process, and the thread only has to outlive the gate
-        # answer — `run.json` is what survives a restart. SQLite is the follow-up.
-        checkpointer=InMemorySaver(),
-    )
-    app = FastAPI(title="DSAgent")
-    add_langgraph_fastapi_endpoint(
-        app,
-        # `thread_id` comes off each `RunAgentInput` and the bridge puts it into
-        # `config["configurable"]`, so one browser tab is one resumable thread.
-        # The bridge merges this `config` into what it hands `astream_events`.
-        LangGraphAGUIAgent(
-            name="dsagent", graph=graph, description="DSAgent orchestrator",
-            config={"recursion_limit": recursion_limit},
-        ),
-        path=path,
-    )
+            prices=prices,
+        )
+
+        def orchestrator(checkpointer: Any):
+            return build_orchestrator(
+                cartridges, env, workspace, model=model, workflow_tools=tools,
+                middleware=[CopilotKitMiddleware()], checkpointer=checkpointer,
+            )
+
+        # Two graphs, two savers, because the two callers are not the same shape.
+        #
+        # The bridge streams with `astream_events`, and `SqliteSaver` raises
+        # "does not support async methods" the moment anyone types in the chat —
+        # which is exactly what the first real demo run did. Its async twin cannot
+        # be built here either: `AsyncSqliteSaver.__init__` calls
+        # `asyncio.get_running_loop()`, and an app is constructed before uvicorn
+        # has a loop.
+        #
+        # So the chat keeps an in-memory saver, as it had in M2.2, and the runs —
+        # which is what §4.3 and §7.11 are actually about — get the file. What
+        # that costs, stated plainly: a run started *from the chat* still loses
+        # its gate when the server restarts. A run started from the launcher does
+        # not. Giving the chat the same durability needs the agent built inside
+        # the server's lifespan, which is a change to make deliberately rather
+        # than in passing.
+        add_langgraph_fastapi_endpoint(
+            app,
+            # `thread_id` comes off each `RunAgentInput` and the bridge puts it into
+            # `config["configurable"]`, so one browser tab is one resumable thread.
+            # The bridge merges this `config` into what it hands `astream_events`.
+            LangGraphAGUIAgent(
+                name="dsagent",
+                graph=orchestrator(checkpointer_for(workspace, memory=True)),
+                description="DSAgent orchestrator",
+                config={"recursion_limit": recursion_limit},
+            ),
+            path=path,
+        )
+        driver = GraphDriver(
+            orchestrator(checkpointer_for(workspace, memory=memory_checkpointer)),
+            cartridges, runs_dir, recursion_limit=recursion_limit,
+        )
+
+    from dsagent.api import add_runs_routes
+
+    app.state.driver = driver
+    app.state.runs_dir = runs_dir
+    add_runs_routes(app, cartridges, runs_dir, driver)
     _add_files_route(app, runs_dir)
     return app
+
+
+CHECKPOINTS = "checkpoints.sqlite"
+"""Where interrupts wait, under the serve workspace's `.dsagent/`."""
+
+
+def checkpointer_for(workspace: Path, *, memory: bool = False):
+    """Where an interrupted graph waits for its answer.
+
+    SQLite, because a gate can be answered after a restart (§4.3, §7.11): the
+    interrupt lives in the checkpoint, and an in-memory saver loses it with the
+    process — which is precisely the run most likely to still be waiting when the
+    process goes away.
+
+LangGraph's SQLite savers each implement one half of the protocol: `SqliteSaver`
+    raises `NotImplementedError: does not support async methods` under
+    `astream_events`, and `AsyncSqliteSaver` is the mirror image under a plain
+    `.invoke()` — and cannot be constructed outside a running event loop at all.
+    `InMemorySaver` implements both, which is why the mismatch stayed hidden until
+    a real chat message reached a real server. `build_app` therefore gives the
+    sync driver the file and the async bridge memory; see the note there.
+
+    `memory=True` keeps the old behaviour for a throwaway session, and a missing
+    `langgraph-checkpoint-sqlite` falls back to it rather than refusing to serve:
+    losing resumability is worse than nothing, but not as bad as no server.
+    """
+    from langgraph.checkpoint.memory import InMemorySaver
+
+    if memory:
+        return InMemorySaver()
+
+    path = workspace / ".dsagent" / CHECKPOINTS
+    path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        import sqlite3
+
+        from langgraph.checkpoint.sqlite import SqliteSaver
+
+        # `check_same_thread=False` because the runs are driven on their own
+        # threads (`dsagent.driver`) while the request that answered the gate
+        # returns on another; SQLite's own locking is what keeps those honest.
+        return SqliteSaver(sqlite3.connect(str(path), check_same_thread=False))
+    except ImportError:
+        return InMemorySaver()
 
 
 def resolve_run_file(runs_dir: Path, run_id: str, rel: str) -> Path | None:
@@ -189,23 +287,59 @@ def resolve_run_file(runs_dir: Path, run_id: str, rel: str) -> Path | None:
     return target if target.is_file() else None
 
 
+SCRIPTED_PREFIX = "/runs-x"
+"""Second route prefix for artifacts the canvas frames with `allow-scripts`.
+
+`docs/ui-product.md` §4.5: a Plotly dashboard is useless without scripts, and an
+iframe that has both `allow-scripts` and `allow-same-origin` is not sandboxed at
+all. So the canvas frames an interactive artifact with `allow-scripts` *only*,
+which gives the frame an opaque origin — and this prefix exists so that choice is
+visible in the URL rather than hidden in an attribute, and so the response can
+carry a matching `Content-Security-Policy` of its own.
+
+The two prefixes serve the same bytes with the same path rules. What differs is
+what the page around them permits.
+"""
+
+SCRIPTED_CSP = "sandbox allow-scripts; base-uri 'none'; form-action 'none'"
+"""What the served document may do, said by the server as well as by the frame.
+
+A run's artifacts are written by a model. Belt and braces is the right posture:
+the header sandboxes the document even if a future canvas forgets the attribute,
+and denies it a base URI and anywhere to post a form.
+"""
+
+
 def _add_files_route(app, runs_dir: Path) -> None:
     from fastapi import HTTPException
     from fastapi.responses import FileResponse
 
-    @app.get("/runs/{run_id}/files/{path:path}")
-    def run_file(run_id: str, path: str):
-        """Serve one file from a run's workspace, for the canvas to render."""
+    def serve_file(run_id: str, path: str, headers: dict[str, str] | None = None):
         target = resolve_run_file(runs_dir, run_id, path)
         if target is None:
             raise HTTPException(status_code=404, detail="not found")
         media_type, _ = mimetypes.guess_type(target.name)
-        return FileResponse(target, media_type=media_type or "application/octet-stream")
+        return FileResponse(
+            target,
+            media_type=media_type or "application/octet-stream",
+            headers=headers,
+        )
+
+    @app.get("/runs/{run_id}/files/{path:path}")
+    def run_file(run_id: str, path: str):
+        """Serve one file from a run's workspace, for the canvas to render."""
+        return serve_file(run_id, path)
+
+    @app.get(SCRIPTED_PREFIX + "/{run_id}/files/{path:path}")
+    def run_file_scripted(run_id: str, path: str):
+        """The same file, for a frame that is allowed to run its scripts."""
+        return serve_file(run_id, path, headers={"Content-Security-Policy": SCRIPTED_CSP})
 
 
 __all__ = [
     "GATE_REASON",
     "GATE_RESPONSE_SCHEMA",
+    "SCRIPTED_PREFIX",
     "RunnerEvent",
     "build_app",
     "decision_of",

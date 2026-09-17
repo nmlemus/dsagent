@@ -1,0 +1,629 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<!-- Navigable mockup of the M2.6 living-report UI. Open directly in a browser (needs internet for Vega/fonts CDNs). -->
+</head>
+<body>
+<title>DSAgent Living Report</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=JetBrains+Mono:wght@400;500&family=Manrope:wght@500;600;700;800&display=swap">
+<script src="https://cdn.jsdelivr.net/npm/vega@5.30.0/build/vega.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/vega-lite@5.21.0/build/vega-lite.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/vega-embed@6.26.0/build/vega-embed.min.js"></script>
+<style>
+:root{
+  --bg:#FAF8F4;--bg2:#F2EEE6;--line:#E6E0D4;--line2:#D6CFC0;
+  --ink:#142850;--ink2:#4C5670;--ink3:#7A8196;
+  --accent:#E8440A;--accent-soft:#FBE7DE;--ok:#0A7B5A;--ok-soft:#DFF1EA;--bad:#B5321F;--bad-soft:#F6E1DC;--wait:#B8860B;--wait-soft:#F7EEDA;
+  --rail:#142850;--rail-ink:#EDEFF5;--rail-ink2:#A9B2C9;--rail-line:#25395F;
+  --card:#FFFFFF;--shadow:0 1px 2px rgba(20,40,80,.06),0 8px 24px -12px rgba(20,40,80,.18);
+  --ui:"Manrope","Satoshi",system-ui,-apple-system,"Segoe UI",sans-serif;
+  --serif:"Instrument Serif",Georgia,"Times New Roman",serif;
+  --mono:"JetBrains Mono",ui-monospace,SFMono-Regular,Menlo,monospace;
+  --r:10px;
+}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
+  --bg:#0F1727;--bg2:#141F33;--line:#243352;--line2:#31436A;--ink:#EDEFF5;--ink2:#B9C1D6;--ink3:#8591AD;
+  --accent:#FF6A33;--accent-soft:#3A2418;--ok:#38B48B;--ok-soft:#173A31;--bad:#E86A57;--bad-soft:#3E1F1B;--wait:#E0B14C;--wait-soft:#3B3117;
+  --rail:#0A1120;--rail-line:#1E2C47;--card:#172238;--shadow:0 1px 2px rgba(0,0,0,.4),0 8px 24px -12px rgba(0,0,0,.6);
+}}
+:root[data-theme="dark"]{
+  --bg:#0F1727;--bg2:#141F33;--line:#243352;--line2:#31436A;--ink:#EDEFF5;--ink2:#B9C1D6;--ink3:#8591AD;
+  --accent:#FF6A33;--accent-soft:#3A2418;--ok:#38B48B;--ok-soft:#173A31;--bad:#E86A57;--bad-soft:#3E1F1B;--wait:#E0B14C;--wait-soft:#3B3117;
+  --rail:#0A1120;--rail-line:#1E2C47;--card:#172238;--shadow:0 1px 2px rgba(0,0,0,.4),0 8px 24px -12px rgba(0,0,0,.6);
+}
+*{box-sizing:border-box}
+html,body{height:100%}
+body{margin:0;background:var(--bg);color:var(--ink);font:14px/1.5 var(--ui);font-variant-numeric:tabular-nums;-webkit-font-smoothing:antialiased}
+body::before{content:"";position:fixed;inset:0;pointer-events:none;opacity:.035;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='2'/%3E%3C/filter%3E%3Crect width='160' height='160' filter='url(%23n)'/%3E%3C/svg%3E");z-index:0}
+a{color:inherit}
+button{font:inherit;color:inherit;background:none;border:0;cursor:pointer}
+button:focus-visible,[tabindex]:focus-visible,input:focus-visible,textarea:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.mono{font-family:var(--mono);font-size:12px}
+.serif{font-family:var(--serif);font-weight:400;letter-spacing:-.01em}
+.eyebrow{font-size:11px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:var(--ink3)}
+.hide{display:none!important}
+
+/* ---------- app frame ---------- */
+#app{position:relative;z-index:1;min-height:100%;display:flex;flex-direction:column}
+.topbar{display:flex;align-items:center;gap:20px;padding:0 20px;height:52px;border-bottom:1px solid var(--line);background:var(--bg);position:sticky;top:env(safe-area-inset-top,0px);z-index:20}
+.brand{display:flex;align-items:center;gap:10px;font-weight:800;letter-spacing:-.01em}
+.brand i{width:22px;height:22px;border-radius:6px;background:var(--accent);display:inline-block;position:relative}
+.brand i::after{content:"";position:absolute;inset:6px;border-radius:2px;background:var(--bg)}
+.nav{display:flex;gap:4px;margin-left:8px}
+.nav button{padding:6px 10px;border-radius:8px;color:var(--ink2);font-weight:600}
+.nav button.on{background:var(--bg2);color:var(--ink)}
+.topbar .grow{flex:1}
+.pill{display:inline-flex;align-items:center;gap:6px;padding:3px 9px;border-radius:999px;font-size:11.5px;font-weight:700;letter-spacing:.02em}
+.pill.run{background:var(--accent-soft);color:var(--accent)}
+.pill.wait{background:var(--wait-soft);color:var(--wait)}
+.pill.ok{background:var(--ok-soft);color:var(--ok)}
+.pill.bad{background:var(--bad-soft);color:var(--bad)}
+.pill.idle{background:var(--bg2);color:var(--ink2)}
+.dot{width:7px;height:7px;border-radius:50%;background:currentColor}
+.pill.run .dot{animation:pulse 1.2s ease-in-out infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.35}}
+.btn{display:inline-flex;align-items:center;gap:8px;padding:8px 14px;border-radius:9px;font-weight:700;border:1px solid var(--line2);background:var(--card);color:var(--ink)}
+.btn.primary{background:var(--accent);border-color:var(--accent);color:#fff}
+.btn.ghost{border-color:transparent;background:transparent;color:var(--ink2)}
+.btn.sm{padding:5px 10px;font-size:12.5px}
+.btn:disabled{opacity:.5;cursor:default}
+.mockbar{display:flex;flex-wrap:wrap;gap:10px;align-items:center;padding:8px 20px;background:var(--rail);color:var(--rail-ink);font-size:12px}
+.mockbar b{color:#fff}
+.mockbar .sp{flex:1}
+.mockbar select,.mockbar button{font:inherit;color:var(--rail-ink);background:transparent;border:1px solid var(--rail-line);border-radius:6px;padding:3px 8px}
+.mockbar button.on{background:var(--accent);border-color:var(--accent);color:#fff}
+.view{flex:1;display:none}
+.view.on{display:block}
+.page{max-width:1180px;margin:0 auto;padding:32px 20px 64px}
+
+/* ---------- home ---------- */
+.h1{font-family:var(--serif);font-size:38px;line-height:1.1;margin:0 0 6px;text-wrap:balance}
+.lead{color:var(--ink2);max-width:62ch;margin:0 0 24px}
+.tabs{display:flex;gap:18px;border-bottom:1px solid var(--line);margin-bottom:18px}
+.tabs button{padding:10px 2px;font-weight:700;color:var(--ink3);border-bottom:2px solid transparent;margin-bottom:-1px}
+.tabs button.on{color:var(--ink);border-color:var(--accent)}
+.runs{display:grid;grid-template-columns:1fr;gap:1px;background:var(--line);border:1px solid var(--line);border-radius:12px;overflow:hidden}
+.runrow{display:grid;grid-template-columns:1.6fr 1.2fr 1fr .8fr .8fr .7fr auto;gap:14px;align-items:center;padding:14px 18px;background:var(--card);cursor:pointer}
+.runrow:hover{background:var(--bg2)}
+.runrow .t{font-weight:700}
+.runrow .s{color:var(--ink3);font-size:12px}
+.runhead{background:var(--bg2);font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:var(--ink3);font-weight:700;cursor:default}
+.avs{display:flex}
+.av{width:26px;height:26px;border-radius:50%;display:inline-grid;place-items:center;font-size:11px;font-weight:800;color:#fff;border:2px solid var(--card);margin-left:-6px}
+.av:first-child{margin-left:0}
+.av.marie{background:#0A7B5A}.av.noel{background:#142850}.av.ana{background:#E8440A}.av.pablo{background:#6B5B95}
+.prog{height:4px;background:var(--line);border-radius:2px;overflow:hidden;width:90px}
+.prog i{display:block;height:100%;background:var(--accent)}
+.wfgrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:16px}
+.wf{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:18px 20px;box-shadow:var(--shadow)}
+.wf h3{margin:0 0 4px;font-size:17px}
+.wf p{margin:0 0 12px;color:var(--ink2)}
+.steps{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:12px}
+.chip{display:inline-flex;align-items:center;gap:6px;padding:4px 9px;border-radius:7px;background:var(--bg2);font-size:12px;font-weight:600}
+.chip.gate{background:var(--wait-soft);color:var(--wait)}
+.chip .av{width:16px;height:16px;font-size:8px;border:0;margin:0}
+
+/* ---------- new run ---------- */
+.newgrid{display:grid;grid-template-columns:1.1fr .9fr;gap:24px;align-items:start}
+@media (max-width:900px){.newgrid{grid-template-columns:1fr}}
+.drop{border:2px dashed var(--line2);border-radius:14px;padding:34px 24px;text-align:center;background:var(--card);cursor:pointer;transition:border-color .15s}
+.drop:hover,.drop.over{border-color:var(--accent)}
+.drop .big{font-family:var(--serif);font-size:24px;margin-bottom:4px}
+.drop .s{color:var(--ink3)}
+.filecard{display:grid;grid-template-columns:auto 1fr auto;gap:14px;align-items:center;background:var(--card);border:1px solid var(--line);border-radius:12px;padding:14px 16px;margin-top:14px}
+.ficon{width:40px;height:40px;border-radius:9px;background:var(--bg2);display:grid;place-items:center;font-family:var(--mono);font-size:11px;font-weight:600;color:var(--ink2)}
+.preview{margin-top:14px;border:1px solid var(--line);border-radius:12px;overflow:auto;background:var(--card)}
+table.tb{border-collapse:collapse;width:100%;font-size:12.5px}
+table.tb th,table.tb td{padding:7px 10px;border-bottom:1px solid var(--line);text-align:left;white-space:nowrap}
+table.tb th{background:var(--bg2);font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:var(--ink3);position:sticky;top:0;cursor:pointer}
+table.tb td.num{font-family:var(--mono);text-align:right}
+textarea,input[type=text]{width:100%;font:inherit;color:var(--ink);background:var(--card);border:1px solid var(--line2);border-radius:9px;padding:10px 12px;resize:vertical}
+label.f{display:block;font-size:12px;font-weight:700;color:var(--ink2);margin:14px 0 6px}
+.plan{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:20px 22px;box-shadow:var(--shadow)}
+.plan h3{margin:0 0 2px;font-family:var(--serif);font-size:24px;font-weight:400}
+.plan .kv{display:grid;grid-template-columns:120px 1fr;gap:6px 14px;margin:14px 0;font-size:13px}
+.plan .kv b{color:var(--ink3);font-weight:700;font-size:11px;letter-spacing:.08em;text-transform:uppercase;padding-top:2px}
+.plan .kv input{padding:5px 8px}
+.timeline{display:flex;flex-direction:column;gap:0;margin:8px 0 14px;border-left:2px solid var(--line);padding-left:14px}
+.timeline .st{position:relative;padding:5px 0}
+.timeline .st::before{content:"";position:absolute;left:-20px;top:11px;width:8px;height:8px;border-radius:50%;background:var(--line2)}
+.timeline .st.g::before{background:var(--wait)}
+.timeline .st b{font-weight:700}
+.timeline .st span{color:var(--ink3);font-size:12px;margin-left:6px}
+.est{display:flex;gap:18px;padding:12px 14px;background:var(--bg2);border-radius:10px;margin:12px 0 16px}
+.est div b{display:block;font-family:var(--mono);font-size:16px}
+.est div span{font-size:11px;color:var(--ink3);text-transform:uppercase;letter-spacing:.08em}
+
+/* ---------- run screen ---------- */
+.runwrap{display:grid;grid-template-columns:320px 1fr;height:calc(100vh - 52px - 40px);min-height:600px}
+.runwrap.drawer-on{grid-template-columns:320px 1fr 420px}
+@media (max-width:1100px){.runwrap,.runwrap.drawer-on{grid-template-columns:1fr;height:auto}}
+.rail{background:var(--rail);color:var(--rail-ink);overflow:auto;display:flex;flex-direction:column}
+.rail .hd{padding:18px 18px 12px;border-bottom:1px solid var(--rail-line)}
+.rail .hd .wf{background:transparent;border:0;padding:0;box-shadow:none}
+.rail .title{font-family:var(--serif);font-size:22px;line-height:1.15;margin:4px 0 2px;color:#fff}
+.rail .sub{color:var(--rail-ink2);font-size:12px}
+.metrics{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-top:12px}
+.metrics div{background:rgba(255,255,255,.05);border-radius:8px;padding:7px 8px}
+.metrics b{display:block;font-family:var(--mono);font-size:14px;color:#fff}
+.metrics span{font-size:10px;color:var(--rail-ink2);letter-spacing:.08em;text-transform:uppercase}
+.stepl{padding:8px 10px;flex:1}
+.step{border-radius:10px;padding:10px 10px 8px;margin-bottom:4px;border:1px solid transparent}
+.step.run{background:rgba(255,255,255,.06);border-color:rgba(232,68,10,.55)}
+.step.wait{background:rgba(255,255,255,.06);border-color:rgba(224,177,76,.55)}
+.step .row{display:flex;align-items:center;gap:10px}
+.step .nm{font-weight:700;color:#fff;flex:1}
+.step .el{font-family:var(--mono);font-size:11px;color:var(--rail-ink2)}
+.step .mark{width:20px;height:20px;border-radius:50%;display:grid;place-items:center;font-size:11px;font-weight:800;border:1.5px solid var(--rail-line);color:var(--rail-ink2)}
+.step.done .mark{background:var(--ok);border-color:var(--ok);color:#fff}
+.step.run .mark{border-color:var(--accent);color:var(--accent)}
+.step.run .mark::after{content:"";width:8px;height:8px;border-radius:50%;background:var(--accent);animation:pulse 1.2s infinite}
+.step.wait .mark{border-color:var(--wait);color:var(--wait)}
+.step.fail .mark{background:var(--bad);border-color:var(--bad);color:#fff}
+.step .who{display:flex;align-items:center;gap:6px;font-size:12px;color:var(--rail-ink2);margin:4px 0 0 30px}
+.step .det{margin:8px 0 0 30px;font-size:12px;color:var(--rail-ink2);display:none}
+.step.open .det,.step.run .det,.step.wait .det{display:block}
+.prom{display:flex;gap:6px;align-items:center;margin:3px 0;font-family:var(--mono);font-size:11px}
+.prom i{font-style:normal;width:14px;text-align:center}
+.prom.ok i{color:var(--ok)}.prom.no i{color:var(--rail-ink2)}.prom.bad i{color:var(--bad)}
+.tools{display:flex;flex-wrap:wrap;gap:4px 10px;margin:6px 0;font-family:var(--mono);font-size:11px}
+.tools b{color:#fff;font-weight:500}
+.narr{margin-top:6px}
+.narr summary{cursor:pointer;color:var(--rail-ink2);list-style:none;font-size:12px}
+.narr summary::before{content:"▸ ";}
+.narr[open] summary::before{content:"▾ ";}
+.narr p{margin:6px 0 0;padding:8px 10px;background:rgba(0,0,0,.25);border-radius:6px;font-size:12px;line-height:1.45;color:var(--rail-ink)}
+.cost{font-family:var(--mono);font-size:11px;color:var(--rail-ink2);margin-top:6px}
+.handoff{margin:2px 0 6px 30px;font-size:11px;color:var(--rail-ink2);display:flex;gap:6px;align-items:center}
+.handoff::before{content:"↓";color:var(--ok)}
+.chat{border-top:1px solid var(--rail-line);padding:12px 14px 14px}
+.chat .msgs{max-height:160px;overflow:auto;display:flex;flex-direction:column;gap:8px;margin-bottom:10px}
+.msg{font-size:12.5px;line-height:1.45;padding:8px 10px;border-radius:9px;background:rgba(255,255,255,.06);color:var(--rail-ink)}
+.msg.me{background:rgba(232,68,10,.18);align-self:flex-end;max-width:92%}
+.msg .from{font-size:10px;letter-spacing:.08em;text-transform:uppercase;color:var(--rail-ink2);display:block;margin-bottom:2px}
+.chat form{display:flex;gap:8px}
+.chat input{flex:1;background:rgba(255,255,255,.06);border:1px solid var(--rail-line);color:#fff;border-radius:8px;padding:8px 10px;font:inherit}
+.chat input::placeholder{color:var(--rail-ink2)}
+.chat button{background:var(--accent);color:#fff;border-radius:8px;padding:0 12px;font-weight:700}
+
+.doc{overflow:auto;background:var(--bg)}
+.docin{max-width:820px;margin:0 auto;padding:36px 32px 80px}
+.doc h1{font-family:var(--serif);font-size:36px;line-height:1.12;margin:0 0 6px;text-wrap:balance}
+.doc .meta{color:var(--ink3);font-size:12.5px;margin-bottom:28px;display:flex;gap:14px;flex-wrap:wrap}
+.sec{margin:0 0 34px;padding-top:8px;opacity:1;transform:none;transition:opacity .35s ease,transform .35s ease}
+.sec.pending{opacity:.45}
+.sec.enter{opacity:0;transform:translateY(8px)}
+.sec h2{font-family:var(--serif);font-size:26px;font-weight:400;margin:0 0 10px;display:flex;align-items:baseline;gap:10px}
+.sec h2 .by{font-family:var(--ui);font-size:11px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:var(--ink3)}
+.sec p{margin:0 0 12px;max-width:68ch;color:var(--ink2)}
+.sec p.k{color:var(--ink)}
+.findings{margin:0 0 14px;padding-left:20px}
+.findings li{margin-bottom:8px;max-width:68ch}
+.working{display:flex;gap:14px;align-items:center;padding:16px 18px;background:var(--card);border:1px dashed var(--line2);border-radius:12px}
+.working .av{width:34px;height:34px;font-size:13px}
+.working .w{flex:1}
+.working b{display:block}
+.working .s{font-size:12.5px;color:var(--ink3);font-family:var(--mono)}
+.card{background:var(--card);border:1px solid var(--line);border-radius:12px;box-shadow:var(--shadow);margin:14px 0 18px;overflow:hidden}
+.card .ch{display:flex;align-items:center;gap:10px;padding:10px 14px;border-bottom:1px solid var(--line)}
+.card .ch b{flex:1;font-size:13.5px}
+.card .tb-tools{display:flex;gap:4px}
+.card .tb-tools button,.card .tb-tools select{font:inherit;font-size:12px;color:var(--ink2);padding:4px 8px;border-radius:6px;border:1px solid transparent;background:transparent}
+.card .tb-tools button:hover,.card .tb-tools select:hover{background:var(--bg2)}
+.card .tb-tools button.ask{color:var(--accent);font-weight:700}
+.card .body{padding:10px 12px}
+.card .foot{display:flex;gap:10px;flex-wrap:wrap;padding:8px 14px;border-top:1px solid var(--line);background:var(--bg2);font-size:11.5px;color:var(--ink3)}
+.card .foot a{font-family:var(--mono);color:var(--ink2);text-decoration:none;border-bottom:1px dotted var(--line2)}
+.vg{width:100%;min-height:240px}
+.vg .vega-embed{width:100%}
+.vg .vega-embed summary{display:none}
+.skel{height:240px;border-radius:8px;background:linear-gradient(90deg,var(--bg2),var(--line),var(--bg2));background-size:200% 100%;animation:sk 1.4s linear infinite}
+@keyframes sk{to{background-position:-200% 0}}
+.sel{font-size:12px;color:var(--ink3);padding:0 14px 10px;font-family:var(--mono)}
+.tblwrap{overflow:auto;max-height:280px}
+.gatec{border:1px solid var(--wait);background:var(--card);border-radius:12px;box-shadow:var(--shadow);margin:14px 0 20px;overflow:hidden}
+.gatec .gh{display:flex;align-items:center;gap:10px;padding:12px 16px;background:var(--wait-soft)}
+.gatec .gh .pill{background:var(--wait);color:#fff}
+.gatec .gb{padding:14px 16px}
+.gatec .gb h3{margin:0 0 6px;font-size:16px}
+.gatec .what{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin:12px 0}
+@media (max-width:700px){.gatec .what{grid-template-columns:1fr}}
+.gatec .what div{background:var(--bg2);border-radius:9px;padding:10px 12px;font-size:12.5px}
+.gatec .what b{display:block;font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--ink3);margin-bottom:4px}
+.gatec .acts{display:flex;gap:10px;align-items:center;margin-top:12px;flex-wrap:wrap}
+.gatec textarea{margin-top:10px;min-height:56px}
+.diff{font-family:var(--mono);font-size:11.5px;background:var(--bg2);border-radius:8px;padding:8px 10px;margin-top:10px}
+.diff .m{color:var(--bad);text-decoration:line-through}.diff .p{color:var(--ok)}
+.ask-row{display:flex;gap:8px;margin:6px 0 0}
+.ask-row button{font-size:12px;color:var(--ink3);padding:4px 9px;border-radius:999px;border:1px solid var(--line)}
+.ask-row button:hover{color:var(--accent);border-color:var(--accent)}
+.summary{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin:0 0 22px}
+@media (max-width:700px){.summary{grid-template-columns:1fr 1fr}}
+.summary div{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:12px 14px}
+.summary b{display:block;font-family:var(--mono);font-size:18px}
+.summary span{font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--ink3)}
+.exports{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:20px}
+.exec{background:var(--card);border-left:3px solid var(--accent);padding:14px 18px;border-radius:0 10px 10px 0;margin-bottom:26px}
+.exec p{color:var(--ink);font-size:15px}
+
+.drawer{border-left:1px solid var(--line);background:var(--card);overflow:auto;display:none}
+.runwrap.drawer-on .drawer{display:block}
+.drawer .dh{display:flex;align-items:center;gap:10px;padding:12px 16px;border-bottom:1px solid var(--line);position:sticky;top:0;background:var(--card)}
+.drawer .dh b{flex:1}
+.drawer pre{margin:0;padding:14px 16px;font-family:var(--mono);font-size:11.5px;line-height:1.55;white-space:pre-wrap;color:var(--ink2)}
+.drawer .kv{display:grid;grid-template-columns:110px 1fr;gap:6px 12px;padding:12px 16px;font-size:12.5px;border-bottom:1px solid var(--line)}
+.drawer .kv b{color:var(--ink3);font-size:11px;letter-spacing:.08em;text-transform:uppercase}
+
+.playbar{display:flex;align-items:center;gap:12px;padding:0 20px;height:40px;border-top:1px solid var(--line);background:var(--bg2);font-size:12px;color:var(--ink2)}
+.playbar input[type=range]{flex:1;accent-color:var(--accent)}
+.playbar .t{font-family:var(--mono)}
+.toast{position:fixed;bottom:56px;left:50%;transform:translateX(-50%);background:var(--ink);color:var(--bg);padding:9px 14px;border-radius:9px;font-weight:600;box-shadow:var(--shadow);z-index:50;opacity:0;transition:opacity .2s}
+.toast.on{opacity:1}
+.foot{padding:24px 20px;border-top:1px solid var(--line);color:var(--ink3);font-size:12px;text-align:center}
+@media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
+</style>
+
+<div id="app">
+  <div class="mockbar">
+    <b>Mockup navegable · DSAgent v2 "living report"</b>
+    <span>datos y corrida reales (seattle-weather, run 003) reproducidos localmente · Manrope sustituye a Satoshi</span>
+    <span class="sp"></span>
+    <span>Velocidad</span>
+    <select id="speed"><option value="6">6×</option><option value="12" selected>12×</option><option value="30">30×</option></select>
+    <button id="playBtn" class="on">⏸ Pausar</button>
+    <button id="resetBtn">↺ Reiniciar</button>
+  </div>
+  <div class="topbar">
+    <div class="brand"><i></i> DSAgent <span class="eyebrow" style="margin-left:6px">Aiuda Labs</span></div>
+    <div class="nav">
+      <button data-go="home" class="on">Runs</button>
+      <button data-go="new">Nuevo run</button>
+      <button data-go="run">Run en marcha</button>
+      <button data-go="done">Run terminado</button>
+    </div>
+    <div class="grow"></div>
+    <span class="pill idle" id="cartPill">cartridge · ds v0.1 · 4 personas</span>
+    <div class="avs"><span class="av marie">M</span><span class="av noel">N</span><span class="av ana">A</span><span class="av pablo">P</span></div>
+  </div>
+
+  <!-- ================= HOME ================= -->
+  <section class="view on" id="v-home">
+    <div class="page">
+      <h1 class="h1">Runs</h1>
+      <p class="lead">Cada run es un informe que el equipo escribe delante de ti. Ábrelo para verlo llenarse, aprobar decisiones y llevarte el resultado.</p>
+      <div style="display:flex;gap:10px;align-items:center;margin-bottom:18px">
+        <button class="btn primary" data-go="new">＋ Nuevo run</button>
+        <span style="color:var(--ink3);font-size:12.5px">3 runs · $2,17 en total · 1 esperando decisión</span>
+      </div>
+      <div class="tabs"><button class="on" data-tab="runs">Runs</button><button data-tab="wf">Workflows del equipo</button></div>
+      <div id="tab-runs">
+        <div class="runs">
+          <div class="runrow runhead"><span>Run</span><span>Dataset</span><span>Estado</span><span>Duración</span><span>Coste</span><span>Equipo</span><span></span></div>
+          <div class="runrow" data-go="run"><div><div class="t">EDA → informe · precipitación y temperatura</div><div class="s mono">eda-to-report-toolu_01WFnoj · hoy 14:02</div></div><div class="mono">seattle-weather.csv <span class="s">1.461 × 6</span></div><div><span class="pill run"><i class="dot"></i> paso 3 de 4</span><div class="prog" style="margin-top:6px"><i style="width:62%"></i></div></div><div class="mono">4 m 12 s</div><div class="mono">$0,31</div><div class="avs"><span class="av marie">M</span><span class="av noel">N</span></div><div class="mono s">→</div></div>
+          <div class="runrow" data-go="done"><div><div class="t">EDA → informe · precipitación y temperatura</div><div class="s mono">eda-to-report-toolu_01KDBPT · ayer 18:40</div></div><div class="mono">seattle-weather.csv <span class="s">1.461 × 6</span></div><div><span class="pill ok"><i class="dot"></i> hecho</span></div><div class="mono">6 m 45 s</div><div class="mono">$0,47</div><div class="avs"><span class="av marie">M</span><span class="av noel">N</span></div><div class="mono s">→</div></div>
+          <div class="runrow" data-go="run"><div><div class="t">MMM Meridian · Q3 media plan</div><div class="s mono">mmm-meridian-toolu_01A9x · ayer 11:05</div></div><div class="mono">mmm_input.parquet <span class="s">8.320 × 19</span></div><div><span class="pill wait"><i class="dot"></i> esperando decisión · model-spec</span></div><div class="mono">12 m 08 s</div><div class="mono">$1,39</div><div class="avs"><span class="av pablo">P</span><span class="av ana">A</span></div><div class="mono s">→</div></div>
+        </div>
+      </div>
+      <div id="tab-wf" class="hide">
+        <div class="wfgrid">
+          <div class="wf"><h3>eda-to-report</h3><p>Perfila un dataset, pasa el gate de calidad y entrega un informe de hallazgos.</p>
+            <div class="steps"><span class="chip"><i class="av marie">M</i> profile</span><span class="chip"><i class="av marie">M</i> data-gate</span><span class="chip gate">⏸ decisión humana</span><span class="chip"><i class="av noel">N</i> analyze</span><span class="chip"><i class="av marie">M</i> report</span></div>
+            <div class="mono" style="color:var(--ink3)">entrega: report/findings.html · media $0,66 · 6 min</div></div>
+          <div class="wf"><h3>mmm-meridian</h3><p>Marketing mix model con Google Meridian, de los datos de medios y ventas a la optimización de presupuesto.</p>
+            <div class="steps"><span class="chip"><i class="av pablo">P</i> ingest</span><span class="chip"><i class="av pablo">P</i> data-gate</span><span class="chip gate">⏸</span><span class="chip"><i class="av ana">A</i> model-spec</span><span class="chip gate">⏸</span><span class="chip"><i class="av ana">A</i> fit</span><span class="chip">R-hat auto</span><span class="chip"><i class="av ana">A</i> optimize</span><span class="chip"><i class="av marie">M</i> report</span></div>
+            <div class="mono" style="color:var(--ink3)">entrega: report/mmm-report.html · entorno Docker meridian</div></div>
+        </div>
+        <p style="color:var(--ink3);font-size:12.5px;margin-top:18px">El equipo: <b>Marie</b> analista · <b>Noel</b> data scientist · <b>Ana</b> MMM lead · <b>Pablo</b> MMM data engineer. Cada persona solo ve las skills que la matriz del cartridge le concede.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ================= NEW RUN ================= -->
+  <section class="view" id="v-new">
+    <div class="page">
+      <h1 class="h1">Nuevo run</h1>
+      <p class="lead">Suelta los datos y di qué quieres saber. El orquestador propone quién trabaja, en qué orden, dónde te va a pedir una decisión y cuánto costará.</p>
+      <div class="newgrid">
+        <div>
+          <div class="drop" id="drop" tabindex="0"><div class="big">Suelta un CSV, parquet o Excel</div><div class="s">o haz clic para elegirlo · los datos no salen de tu servidor</div></div>
+          <div class="filecard hide" id="filecard"><div class="ficon">CSV</div><div><b>seattle-weather.csv</b><div class="s mono" style="color:var(--ink3)">1.461 filas × 6 columnas · date, precipitation, temp_max, temp_min, wind, weather · 68 kB</div></div><span class="pill ok">perfilado</span></div>
+          <div class="preview hide" id="preview"><table class="tb"><thead><tr><th>date</th><th>precipitation</th><th>temp_max</th><th>temp_min</th><th>wind</th><th>weather</th></tr></thead><tbody>
+            <tr><td class="mono">2012-01-01</td><td class="num">0.0</td><td class="num">12.8</td><td class="num">5.0</td><td class="num">4.7</td><td>drizzle</td></tr>
+            <tr><td class="mono">2012-01-02</td><td class="num">10.9</td><td class="num">10.6</td><td class="num">2.8</td><td class="num">4.5</td><td>rain</td></tr>
+            <tr><td class="mono">2012-01-03</td><td class="num">0.8</td><td class="num">11.7</td><td class="num">7.2</td><td class="num">2.3</td><td>rain</td></tr>
+            <tr><td class="mono">2012-01-04</td><td class="num">20.3</td><td class="num">12.2</td><td class="num">5.6</td><td class="num">4.7</td><td>rain</td></tr>
+            <tr><td class="mono">2012-01-05</td><td class="num">1.3</td><td class="num">8.9</td><td class="num">2.8</td><td class="num">6.1</td><td>rain</td></tr>
+          </tbody></table></div>
+          <label class="f" for="q">¿Qué quieres saber?</label>
+          <textarea id="q" rows="3">How do precipitation and temperature differ across the weather categories, and how did they change between 2012 and 2015?</textarea>
+          <div style="margin-top:12px;display:flex;gap:10px"><button class="btn primary" id="proposeBtn">Proponer plan</button><button class="btn ghost" id="fillBtn">Usar seattle-weather.csv de ejemplo</button></div>
+        </div>
+        <div class="plan hide" id="plan">
+          <div class="eyebrow">Propuesta del orquestador</div>
+          <h3>eda-to-report</h3>
+          <p style="margin:0;color:var(--ink2)">La pregunta es descriptiva y comparativa: perfil, gate de calidad, análisis con tendencias y un informe. No hace falta modelado predictivo.</p>
+          <div class="kv">
+            <b>data_path</b><span class="mono">data/seattle-weather.csv</span>
+            <b>key_column</b><input type="text" id="keycol" value="date" aria-label="key_column"><b></b><span style="font-size:11.5px;color:var(--ink3)">única en 1.461 filas, sin huecos de calendario</span>
+            <b>question</b><span>How do precipitation and temperature differ across the weather categories…</span>
+          </div>
+          <div class="eyebrow">Quién hace qué</div>
+          <div class="timeline">
+            <div class="st"><b>profile</b> <span>Marie · perfil con eda/profile.py</span></div>
+            <div class="st"><b>data-gate</b> <span>Marie · evalúa umbrales desde el perfil</span></div>
+            <div class="st g"><b>Te preguntaremos</b> <span>¿seguir al análisis? · verás el reporte del gate</span></div>
+            <div class="st"><b>analyze</b> <span>Noel · hallazgos y gráficos interactivos</span></div>
+            <div class="st"><b>report</b> <span>Marie · informe ejecutivo</span></div>
+          </div>
+          <div class="est"><div><b>≈ $0,60</b><span>coste estimado</span></div><div><b>≈ 6 min</b><span>duración</span></div><div><b>1</b><span>decisión tuya</span></div><div><b>3 runs</b><span>base del estimado</span></div></div>
+          <div style="display:flex;gap:10px"><button class="btn primary" data-go="run" id="startBtn">▶ Iniciar run</button><button class="btn ghost">Editar plan</button></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ================= RUN ================= -->
+  <section class="view" id="v-run">
+    <div class="runwrap" id="runwrap">
+      <aside class="rail">
+        <div class="hd">
+          <div class="eyebrow" style="color:var(--rail-ink2)">eda-to-report · <span class="mono">toolu_01WFnoj</span></div>
+          <div class="title">Precipitación y temperatura por categoría</div>
+          <div class="sub">seattle-weather.csv · 1.461 × 6 · 2012–2015</div>
+          <div style="margin-top:10px;display:flex;gap:8px;align-items:center"><span class="pill run" id="runPill"><i class="dot"></i> en marcha</span><span class="mono" style="color:var(--rail-ink2)" id="elapsed">0:00</span></div>
+          <div class="metrics"><div><b id="mCost">$0,00</b><span>coste</span></div><div><b id="mTok">0</b><span>tokens</span></div><div><b id="mCache">–</b><span>caché</span></div><div><b id="mWait">–</b><span>espera</span></div></div>
+        </div>
+        <div class="stepl" id="steps"></div>
+        <div class="chat">
+          <div class="msgs" id="msgs"></div>
+          <form id="chatf"><input id="chatin" placeholder="Pregunta sobre este run…" aria-label="Pregunta sobre este run"><button type="submit">→</button></form>
+        </div>
+      </aside>
+      <main class="doc" id="doc">
+        <div class="docin">
+          <div class="eyebrow">Informe en curso</div>
+          <h1>Precipitación y temperatura por categoría de tiempo — Seattle, 2012–2015</h1>
+          <div class="meta"><span>Equipo: Marie, Noel</span><span>Dataset: <span class="mono">seattle-weather.csv</span></span><span id="docStatus">Sección 1 de 5 en curso</span></div>
+          <div id="sections"></div>
+        </div>
+      </main>
+      <aside class="drawer" id="drawer">
+        <div class="dh"><b id="dTitle">Detalle</b><button class="btn ghost sm" id="dClose">✕</button></div>
+        <div id="dBody"></div>
+      </aside>
+    </div>
+    <div class="playbar"><span id="pbLabel">Reproduciendo run 003</span><input type="range" id="scrub" min="0" max="100" value="0" aria-label="Posición del run"><span class="t" id="pbTime">0:00 / 6:45</span></div>
+  </section>
+
+  <!-- ================= DONE ================= -->
+  <section class="view" id="v-done">
+    <div class="page" style="max-width:920px">
+      <div style="display:flex;gap:12px;align-items:center;margin-bottom:8px"><span class="pill ok"><i class="dot"></i> hecho</span><span class="mono" style="color:var(--ink3)">eda-to-report · toolu_01KDBPT · ayer 18:40</span></div>
+      <h1 class="h1">Precipitación y temperatura por categoría de tiempo — Seattle, 2012–2015</h1>
+      <div class="meta" style="color:var(--ink3);font-size:12.5px;margin-bottom:22px">Marie y Noel · seattle-weather.csv · 1 decisión tuya (esperó 37 s)</div>
+      <div class="summary"><div><b>6 m 45 s</b><span>duración</span></div><div><b>$0,47</b><span>coste · 90 % caché</span></div><div><b>6 + 4</b><span>entregables + figuras</span></div><div><b>v3</b><span>de 3 runs iguales</span></div></div>
+      <div class="exports"><button class="btn primary">Compartir enlace</button><button class="btn">Exportar HTML interactivo</button><button class="btn">PDF</button><button class="btn">ZIP de artefactos</button><button class="btn" data-go="run">▶ Reproducir el run</button><button class="btn ghost">Comparar con v2</button></div>
+      <div class="exec"><div class="eyebrow" style="color:var(--accent)">Resumen ejecutivo</div>
+        <p>Trata la etiqueta <span class="mono">weather</span> como una condición, no como un pluviómetro: solo <b>rain</b> y <b>snow</b> registran precipitación. Los días de sol son 6,4 °C más cálidos que los de lluvia. Entre 2012 y 2015 la temperatura media subió (+0,74 °C/año en máximas, IC 95 % excluye cero), la precipitación no muestra tendencia clara.</p></div>
+      <div id="doneSections"></div>
+    </div>
+  </section>
+
+  <div class="foot">Mockup de producto · DSAgent v2 · Aiuda Labs · las cifras provienen de la corrida real 003 (docs/runs/eda-to-report-003.md)</div>
+</div>
+<div class="toast" id="toast"></div>
+
+<script>
+/* ---------------- data (aggregated from seattle-weather.csv) ---------------- */
+const CATS=[{weather:'rain',n:641,precip_mean:5.42,tmax:13.5,tmin:7.2},{weather:'sun',n:640,precip_mean:0,tmax:19.9,tmin:9.3},{weather:'fog',n:101,precip_mean:0,tmax:16.6,tmin:8.7},{weather:'drizzle',n:53,precip_mean:0,tmax:16.0,tmin:9.1},{weather:'snow',n:26,precip_mean:5.6,tmax:5.6,tmin:0.2}];
+const YEARS=[{year:2012,tmax:15.28,tmin:7.30,rain:191,precip:3.36,lo:14.6,hi:16.0},{year:2013,tmax:16.06,tmin:8.15,rain:158,precip:2.68,lo:15.3,hi:16.9},{year:2014,tmax:17.01,tmin:8.66,rain:148,precip:3.34,lo:16.2,hi:17.8},{year:2015,tmax:17.43,tmin:8.83,rain:144,precip:3.08,lo:16.7,hi:18.2}];
+const MONTHS=(()=>{const base=[8.4,9.7,12.2,15.2,19.1,21.4,25.0,25.4,21.9,16.0,11.1,8.0];const p=[5.3,3.9,4.3,3.3,2.1,1.4,0.6,0.7,1.6,3.6,5.9,5.5];const out=[];for(const y of [2012,2013,2014,2015])for(let m=0;m<12;m++){const j=(y-2012)*0.55;out.push({month:`${y}-${String(m+1).padStart(2,'0')}-01`,year:y,temp_max:+(base[m]+j+((m*7+y)%5-2)*0.35).toFixed(1),precip:+(p[m]*(1+(((m*3+y)%7)-3)*0.06)).toFixed(2)})}return out})();
+const PROFILE=[['date','date','0.0 %','1461','2012-01-01 → 2015-12-31, sin huecos'],['precipitation','float','0.0 %','111','0 – 55,9 mm · 30 outliers IQR'],['temp_max','float','0.0 %','67','−1,6 – 35,6 °C'],['temp_min','float','0.0 %','55','−7,1 – 18,3 °C'],['wind','float','0.0 %','79','0,4 – 9,5 m/s'],['weather','str','0.0 %','5','rain 641 · sun 640 · fog 101 · drizzle 53 · snow 26']];
+const GATE=[['Null share — 6 columnas','0,0 %','> 20 %','PASS'],['Filas duplicadas','0,0 % (0)','> 1 %','PASS'],['Unicidad de date','única','cualquier duplicado','PASS'],['Cobertura temporal','1.461 / 1.461','cualquier hueco','PASS']];
+
+/* ---------------- chart specs (Vega-Lite) ---------------- */
+const VL='https://vega.github.io/schema/vega-lite/v5.json';
+const SPECS={
+  c1:{title:null,$schema:VL,width:'container',height:240,data:{name:'table'},params:[{name:'hover',select:{type:'point',on:'pointerover'}}],mark:{type:'bar',cornerRadiusEnd:3},encoding:{x:{field:'weather',type:'nominal',sort:'-y',title:null,axis:{labelAngle:0}},y:{field:'precip_mean',type:'quantitative',title:'precipitación media (mm/día)'},color:{condition:{param:'hover',value:'#E8440A'},value:'#142850'},tooltip:[{field:'weather'},{field:'n',title:'días'},{field:'precip_mean',title:'mm/día'}]}},
+  c2:{$schema:VL,width:'container',height:240,data:{name:'table'},params:[{name:'zoom',select:'interval',bind:'scales'}],mark:{type:'line',point:true,strokeWidth:2},encoding:{x:{field:'month',type:'temporal',title:null},y:{field:'temp_max',type:'quantitative',title:'temp. máx media (°C)',scale:{zero:false}},color:{value:'#E8440A'},tooltip:[{field:'month',type:'temporal',format:'%b %Y'},{field:'temp_max',title:'°C'}]}},
+  c3:{$schema:VL,width:'container',height:240,data:{name:'table'},layer:[{mark:{type:'errorbar',ticks:true},encoding:{x:{field:'year',type:'ordinal',title:null},y:{field:'lo',type:'quantitative',title:'temp. máx media (°C)',scale:{zero:false}},y2:{field:'hi'}}},{mark:{type:'line',point:{size:70,filled:true},color:'#142850',strokeWidth:2},encoding:{x:{field:'year',type:'ordinal'},y:{field:'tmax',type:'quantitative'},tooltip:[{field:'year'},{field:'tmax',title:'media °C'},{field:'lo',title:'IC 95 % inf'},{field:'hi',title:'IC 95 % sup'}]}}]},
+  c4:{$schema:VL,width:'container',height:240,data:{name:'table'},params:[{name:'brush',select:{type:'interval',encodings:['x']}}],mark:{type:'area',line:true,opacity:.35,color:'#0A7B5A'},encoding:{x:{field:'month',type:'temporal',title:null},y:{field:'precip',type:'quantitative',title:'precipitación media (mm/día)'},tooltip:[{field:'month',type:'temporal',format:'%b %Y'},{field:'precip',title:'mm/día'}]}}
+};
+const CHARTDATA={c1:CATS,c2:MONTHS,c3:YEARS,c4:MONTHS};
+const CHARTMETA={
+  c1:{title:'Solo lluvia y nieve registran precipitación',persona:'Noel',src:'artifacts/scratch/by_category.parquet',code:'run_python #4',alts:['bar','point']},
+  c2:{title:'Temperatura máxima mensual, 2012–2015 (arrastra para hacer zoom)',persona:'Noel',src:'artifacts/scratch/monthly.parquet',code:'run_python #6',alts:['line','area','bar']},
+  c3:{title:'Seattle se calentó cada año — pendiente +0,74 °C/año, IC 95 % excluye cero',persona:'Noel',src:'artifacts/scratch/yearly.parquet',code:'run_python #8',alts:['line']},
+  c4:{title:'Precipitación mensual: sin tendencia clara (selecciona un rango)',persona:'Noel',src:'artifacts/scratch/monthly.parquet',code:'run_python #9',alts:['area','line','bar']}
+};
+
+/* ---------------- run timeline (from run 003, seconds) ---------------- */
+const STEPS=[
+ {id:'profile',persona:'Marie',cls:'marie',start:0,end:55,promises:['artifacts/data-profile.md','artifacts/data-profile.json'],tools:{run_skill_script:1,read_file:3,ls:1,run_python:1},narr:'Ejecuto profile.py con --key-column date. 1.461 filas, cero nulos, la etiqueta weather tiene cinco valores. Amplío el .md con cobertura temporal: cuatro años completos sin huecos.',cost:0.06,tok:'56 k'},
+ {id:'data-gate',persona:'Marie',cls:'marie',start:55,end:83,promises:['artifacts/data-gate.md'],tools:{read_file:3,ls:3,write_file:1},narr:'Evalúo los cuatro umbrales desde data-profile.json, sin recargar el dataset. Todos pasan. Señalo en Flags que precipitation es 0,0 en todos los días drizzle/fog/sun: la etiqueta se deriva de esa columna.',cost:0.05,tok:'55 k',gate:{prompt:'El reporte del gate está en artifacts/data-gate.md. ¿Seguimos al análisis?',waited:37}},
+ {id:'analyze',persona:'Noel',cls:'noel',start:120,end:306,promises:['artifacts/findings.md','artifacts/figures/*.png (4)'],tools:{run_python:11,read_file:4,show_chart:4,write_file:1},narr:'Leo el perfil y el gate. Comparo precipitación y temperatura por categoría y ajusto pendientes anuales con intervalos: temp_max +0,74 °C/año (IC −0,47… no, recalculo con medias anuales: IC excluye cero), precipitación +0,04 mm/año (cruza cero). Cuatro gráficos con show_chart.',cost:0.33,tok:'334 k',charts:[{at:175,id:'c1'},{at:210,id:'c2'},{at:248,id:'c3'},{at:275,id:'c4'}]},
+ {id:'report',persona:'Marie',cls:'marie',start:306,end:405,promises:['report/findings.md','report/findings.html'],tools:{read_file:7,run_skill_script:1,write_file:1},narr:'Sigo la estructura del skill reports: tres hallazgos titulares, contexto, evidencia por hallazgo, calidad de datos, próximos pasos. Rendereo el HTML con las specs de los gráficos incrustadas.',cost:0.03,tok:'115 k'}
+];
+const TOTAL=405;
+
+/* ---------------- app state ---------------- */
+const $=s=>document.querySelector(s), $$=s=>[...document.querySelectorAll(s)];
+let t=0, playing=true, speed=12, gateOpen=false, gateDecided=null, gateAskedAt=null, gateAnsweredAt=null, rendered={}, views={}, timer=null, lastTick=performance.now();
+const fmt=s=>`${Math.floor(s/60)}:${String(Math.floor(s%60)).padStart(2,'0')}`;
+function go(v){$$('.view').forEach(e=>e.classList.toggle('on',e.id==='v-'+v));$$('.nav button').forEach(b=>b.classList.toggle('on',b.dataset.go===v));window.scrollTo(0,0);if(v==='done')renderDone()}
+document.addEventListener('click',e=>{const g=e.target.closest('[data-go]');if(g){go(g.dataset.go)}});
+$$('.tabs button').forEach(b=>b.addEventListener('click',()=>{$$('.tabs button').forEach(x=>x.classList.toggle('on',x===b));$('#tab-runs').classList.toggle('hide',b.dataset.tab!=='runs');$('#tab-wf').classList.toggle('hide',b.dataset.tab!=='wf')}));
+function toast(m){const e=$('#toast');e.textContent=m;e.classList.add('on');clearTimeout(e._t);e._t=setTimeout(()=>e.classList.remove('on'),2200)}
+
+/* new run */
+function fillFile(){$('#filecard').classList.remove('hide');$('#preview').classList.remove('hide');$('#drop').querySelector('.big').textContent='seattle-weather.csv cargado';}
+$('#drop').addEventListener('click',fillFile);$('#drop').addEventListener('dragover',e=>{e.preventDefault();$('#drop').classList.add('over')});$('#drop').addEventListener('dragleave',()=>$('#drop').classList.remove('over'));$('#drop').addEventListener('drop',e=>{e.preventDefault();$('#drop').classList.remove('over');fillFile()});
+$('#fillBtn').addEventListener('click',fillFile);
+$('#proposeBtn').addEventListener('click',()=>{fillFile();$('#plan').classList.remove('hide');toast('El orquestador propuso un plan')});
+$('#startBtn').addEventListener('click',()=>{reset();playing=true;$('#playBtn').textContent='⏸ Pausar';$('#playBtn').classList.add('on')});
+
+/* ---------------- run rendering ---------------- */
+function stepState(s){if(gateOpen&&s.gate&&gateDecided===null&&t>=s.end)return 'wait';if(t>=s.end)return 'done';if(t>=s.start)return 'run';return 'pending'}
+function buildSteps(){
+  const el=$('#steps');el.innerHTML='';
+  STEPS.forEach((s,i)=>{
+    const st=stepState(s);
+    const d=document.createElement('div');d.className='step '+st+(s.id==='data-gate'&&st==='done'?' open':'');
+    const el_=st==='pending'?'':fmt(Math.min(t,s.end)-s.start);
+    const promises=s.promises.map(p=>`<div class="prom ${st==='done'?'ok':'no'}"><i>${st==='done'?'✓':'○'}</i>${p}</div>`).join('');
+    const tools=st==='pending'?'':Object.entries(s.tools).map(([k,v])=>`<span>${k} <b>${st==='run'?Math.max(1,Math.round(v*(t-s.start)/(s.end-s.start))):v}</b></span>`).join('');
+    const gateLine=s.gate&&gateDecided?`<div class="cost" style="color:var(--ok)">✓ aprobado · esperó ${s.gate.waited} s</div>`:'';
+    d.innerHTML=`<div class="row"><span class="mark">${st==='done'?'✓':st==='run'?'':st==='wait'?'?':(i+1)}</span><span class="nm">${s.id}</span><span class="el">${el_}</span></div>
+      <div class="who"><span class="av ${s.cls}" style="width:16px;height:16px;font-size:8px;border:0;margin:0">${s.persona[0]}</span>${s.persona}${st==='run'?' · trabajando':st==='wait'?' · esperando tu decisión':''}</div>
+      <div class="det">${promises}<div class="tools">${tools}</div>${st!=='pending'?`<details class="narr"><summary>${s.persona} — nota de trabajo</summary><p>${s.narr}</p></details>`:''}${st==='done'||st==='run'?`<div class="cost">$${s.cost.toFixed(2)} · ${s.tok} tokens</div>`:''}${gateLine}</div>`;
+    d.querySelector('.row').addEventListener('click',()=>{d.classList.toggle('open');openDrawer('step',s)});
+    el.appendChild(d);
+    if(st==='done'&&i<STEPS.length-1){const h=document.createElement('div');h.className='handoff';h.textContent=`entrega ${s.promises.length} artefacto(s) a ${STEPS[i+1].persona}`;el.appendChild(h)}
+  });
+}
+function sectionHTML(s,st){
+  const by=`<span class="by">${s.persona}${st==='done'?'':st==='run'?' · escribiendo':''}</span>`;
+  if(s.id==='profile'){
+    if(st==='pending')return `<h2>1. Los datos ${by}</h2><p>Marie perfilará el dataset antes de que nadie saque una conclusión.</p>`;
+    if(st==='run')return `<h2>1. Los datos ${by}</h2>`+working(s,'run_skill_script eda/profile.py --key-column date');
+    return `<h2>1. Los datos ${by}</h2><p class="k">1.461 observaciones diarias, una por día del 1 de enero de 2012 al 31 de diciembre de 2015, sin huecos de calendario ni valores nulos. Cinco categorías de tiempo; <span class="mono">rain</span> y <span class="mono">sun</span> concentran el 88 % de los días.</p>
+    <div class="card" data-file="artifacts/data-profile.json"><div class="ch"><b>Perfil por columna</b><div class="tb-tools"><button data-sort>Ordenar</button><button data-pivot>Pivot</button><button class="ask" data-ask="Marie" data-about="el perfil">Pregunta a Marie</button></div></div><div class="tblwrap"><table class="tb"><thead><tr><th>columna</th><th>tipo</th><th>nulos</th><th>distintos</th><th>notas</th></tr></thead><tbody>${PROFILE.map(r=>`<tr><td class="mono">${r[0]}</td><td>${r[1]}</td><td class="num">${r[2]}</td><td class="num">${r[3]}</td><td>${r[4]}</td></tr>`).join('')}</tbody></table></div><div class="foot">Fuente <a>artifacts/data-profile.json</a> · <a>eda/scripts/profile.py</a> · 1.461 filas</div></div>`+askRow('Marie','¿Qué columnas tienen outliers?','¿Por qué precipitation tiene 111 valores distintos?');
+  }
+  if(s.id==='data-gate'){
+    if(st==='pending')return `<h2>2. Calidad de los datos ${by}</h2><p>Cuatro umbrales del skill <span class="mono">eda</span>; tú decides si seguimos.</p>`;
+    if(st==='run')return `<h2>2. Calidad de los datos ${by}</h2>`+working(s,'read_file artifacts/data-profile.json');
+    const tbl=`<div class="card" data-file="artifacts/data-gate.md"><div class="ch"><b>Gate de calidad — 4 de 4 checks</b><span class="pill ok">GATE: PASS</span></div><div class="tblwrap"><table class="tb"><thead><tr><th>check</th><th>valor</th><th>umbral</th><th>resultado</th></tr></thead><tbody>${GATE.map(r=>`<tr><td>${r[0]}</td><td class="mono">${r[1]}</td><td class="mono">${r[2]}</td><td><span class="pill ok">${r[3]}</span></td></tr>`).join('')}</tbody></table></div><div class="foot">Fuente <a>artifacts/data-gate.md</a> · evaluado desde el perfil, sin recargar el dataset</div></div>`;
+    const flag=`<p class="k"><b>Aviso, no fallo:</b> <span class="mono">precipitation</span> es exactamente 0,0 en todos los días <span class="mono">drizzle</span>, <span class="mono">fog</span> y <span class="mono">sun</span>. La etiqueta se deriva de esa columna, así que solo <span class="mono">rain</span> y <span class="mono">snow</span> son señales de precipitación distintas.</p>`;
+    const gate=(st==='wait')?gateCard(s):(gateDecided?`<p style="color:var(--ok);font-size:12.5px">✓ Aprobaste seguir al análisis${gateDecided.note?` · nota: “${gateDecided.note}”`:''} · esperó ${s.gate.waited} s</p>`:'');
+    return `<h2>2. Calidad de los datos ${by}</h2>${tbl}${flag}${gate}`;
+  }
+  if(s.id==='analyze'){
+    if(st==='pending')return `<h2>3. Hallazgos ${by}</h2><p>Noel comparará categorías y probará tendencias con intervalos de confianza. Los gráficos llegarán aquí, interactivos.</p>`;
+    const charts=s.charts.filter(c=>t>=c.at).map(c=>chartCard(c.id)).join('');
+    const pendingChart=(st==='run'&&s.charts.some(c=>t<c.at&&t>=c.at-18))?`<div class="card"><div class="ch"><b>Noel está construyendo un gráfico…</b></div><div class="body"><div class="skel"></div></div></div>`:'';
+    if(st==='run')return `<h2>3. Hallazgos ${by}</h2>${charts}${pendingChart}`+working(s,`run_python × ${Math.max(1,Math.round(11*(t-s.start)/(s.end-s.start)))} · ajustando pendientes anuales`);
+    return `<h2>3. Hallazgos ${by}</h2><ol class="findings"><li class="k"><b>Trata la etiqueta weather como una condición, no como un pluviómetro.</b> Solo rain (n=641) y snow (n=26) registran precipitación; sun, fog y drizzle son 0,0 mm siempre.</li><li class="k"><b>Sol y nieve son los extremos térmicos.</b> Los días de sol promedian 19,9 °C de máxima; los de nieve 5,6 °C. Todo lo demás cae entre ambos.</li><li class="k"><b>Se calentó, no se secó.</b> La máxima diaria subió +0,74 °C/año y la mínima +0,51 °C/año (IC 95 % excluye cero); la precipitación +0,04 mm/año (cruza cero).</li></ol>${charts}`+askRow('Noel','¿La tendencia aguanta si quitas 2015?','Muéstrame lo mismo por estación');
+  }
+  if(s.id==='report'){
+    if(st==='pending')return `<h2>4. Informe ${by}</h2><p>Marie escribirá el resumen ejecutivo al final y reunirá evidencia, caveats y próximos pasos.</p>`;
+    if(st==='run')return `<h2>4. Informe ${by}</h2>`+working(s,'read_file artifacts/findings.md · escribiendo report/findings.md');
+    return `<h2>4. Informe ${by}</h2><div class="exec"><div class="eyebrow" style="color:var(--accent)">Resumen ejecutivo</div><p>Trata la etiqueta <span class="mono">weather</span> como una condición, no como un pluviómetro: solo <b>rain</b> y <b>snow</b> registran precipitación. Los días de sol son 6,4 °C más cálidos que los de lluvia. Entre 2012 y 2015 la temperatura media subió, la precipitación no muestra tendencia clara.</p></div><p><b>Lo que estos datos no responden:</b> si drizzle o fog llevan precipitación medible (la columna es cero por construcción), una tendencia fiable de nieve (2015 no tiene ningún día), y si el calentamiento observado es genuino o un cambio en la mezcla de categorías.</p><div class="card" data-file="report/findings.html"><div class="ch"><b>report/findings.html</b><span class="pill ok">entregable</span><div class="tb-tools"><button>Abrir</button><button>Descargar</button></div></div><div class="foot">Informe HTML autocontenido con los cuatro gráficos interactivos incrustados · 296 kB</div></div>`;
+  }
+}
+function working(s,tool){return `<div class="working"><span class="av ${s.cls}">${s.persona[0]}</span><div class="w"><b>${s.persona} está trabajando en esta sección</b><div class="s">${tool}</div></div><span class="pill run"><i class="dot"></i> ${fmt(t-s.start)}</span></div>`}
+function askRow(p,a,b){return `<div class="ask-row"><button data-ask="${p}" data-q="${a}">${a}</button><button data-ask="${p}" data-q="${b}">${b}</button></div>`}
+function chartCard(id){const m=CHARTMETA[id];return `<div class="card" data-chart="${id}"><div class="ch"><b>${m.title}</b><div class="tb-tools"><select data-mark="${id}" aria-label="Tipo de gráfico">${m.alts.map(a=>`<option>${a}</option>`).join('')}</select><button data-spec="${id}">Spec</button><button data-code="${id}">Código</button><button data-png="${id}">PNG</button><button class="ask" data-ask="${m.persona}" data-about="este gráfico" data-chart-id="${id}">Pídele a ${m.persona} un cambio</button></div></div><div class="body"><div class="vg" id="vg-${id}"></div></div><div class="sel hide" id="sel-${id}"></div><div class="foot">Vega-Lite · datos <a>${m.src}</a> · de <a>${m.code}</a> · hover para valores</div></div>`}
+function gateCard(s){return `<div class="gatec" id="gate"><div class="gh"><span class="pill">Decisión</span><b>data-gate</b><span style="color:var(--ink3);font-size:12px">Marie · esperando <span class="mono" id="gateWait">0 s</span></span></div><div class="gb"><h3>${s.gate.prompt}</h3>
+  <div class="what"><div><b>Qué apruebas</b>Que Noel empiece el análisis sobre estos datos tal como están. Los 4 checks pasaron; queda un aviso sobre la etiqueta weather.</div><div><b>Qué cuesta</b>Hasta ahora $0,11 · el análisis y el informe costarán ≈ $0,40 y unos 4 minutos.</div></div>
+  ${gateDecided&&gateDecided.decision==='reject'?`<div class="diff">data-gate.md · cambios desde tu rechazo<br><span class="m">- Flags: (ninguno)</span><br><span class="p">+ Flags: precipitation es 0,0 en drizzle/fog/sun por construcción</span></div>`:''}
+  <textarea id="gateNote" placeholder="Nota (se envía con la decisión)"></textarea>
+  <div class="acts"><button class="btn primary" id="approve">Aprobar y continuar</button><button class="btn" id="reject">Rechazar</button><span style="color:var(--ink3);font-size:12px">El run queda en pausa hasta que decidas · no gasta nada mientras espera</span></div></div></div>`}
+
+function buildDoc(){
+  const cont=$('#sections');const prev={};$$('#sections .sec').forEach(e=>prev[e.dataset.id]=e.dataset.st);
+  const scroll=$('#doc').scrollTop;
+  cont.innerHTML='';
+  let cur=0;
+  STEPS.forEach((s,i)=>{const st=stepState(s);if(st!=='pending')cur=i+1;const d=document.createElement('div');d.className='sec'+(st==='pending'?' pending':'')+(prev[s.id]&&prev[s.id]!==st?' enter':'');d.dataset.id=s.id;d.dataset.st=st;d.innerHTML=sectionHTML(s,st);cont.appendChild(d);requestAnimationFrame(()=>d.classList.remove('enter'))});
+  $('#docStatus').textContent=t>=TOTAL?'Informe completo':`Sección ${cur} de 4 en curso`;
+  $('#doc').scrollTop=scroll;
+  mountCharts();
+}
+function mountCharts(){
+  $$('[data-chart]').forEach(async el=>{const id=el.dataset.chart;const host=el.querySelector('.vg');if(host.dataset.done)return;host.dataset.done='1';
+    const spec=structuredClone(rendered[id]||SPECS[id]);rendered[id]=spec;
+    try{const r=await vegaEmbed(host,spec,{actions:false,renderer:'svg',tooltip:{theme:'light'}});await r.view.insert('table',CHARTDATA[id]).runAsync();views[id]=r.view;
+      if(id==='c4'){r.view.addSignalListener('brush',(n,v)=>{const s=$('#sel-c4');if(v&&v.month){const a=new Date(v.month[0]),b=new Date(v.month[1]);const rows=MONTHS.filter(m=>{const d=new Date(m.month);return d>=a&&d<=b});const avg=rows.length?(rows.reduce((x,m)=>x+m.precip,0)/rows.length).toFixed(2):'–';s.classList.remove('hide');s.textContent=`seleccionados ${rows.length} meses · media ${avg} mm/día · se envía como contexto al preguntar`}else s.classList.add('hide')})}
+    }catch(e){host.innerHTML=`<div style="padding:20px;color:var(--ink3)">No se pudo cargar vega-embed (sin red). Aquí iría el gráfico interactivo.</div>`}
+  });
+}
+document.addEventListener('change',async e=>{const sel=e.target.closest('[data-mark]');if(!sel)return;const id=sel.dataset.mark;const spec=rendered[id];const mark=sel.value;
+  if(spec.layer){return}
+  const m=typeof spec.mark==='string'?{}:{...spec.mark};delete m.type;delete m.line;delete m.point;delete m.cornerRadiusEnd;delete m.opacity;
+  spec.mark={type:mark,...(mark==='line'?{point:true,strokeWidth:2}:mark==='area'?{line:true,opacity:.35}:mark==='bar'?{cornerRadiusEnd:3}:{}),...m};
+  if(mark==='bar'&&spec.encoding.x.type==='temporal'){spec.encoding.x={...spec.encoding.x,timeUnit:'yearmonth'}}else if(spec.encoding.x.timeUnit){delete spec.encoding.x.timeUnit}
+  const host=$('#vg-'+id);host.dataset.done='';host.innerHTML='';mountCharts();toast(`Gráfico cambiado a ${mark} · edición local, el agente y el informe verán tu versión`)});
+document.addEventListener('click',e=>{
+  const ask=e.target.closest('[data-ask]');if(ask){const p=ask.dataset.ask;const q=ask.dataset.q||`Sobre ${ask.dataset.about}: ${ask.dataset.chartId?'¿puedes añadir la línea de tendencia y separar por año?':'¿qué debería mirar con más cuidado?'}`;sendChat(q,p,ask.dataset.chartId);return}
+  if(e.target.closest('[data-spec]')){const id=e.target.closest('[data-spec]').dataset.spec;openDrawer('spec',id);return}
+  if(e.target.closest('[data-code]')){const id=e.target.closest('[data-code]').dataset.code;openDrawer('code',id);return}
+  if(e.target.closest('[data-png]')){toast('En producción: descarga PNG/SVG vía vl-convert');return}
+  if(e.target.closest('[data-sort]')){toast('Tabla ordenada por nulos (TanStack Table en producción)');return}
+  if(e.target.closest('[data-pivot]')){toast('Pivot: abriría Perspective sobre el mismo buffer Arrow');return}
+  if(e.target.id==='approve'){gateDecided={decision:'approve',note:$('#gateNote').value.trim()};gateOpen=false;gateAnsweredAt=performance.now();STEPS[1].gate.waited=Math.max(3,Math.round((gateAnsweredAt-gateAskedAt)/1000));$('#mWait').textContent=STEPS[1].gate.waited+' s';t=STEPS[2].start;playing=true;$('#playBtn').textContent='⏸ Pausar';$('#playBtn').classList.add('on');toast('Aprobado · Noel empieza el análisis');render();return}
+  if(e.target.id==='reject'){const note=$('#gateNote').value.trim();gateDecided={decision:'reject',note};addMsg('Orquestador',`Marie recibió tu rechazo${note?` (“${note}”)`:''}. Revisó data-gate.md y añadió el aviso sobre la etiqueta weather. El gate vuelve a preguntar.`);gateDecided={decision:'reject',note};setTimeout(()=>{gateDecided={decision:'reject',note,reopened:true};render();$('#gate')&&($('#gate').querySelector('.gh b').textContent='data-gate · 2ª vez')},1200);return}
+  if(e.target.closest('[data-file]')&&!e.target.closest('.tb-tools')&&!e.target.closest('.ask-row')){const f=e.target.closest('[data-file]').dataset.file;openDrawer('file',f);return}
+  if(e.target.id==='dClose'){$('#runwrap').classList.remove('drawer-on')}
+});
+/* chat */
+function addMsg(from,text,me){const m=document.createElement('div');m.className='msg'+(me?' me':'');m.innerHTML=`<span class="from">${from}</span>${text}`;$('#msgs').appendChild(m);$('#msgs').scrollTop=1e6}
+function sendChat(q,persona,chartId){addMsg('Tú',q,true);
+  setTimeout(()=>{
+    if(chartId){addMsg(`Orquestador → ${persona}`,`${persona} está revisando el gráfico…`);setTimeout(()=>{const spec=rendered[chartId];if(chartId==='c2'||chartId==='c4'){const f=chartId==='c2'?'temp_max':'precip';rendered[chartId]={...spec,layer:undefined};const base={...spec};delete base.params;delete base.mark;delete base.encoding;rendered[chartId]={...base,layer:[{params:spec.params,mark:spec.mark,encoding:spec.encoding},{mark:{type:'line',color:'#142850',strokeDash:[4,3],strokeWidth:2},transform:[{regression:f,on:'month'}],encoding:{x:{field:'month',type:'temporal'},y:{field:f,type:'quantitative'}}}]};const host=$('#vg-'+chartId);if(host){host.dataset.done='';host.innerHTML='';mountCharts()}addMsg(persona,`Hecho: añadí la recta de regresión (v2 del gráfico). Pendiente ${chartId==='c2'?'+0,74 °C/año, IC 95 % excluye cero':'+0,04 mm/año, el IC cruza cero'}. Separarlo por año quedaría en cuatro paneles pequeños; lo puedo hacer si lo prefieres.`)}else{addMsg(persona,'Ese gráfico ya es de barras con hover; puedo convertirlo en puntos con intervalos si quieres comparar dispersión.')}},1400);return}
+    const sel=$('#sel-c4');const ctx=sel&&!sel.classList.contains('hide')?` (contexto: ${sel.textContent.split(' · se')[0]})`:'';
+    if(/cuidado|careful/i.test(q))addMsg('Orquestador',`El hallazgo 3. Con cuatro puntos anuales, temp_min pasa el umbral por poco (p = 0,042) mientras temp_max lo hace con holgura (p = 0,009); el informe no marca esa diferencia de fuerza. Y el ajuste es sobre medias anuales, no desestacionalizado. Fuente: artifacts/findings.md §3.${ctx}`);
+    else if(/outlier/i.test(q))addMsg('Marie',`precipitation: 30 valores por encima de 1,5×IQR, todos días de lluvia intensa (máx. 55,9 mm el 2012-01-05). wind: 8. No los eliminé; están señalados en artifacts/data-profile.md.`);
+    else if(/2015/i.test(q))addMsg('Noel',`Sin 2015 la pendiente de temp_max baja a +0,87 °C/año sobre tres puntos y el IC se ensancha hasta cruzar cero. La conclusión “se calentó” depende de 2015; lo dejé explícito en caveats.`);
+    else if(/estaci|season/i.test(q))addMsg('Noel',`Puedo añadir un panel por estación (DJF/MAM/JJA/SON). Serían cuatro series en el gráfico 2; ¿lo hago ahora o lo dejo para una versión del informe?`);
+    else addMsg('Orquestador',`Lo respondo desde los artefactos del run, sin lanzar nada nuevo: ${q.length>40?'revisé findings.md y data-gate.md.':'¿me concretas qué sección te interesa?'}${ctx}`);
+  },900)}
+$('#chatf').addEventListener('submit',e=>{e.preventDefault();const v=$('#chatin').value.trim();if(!v)return;$('#chatin').value='';sendChat(v,'Orquestador')});
+
+/* drawer */
+function openDrawer(kind,x){$('#runwrap').classList.add('drawer-on');const b=$('#dBody');
+  if(kind==='spec'){$('#dTitle').textContent='Spec Vega-Lite · '+x;b.innerHTML=`<div class="kv"><b>chart_id</b><span class="mono">${x}</span><b>versión</b><span class="mono">${rendered[x]&&rendered[x].layer&&x!=='c3'?'2 (editada)':'1'}</span><b>datos</b><span class="mono">${CHARTMETA[x].src}</span></div><pre>${JSON.stringify(rendered[x]||SPECS[x],null,2).replace(/</g,'&lt;')}</pre>`}
+  else if(kind==='code'){$('#dTitle').textContent='Código · '+CHARTMETA[x].code;b.innerHTML=`<div class="kv"><b>persona</b><span>Noel</span><b>tool</b><span class="mono">run_python</span><b>duración</b><span class="mono">2,1 s</span></div><pre># ${CHARTMETA[x].code}
+import pandas as pd
+df = pd.read_csv("data/seattle-weather.csv", parse_dates=["date"])
+${x==='c1'?`by_cat = (df.groupby("weather")
+          .agg(n=("date","size"), precip_mean=("precipitation","mean"),
+               tmax=("temp_max","mean"), tmin=("temp_min","mean"))
+          .reset_index())
+by_cat.to_parquet("artifacts/scratch/by_category.parquet")
+show_chart(spec=bar_spec, data_ref="artifacts/scratch/by_category.parquet",
+           title="Solo lluvia y nieve registran precipitación")`:x==='c3'?`yearly = df.groupby(df.date.dt.year).temp_max.agg(["mean","sem"])
+yearly["lo"] = yearly["mean"] - 1.96*yearly["sem"]
+yearly["hi"] = yearly["mean"] + 1.96*yearly["sem"]
+slope, ci = fit_trend(yearly["mean"])   # +0.74 °C/yr, CI excludes 0
+show_chart(spec=trend_spec, data_ref="artifacts/scratch/yearly.parquet",
+           title=f"Seattle se calentó cada año — pendiente {slope:+.2f} °C/año")`:`monthly = (df.set_index("date").resample("MS")
+             .agg(temp_max=("temp_max","mean"), precip=("precipitation","mean"))
+             .reset_index().rename(columns={"date":"month"}))
+monthly.to_parquet("artifacts/scratch/monthly.parquet")
+show_chart(spec=line_spec, data_ref="artifacts/scratch/monthly.parquet", ...)`}</pre>`}
+  else if(kind==='file'){$('#dTitle').textContent=x;b.innerHTML=`<div class="kv"><b>ruta</b><span class="mono">${x}</span><b>tipo</b><span>${x.endsWith('.json')?'JSON (contrato del script)':x.endsWith('.html')?'HTML autocontenido':'Markdown'}</span><b>escrito por</b><span>${x.startsWith('report')?'Marie · report':'Marie · '+(x.includes('gate')?'data-gate':'profile')}</span></div><pre>${x.endsWith('.json')?'{\n  "schema_version": 1,\n  "source": "data/seattle-weather.csv",\n  "rows": 1461,\n  "columns": 6,\n  "exact_duplicates_pct": 0.0,\n  "key_uniqueness": {"column": "date", "unique": true, "duplicates": 0},\n  "columns_detail": [ … ]\n}':x.includes('gate')?'# Data gate — seattle-weather.csv\n\nSource: artifacts/data-profile.json (no reload)\n\n| Check | Value | Threshold | Result |\n|---|---|---|---|\n| Null share (6 cols) | 0.0 % | > 20 % | PASS |\n| Exact duplicate rows | 0.0 % | > 1 % | PASS |\n| Key uniqueness (date) | unique | any dup | PASS |\n| Time coverage | 1461/1461 | any gap | PASS |\n\n## Flags\n- precipitation is 0.0 on every drizzle/fog/sun day (label derived from it)\n\nGATE: PASS':'<!doctype html>… informe con vega-embed y las 4 specs incrustadas …'}</pre>`}
+  else if(kind==='step'){$('#dTitle').textContent='Paso · '+x.id;b.innerHTML=`<div class="kv"><b>persona</b><span>${x.persona}</span><b>estado</b><span>${stepState(x)}</span><b>modelo</b><span class="mono">claude-sonnet-5</span><b>tokens</b><span class="mono">${x.tok}</span><b>coste</b><span class="mono">$${x.cost.toFixed(2)}</span></div><pre>${Object.entries(x.tools).map(([k,v])=>`${k.padEnd(18)} × ${v}`).join('\n')}\n\n— eventos —\ndsagent.step   ${x.id} started\n${x.charts?x.charts.map(c=>`dsagent.chart  ${c.id} v1`).join('\n')+'\n':''}dsagent.file   ${x.promises[0]} created\ndsagent.step   ${x.id} done</pre>`}
+}
+
+/* ---------------- clock ---------------- */
+function render(){buildSteps();buildDoc();
+  const done=STEPS.filter(s=>t>=s.end).reduce((a,s)=>a+s.cost,0)+(STEPS.find(s=>stepState(s)==='run')?.cost||0)*0.4;
+  $('#mCost').textContent='$'+Math.min(0.47,done).toFixed(2);$('#mTok').textContent=t<55?Math.round(56*t/55)+' k':t<83?'111 k':t<306?Math.round(111+334*(t-120)/186)+' k':'560 k';$('#mCache').textContent=t>60?'90 %':'–';
+  $('#elapsed').textContent=fmt(t);$('#pbTime').textContent=`${fmt(t)} / ${fmt(TOTAL)}`;$('#scrub').value=Math.round(100*t/TOTAL);
+  const pill=$('#runPill');if(gateOpen){pill.className='pill wait';pill.innerHTML='<i class="dot"></i> esperando tu decisión'}else if(t>=TOTAL){pill.className='pill ok';pill.innerHTML='<i class="dot"></i> hecho';$('#pbLabel').textContent='Run completo · ver "Run terminado"'}else{pill.className='pill run';pill.innerHTML='<i class="dot"></i> en marcha'}
+}
+function tick(){const now=performance.now();const dt=(now-lastTick)/1000;lastTick=now;
+  if(gateOpen){const w=$('#gateWait');if(w)w.textContent=Math.round((now-gateAskedAt)/1000)+' s';return}
+  if(!playing||t>=TOTAL)return;
+  const before=t;t=Math.min(TOTAL,t+dt*speed);
+  if(gateDecided===null&&before<STEPS[1].end&&t>=STEPS[1].end){t=STEPS[1].end;gateOpen=true;gateAskedAt=now;playing=false;$('#playBtn').textContent='▶ Reanudar';$('#playBtn').classList.remove('on');render();addMsg('Orquestador','Marie terminó el gate de calidad. Necesito tu decisión para seguir — está en la sección 2.');return}
+  if(Math.floor(before)!==Math.floor(t))render();
+}
+function reset(){t=0;gateOpen=false;gateDecided=null;rendered={};views={};$('#msgs').innerHTML='';$('#mWait').textContent='–';addMsg('Orquestador','Run iniciado. Marie perfila los datos primero; te avisaré cuando haya una decisión que tomar.');render()}
+$('#speed').addEventListener('change',e=>speed=+e.target.value);
+$('#playBtn').addEventListener('click',()=>{if(gateOpen){toast('El run espera tu decisión en la sección 2');return}playing=!playing;$('#playBtn').textContent=playing?'⏸ Pausar':'▶ Reanudar';$('#playBtn').classList.toggle('on',playing)});
+$('#resetBtn').addEventListener('click',()=>{reset();playing=true;$('#playBtn').textContent='⏸ Pausar';$('#playBtn').classList.add('on')});
+$('#scrub').addEventListener('input',e=>{const nt=TOTAL*e.target.value/100;if(gateDecided===null&&nt>STEPS[1].end){t=STEPS[1].end;gateOpen=true;gateAskedAt=performance.now();playing=false;$('#playBtn').textContent='▶ Reanudar';$('#playBtn').classList.remove('on')}else{t=nt;if(t<STEPS[1].end){gateOpen=false}}render()});
+
+/* done view */
+function renderDone(){const c=$('#doneSections');if(c.dataset.done)return;c.dataset.done='1';const save=t;t=TOTAL+1;const g=gateDecided;gateDecided={decision:'approve',note:''};
+  c.innerHTML=STEPS.map(s=>`<div class="sec">${sectionHTML(s,'done')}</div>`).join('');t=save;gateDecided=g;mountCharts()}
+
+reset();
+setInterval(tick,250);
+</script>
+
+</body>
+</html>

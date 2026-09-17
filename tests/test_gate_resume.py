@@ -378,3 +378,175 @@ def test_a_persona_never_inherits_the_callers_checkpointer(tmp_path):
     graph.invoke(Command(resume={"decision": "approve"}), config=cfg)
 
     assert said == [("marie", "I am marie"), ("noel", "I am noel")], said
+
+
+def test_the_wait_is_measured_from_when_the_run_stopped(tmp_path, monkeypatch):
+    """Under `serve` the first ask never returns — it raises an interrupt.
+
+    The tool re-executes when the answer arrives, so a clock read at the second
+    ask measures the resume, not the wait, and every gate in run 003's successor
+    reported 0s. The pending record in `run.json` is what remembers the moment the
+    run actually stopped; this asserts it is read back rather than overwritten.
+    """
+    import time
+
+    from dsagent.cartridge import load_cartridge
+    from dsagent.envs.base import Env
+    from dsagent.runner import GateDecision, WorkflowRunner
+    from dsagent.runs import read_state, summarize
+    from tests.test_runner_events import FakeBackend, StreamingFakeAgent
+
+    monkeypatch.setattr(
+        "dsagent.runner.runner.make_env",
+        lambda spec, ws: Env(spec=spec, workspace=ws, backend=FakeBackend()),
+    )
+    ds = Path(__file__).resolve().parents[1] / "cartridges" / "ds"
+    run_dir = tmp_path / "waited"
+
+    class Interrupted(Exception):
+        """Stands in for LangGraph's own: the first ask does not return."""
+
+    def make(ask):
+        return WorkflowRunner(
+            load_cartridge(ds), run_dir,
+            agent_factory=lambda c, persona, env, ws: StreamingFakeAgent(persona, ws),
+            ask_human=ask, log=lambda m: None,
+        )
+
+    def refuse_to_return(request):
+        raise Interrupted
+
+    with pytest.raises(Interrupted):
+        make(refuse_to_return).run("eda-to-report", {"data_path": "x.csv"})
+
+    # the run is parked, and `run.json` remembers when it stopped
+    stopped = read_state(run_dir)["gate"]["asked_at"]
+    assert read_state(run_dir)["status"] == "awaiting_gate"
+
+    time.sleep(0.2)  # the person reading the gate report
+    make(lambda request: GateDecision.APPROVE).run(
+        "eda-to-report", {"data_path": "x.csv"}, resume=True
+    )
+
+    gate = read_state(run_dir)["steps"]["data-gate"]["gate"]
+    assert gate["asked_at"] == pytest.approx(stopped), "the wait must start where the run stopped"
+    assert gate["ts"] - gate["asked_at"] >= 0.2
+    assert summarize(run_dir).gate_wait >= 0.2
+
+
+def test_the_second_gate_keeps_its_own_wait_across_a_resume(mmm, tmp_path):
+    """Gate 1 is re-asked on re-entry; it must not eat gate 2's pending record.
+
+    Both gates write their pending record to the same `run.json` slot, one at a
+    time, because a run stands at one gate at a time. But a re-asked gate 1 used
+    to write *and then clear* that slot on its way past — destroying the record
+    gate 2 had written before the interrupt, so gate 2's `asked_at` fell back to
+    the clock and its wait read as zero. `mmm-meridian` is the fixture because it
+    is the only workflow with two human gates.
+    """
+    import time
+
+    from dsagent.runs import read_state, summarize
+
+    run_dir = tmp_path / "run"
+
+    class Interrupted(Exception):
+        """Stands in for LangGraph's own: the first ask does not return."""
+
+    class StopAtGate:
+        """Answers the gates already decided; raises at the one still open."""
+
+        def __init__(self, *decided: GateDecision):
+            self.left = list(decided)
+            self.asked: list[str] = []
+
+        def __call__(self, request):
+            self.asked.append(request.step)
+            if self.left:
+                return self.left.pop(0)
+            raise Interrupted
+
+    # first entry: park at gate 1
+    with pytest.raises(Interrupted):
+        mmm(StopAtGate()).run("mmm-meridian", MMM_INPUTS)
+    assert read_state(run_dir)["gate"]["step"] == "data-gate"
+
+    time.sleep(0.2)  # a person reading the data gate
+    # the answer arrives: gate 1 approved, and the run walks on to gate 2 and parks
+    second = StopAtGate(GateDecision.APPROVE)
+    with pytest.raises(Interrupted):
+        mmm(second).run("mmm-meridian", MMM_INPUTS, resume=True)
+
+    pending = read_state(run_dir)["gate"]
+    assert pending["step"] == "model-spec", "gate 2's pending record must be the one on file"
+    assert summarize(run_dir).gate_wait >= 0.2, "gate 1's wait is on the record"
+
+    time.sleep(0.2)  # a person reading the model spec
+    # the second answer: gate 1 is re-asked (sequence) and gate 2 is answered
+    third = StopAtGate(GateDecision.APPROVE, GateDecision.APPROVE)
+    mmm(third).run("mmm-meridian", MMM_INPUTS, resume=True)
+
+    assert third.asked[:2] == ["data-gate", "model-spec"], "the sequence must not change"
+    gate2 = read_state(run_dir)["steps"]["model-spec"]["gate"]
+    assert gate2["decision"] == "approve"
+    assert gate2["ts"] - gate2["asked_at"] >= 0.2, "gate 2 kept its own asked_at"
+    assert summarize(run_dir).gate_wait >= 0.4, "both waits count"
+
+
+def test_a_decided_gate_is_never_announced_again(mmm, tmp_path):
+    """A decided gate is asked again for the sequence, not for an audience.
+
+    Once a gate's answer is in the log, no later entry may put a question about
+    it back on the stream: a reader rebuilding the screen would show a card for a
+    decision that was made minutes ago. An *undecided* gate re-announcing itself
+    on the entry that finally answers it is a different thing and is correct —
+    under `serve` the first ask raises before it can record anything, so that
+    entry really is the run standing there again.
+    """
+    from dsagent.runs import read_events
+
+    run_dir = tmp_path / "run"
+
+    class Interrupted(Exception):
+        pass
+
+    class StopAtGate:
+        def __init__(self, *decided):
+            self.left = list(decided)
+
+        def __call__(self, request):
+            if self.left:
+                return self.left.pop(0)
+            raise Interrupted
+
+    with pytest.raises(Interrupted):
+        mmm(StopAtGate()).run("mmm-meridian", MMM_INPUTS)
+
+    # resume twice; the decided gate is re-asked both times, silently
+    second = StopAtGate(GateDecision.APPROVE)
+    with pytest.raises(Interrupted):
+        mmm(second).run("mmm-meridian", MMM_INPUTS, resume=True)
+    mmm(StopAtGate(GateDecision.APPROVE, GateDecision.APPROVE)).run(
+        "mmm-meridian", MMM_INPUTS, resume=True
+    )
+
+    settled: set[str] = set()
+    for event in read_events(run_dir):
+        value = event.get("value") or {}
+        if event.get("name") != "dsagent.step" or not value.get("gate"):
+            continue
+        step = value["step"]
+        if _is_pending_gate_event(event):
+            assert step not in settled, f"{step} was announced again after it was decided"
+        elif value["gate"].get("decision"):
+            settled.add(step)
+    assert settled == {"data-gate", "model-spec", "fit"}, settled
+
+
+def _is_pending_gate_event(event: dict) -> bool:
+    value = event.get("value") or {}
+    return (
+        event.get("name") == "dsagent.step"
+        and value.get("status") == "awaiting_gate"
+        and (value.get("gate") or {}).get("decision") is None
+    )

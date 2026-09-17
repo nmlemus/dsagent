@@ -1,0 +1,723 @@
+# M2.5 — UI product pass, working log
+
+One entry per task of `docs/ui-product.md` §8: what changed, what was verified,
+what was decided, what was deferred. Written as the work happens, on branch
+`m25-ui-product`.
+
+**Budget.** §6 allows six real-model runs for the whole milestone. Spent so far: **0**.
+Development is against the replay fixture.
+
+---
+
+## Task 1 — replay fixture and the event log
+
+**Branch base.** `v2` @ `82e12f4`, which already carries M2.2.1 item 1 (the
+recursion limit, PR #74, merged). Items 2 and 3 of M2.2.1 were *not* on `v2` when
+this branch opened, though §0 of the spec assumes them; item 2 is closed by this
+task (below) and item 3 by task 6, where the ticks live.
+
+### What changed
+
+**The runner writes its own record.** `<run_dir>/events.jsonl` gets every
+`RunnerEvent`, one JSON object per line, and `<run_dir>/runner.log` gets every
+`log()` line. Both are written by the runner rather than by a front end, which is
+M2.2.1 item 2: `dsagent serve` passes `log=lambda m: None`, so a browser-driven
+run used to leave nothing readable behind while a CLI run did. The file is written
+whether or not anyone is listening, because the run that nobody watched is exactly
+the one somebody reads afterwards.
+
+**A gate is announced before it is asked.** `dsagent.step` gains a `gate` object:
+`{kind, prompt, asked_at, decision, note, decided_at}`. The runner emits
+`status=awaiting_gate` with `decision: null` *before* calling `ask_human`, and
+emits the step again with the answer filled in once one arrives. Until now the
+only surface that knew a run had stopped was whoever was holding the interrupt, so
+a second tab, a reloaded page and a stakeholder on a link all saw a run that had
+silently gone quiet.
+
+**`RunState.gate`** records the same pending question in `run.json`, and
+`GateRecord` gains `asked_at`. `run.json` is the only thing that outlives the
+process, and a run waiting for a person is the one most likely to still be waiting
+when the process dies (§7.11). `ts - asked_at` is also the human wait — M2.2.1
+item 5, the 37 seconds run 003 spent at its gate with nothing to show for it.
+
+**A gate's note survives.** `ask_human` may now return `GateAnswer(decision, note)`
+as well as a bare `GateDecision`; the note lands in `run.json` and on the step
+event. The card already collected a note and the runner used to drop it, which
+made §7.10 ("the rejection and note are visible in the step's history")
+unbuildable.
+
+**`dsagent.note` — persona narration as a runner event.** The runner emits what a
+persona says as it says it, attributed to the step it is in. M2.2 read the same
+text off the AG-UI message stream and attributed it *by time*, because nothing on
+the wire says who is talking. Attribution by construction is strictly better, and
+unlike a message stream it survives a reload, a second tab, and a run nobody was
+attached to.
+
+**`RunState.save` is atomic.** Same-directory temp plus `os.replace`. The runs API
+reads `run.json` on every poll while the run is rewriting it; the replay tests hit
+the truncated-file window within a minute of existing.
+
+**`src/dsagent/runs.py`** — reading a run directory back: `list_runs`,
+`summarize`, `read_events(after=…)` with a line-number cursor, `read_log`,
+`deliverables`, `is_live`. No FastAPI, no `[ui]` extra; HTTP goes in front of it in
+task 2.
+
+**`src/dsagent/replay.py` + `ui/fixtures/run-eda-003/`** — a recorded run played
+back into a fresh run directory at 10×, writing the same `events.jsonl` every
+other reader consumes, so a replayed run and a real one are the same run to
+everything downstream. The gate is the one thing not replayed: the recorded wait
+is discarded and the run stands there until a person answers.
+
+### The fixture is run 003, not a new run
+
+`tools/make_replay_fixture.py` builds it from
+`.dsagent/runs/eda-to-report-toolu_01Y3oq…/` — the actual run 003 directory, still
+on this machine. Real: step boundaries, the 37-second gate wait, every file with
+the mtime it got, per-step tool counts, token usage, and each persona's closing
+summary. Reconstructed: the *order and individual timestamps* of tool calls within
+a step, which `run.json` does not record, spread evenly across their step. Nothing
+else is invented — no narration a persona did not write, no file the run did not
+produce.
+
+This spends **zero** of the six real-model runs. §6 says "capture one real run";
+capturing run 003's record is the same artifact for no money, and the four runs
+§7 needs are worth more than a fifth recording of a run we already have.
+
+### Verified
+
+`pytest` 192 passed / 7 skipped, `ruff check src tests` clean. New: 12 tests in
+`tests/test_run_store.py` (event log, cursor, half-written tail, summaries,
+pending gate surviving its asker, listing), 8 in `tests/test_replay.py` (whole
+workflow, files landing, the gate holding, rejection, resume-reopens-the-gate),
+3 new gate-payload tests and 2 narration tests in `tests/test_runner_events.py`.
+The replay tests run against the committed fixture, so a fixture that stops
+matching the schema fails the suite.
+
+### Deferred
+
+The `--replay` CLI flag lands with task 2: the flag is meaningless until the run
+endpoints exist, and dead code in between would be worse than one commit's wait.
+
+---
+
+## Task 2 — the runs API, and who owns a run
+
+### The decision this task turned on
+
+**A run belongs to the server, not to the tab that started it.** `POST /runs`
+creates the directory, `POST /runs/{id}/start` sets the orchestrator going on a
+background thread, and the browser follows `events.jsonl` over SSE and answers
+gates over HTTP. It is a viewer.
+
+§4.1 asks for exactly this and §4.2 explains why: reload, a second tab, and a
+CLI-started run all have to show the same screen, and none of them can if the run
+only exists inside one browser's event stream. §7.6 and §7.11 are the same
+requirement with the page and the server killed respectively.
+
+The run still goes *through* the orchestrator — the path the chat takes, as §4.1
+says — so the run exists in a thread that can be asked about afterwards. The only
+thing the server decides for it is which directory to write to.
+
+### What changed
+
+- **`src/dsagent/api.py`** — `GET /cartridges`, `GET|POST /runs`,
+  `GET /runs/{id}`, `PUT /runs/{id}/data/{input}`, `POST /runs/{id}/start`,
+  `POST /runs/{id}/gate`, `GET /runs/{id}/events` (SSE) + `/events.json`,
+  `GET /runs/{id}/log`. Its own module rather than more of `serve.py`, and for a
+  reason worth writing down: FastAPI resolves route annotations against the
+  *module* globals, so importing `Request` inside the function that registers the
+  routes made every route take `request` as a query parameter (422, "Field
+  required"). `api.py` is only imported from `build_app`, which already requires
+  the `[ui]` extra, so FastAPI is a plain module-level import here.
+- **`src/dsagent/driver.py`** — `GraphDriver`: one background thread per run,
+  `answer_gate` resuming the graph with `Command(resume=…)`, and `_mark_failed`
+  so a failure *outside* the runner (no credentials, a graph that gave up) still
+  lands in `run.json` instead of leaving the screen spinning. `Replay` implements
+  the same three methods, which is what `--replay` swaps in.
+- **`dsagent serve --replay <fixture> [--replay-speed]`** — every route identical,
+  no model loaded, no agent endpoint mounted.
+- **Run-reading tools for the orchestrator** — `list_run_files(run_id)` and
+  `read_run_file(run_id, path)`. Its own file tools are rooted in the chat
+  workspace; a run lives in its own directory. Without these, §7.9 ("which finding
+  should I be most careful with?") could only be answered from the sentence the
+  tool result returned.
+
+### Three traps, each found by a test
+
+**`config: RunnableConfig` does not work under `from __future__ import annotations`.**
+The run id travels to `run_workflow` in the graph config. Declared as a parameter,
+the annotation is the *string* `"RunnableConfig | None"`, LangChain does not
+recognise the injection, and the tool is handed `None` — silently. The run then
+lands in a directory named after the tool call, with the operator's uploaded
+dataset sitting in a different one. `ensure_config()` reads it correctly; probed
+both ways on langchain-core 1.6.3.
+
+**Inputs were resolved before the recorded ones were merged in.** A re-entering
+caller — `--resume` without the original `-i`, or a model retyping `inputs={}` —
+failed validation for an input the run directory had recorded all along. A run now
+keeps the inputs it started with, and they are resolved after the merge. This is
+also what makes the launcher's form, rather than the model, authoritative.
+
+**The gate note was dropped in serve mode.** `interrupt_gate` returned a bare
+decision, so "reject, because the fog rows look wrong" reached `run.json` as
+"reject". §7.10 asks for that note in the step's history.
+
+### Uploads are a raw-body `PUT`, not multipart
+
+`PUT /runs/{id}/data/{input}` with the file as the body. Multipart would mean
+adding `python-multipart`, and `CLAUDE.md` says not to add a dependency without
+asking — for a form with exactly one file in it, when a drag-and-drop already has
+the `File` in hand (`fetch(url, {method: "PUT", body: file})`). The input name is
+in the path, so a workflow declaring two datasets needs no new convention, and the
+filename is sanitised to its last segment and `[A-Za-z0-9-_.]`.
+
+If multipart is wanted later it is a one-line dependency and a small route change.
+
+### Verified
+
+`pytest` 219 passed / 7 skipped, `ruff` clean, `dsagent cartridge validate` green.
+New: 18 tests in `tests/test_runs_api.py` (driven against a replayed run through
+`TestClient`) and 9 in `tests/test_driver.py` (the real `create_deep_agent` graph
+with a stub model and fake personas — the run lands in the launcher's directory,
+the form beats the model, the gate is answered from outside the asking thread, a
+rejection resumes, a failure outside the runner reaches `run.json`).
+
+End to end by hand against `dsagent serve --replay … --replay-speed 20`: create →
+upload 48 kB CSV → start → the run parks at `data-gate` after two steps → approve
+over HTTP → finishes in 47 s with 116 events, 560 k tokens carried over from the
+recording, and `report/findings.html` served at 272 kB.
+
+**A note on `TestClient` and SSE.** A `client.post(...)` issued while that same
+client holds an open stream deadlocks — one portal, one request at a time — and so
+does breaking out of a stream early. Both are test-harness artifacts, not server
+behaviour, but they cost an hour: the stream test now answers its gate through the
+driver and consumes to the end frame. The endpoint also checks
+`request.is_disconnected()`, which is what a real client hanging up looks like.
+
+### Deferred
+
+The replay writes no `runner.log` (it is not the runner); `GET /runs/{id}/log`
+says so rather than 404ing. Cost per run is still `null` everywhere — §4.6, task 9.
+
+---
+
+## Task 3 — home screen, and a run restored from its log
+
+### What changed
+
+**`/` is the run list**, `/runs/<id>` the run screen, `/new` the launcher (task 4).
+The M2.2 shell — one page, chat plus canvas, state reduced from the live AG-UI
+stream — is gone. `ui/app/lib/` now holds the typed API client, the reducer, and
+the hooks; `ui/app/components/` the panels.
+
+**Everything on the run screen is reduced from `GET /runs/{id}/events`.** One
+endpoint hands over the whole backlog and then keeps streaming, so opening a
+finished run, reloading mid-run, opening a second tab and attaching to a run the
+CLI started are the same code path — §4.2's whole point, and M2.2.1 item 4.
+`EventSource` reconnects on its own and resumes from `Last-Event-ID`, which the
+server now honours.
+
+**The visual system landed here rather than in task 5**, because a home screen
+has to look like something. `tokens.css` carries §3's palette and the three
+typefaces; the run list is a ledger (mono numbers, right-aligned, hairline rules)
+rather than a stack of cards, so two runs can be compared down a column. Two
+colours the spec's four do not cover: `--fail`, a deep brick that is *not* the
+accent — orange is the primary action, and a failed step drawn in it reads as
+something to click — and navy at low alpha for secondary text and rules, so
+nothing introduces grey. Fonts are declared but not yet installed; the stacks
+fall back to system faces until task 5.
+
+**The proxy prefix moved from `/runs/*` to `/dsa/*`.** `/runs/<id>` is now a page
+in this app, and a Next rewrite on that path would proxy the run screen away to
+the API.
+
+**`npm run lint`** added (ESLint flat config, `eslint-config-next`; `next lint`
+is gone in Next 16). It found four real React-hygiene bugs, all fixed rather than
+silenced: `setState` in three effect bodies, and `Date.now()` read during render.
+The fixes are better code — the event stream accumulates into a local that the
+connection's own `onopen` publishes, the file viewer keys its fetch result by URL
+so "loading" is derived rather than assigned, and anything that counts up takes
+its time from one `useClock` hook.
+
+### The two hours that went into an iframe
+
+The report rendered as a blank white pane. The `sandbox=""` attribute looked
+guilty and was not: a hand-made iframe with the same attribute and the same URL
+painted fine, and so did the real one the moment it was moved out of its
+container. The cause was **`backdrop-filter: blur(6px)` on the sticky topbar** —
+it puts the page on a compositing path where a sandboxed iframe *elsewhere on the
+screen* loads its document and paints nothing. Removed; the comment in
+`globals.css` says why, because the next person will want a blurred header too.
+
+Two real fixes came out of the hunt anyway: the iframe now has a definite height
+(`min-height: 0` up the flex chain), and the file list shows the whole
+workspace-relative path, because `artifacts/findings.md` and `report/findings.md`
+are two different files with one basename in every run so far.
+
+### Verified
+
+`npm run build`, `npm run typecheck`, `npm run lint` clean; `pytest` 219,
+`ruff` clean. In the browser against `next build && next start` with
+`dsagent serve --replay`: the home screen lists every run this machine has,
+including the ones the CLI made (`docs/runs/ui-product/t3-home.jpg`), and a run
+opened cold rebuilds its four steps, its promises, its ten files and its report
+from `events.jsonl` alone (`t3-run-restored.jpg`).
+
+### Deferred
+
+Cost is `—` everywhere until task 9. The progress region shows two steps before
+scrolling on a 900 px window; task 6 owns that. The chat pane is a placeholder in
+replay mode, which is honest — there is no model behind a recording.
+
+---
+
+## Task 4 — the launcher
+
+### What changed
+
+`/new`: workflow cards from `GET /cartridges` (name, what it does, the personas
+as avatars, "4 steps, 1 stop for you"), then a form generated from the declared
+inputs — `path` becomes a drop zone, `options` a select, `daterange` two dates,
+anything else a text field, defaults prefilled and optional marked. Beside it,
+"What will happen": the steps in order, with the gate marked *stops here for your
+decision*, so the one thing an operator has to be present for is visible before
+they start rather than after.
+
+Start does three calls — create, upload, start — and lands on the run screen.
+Nothing about paths is typed: the value the steps read is whatever the server
+says the upload landed as.
+
+The form is keyed by workflow, so switching one resets it by remounting rather
+than by an effect reaching in to clear the fields.
+
+### The bug that would have sunk the demo
+
+The live stream reached `curl` and never reached the browser: **Next gzips what
+it proxies, and a gzip stream buffers.** The browser received ten bytes of gzip
+header and then nothing, with no error — the header polled fine, so the run's
+numbers ticked upward beside a stepper frozen on "waiting to start". The endpoint
+now sends `Content-Encoding: identity` and `Cache-Control: no-cache, no-transform`.
+
+Worth stating plainly: every screen in this milestone reads that stream. A
+compressing proxy in front of it silently costs the product its entire live half,
+and the failure looks like "the UI is slow", not like a bug.
+
+### Verified
+
+`npm run build|typecheck|lint` and `pytest` green. In the browser, end to end
+against the replay at 12×: pick `eda-to-report`, drop `seattle-weather.csv` on the
+form, Start (`docs/runs/ui-product/t4-launcher.jpg`) — the run screen shows the
+DAG as declared while it waits, then steps light up as they run, the gate card
+appears inline at `data-gate` with its report already rendered beside it, and
+Approve leaves **"Approved after 16s"** on the step (M2.2.1 item 5, closed).
+Figures arrive as a burst and the canvas follows the step, not the files
+(`t4-run-live.jpg`).
+
+### Deferred to task 6
+
+The progress region is too short at 900 px: the gate card needed a scroll to
+reach. A glob promise that matched four figures lays its files out in a run-on
+line. Both are the progress region's own task.
+
+---
+
+## Task 5 — the skin, the fonts, and the chat
+
+### What changed
+
+**Fonts are self-hosted** in `ui/public/fonts`: Satoshi Medium/Bold/Black
+(Fontshare, FFL — licence committed beside it), Instrument Serif and JetBrains
+Mono (Google's `latin` subsets, OFL). No third-party font request, because client
+data is on the screen and a webfont request carries this page's URL to somebody
+else's server. JetBrains Mono is the variable file, so one face covers both
+weights. A missing file degrades to the system stack rather than to nothing.
+
+**The chat is restyled through CopilotKit's own variables.** v2 themes itself with
+shadcn-shaped tokens on `[data-copilotkit]` — `--background`, `--primary`,
+`--muted`, `--border`, `--ring`, `--radius`, `--cpk-font-sans`. Overriding those
+is the whole job: no component replaced, no internal class reached into, and an
+upgrade that rearranges their DOM still lands in the Aiuda palette. An empty
+thread now says what the chat is for instead of showing a void.
+
+**The three regions are resizable**, with the split kept per axis in
+`localStorage` and read through `useSyncExternalStore` — so no effect overwrites
+state after the first paint, the server renders the default without a hydration
+mismatch, and a second tab moving the divider is heard. Arrow keys move a divider
+too; a control that only answers a mouse is a control some people do not have.
+
+**The chat loads on its own chunk** (`next/dynamic`). CopilotKit is by far the
+largest thing on the page, and §7.6 reloads mid-run: what has to come back
+quickly is the steps and the files, not the message box. Click-to-steps on a
+client-side navigation measures **1.8 s**; a cold load is TTFB 40 ms, DOM
+interactive 184 ms, everything settled by ~3 s.
+
+### Verified
+
+All checks green. Screens at 1440 (`docs/runs/ui-product/t5-run-skinned.jpg`) and
+at 1024 (`t5-run-1024.jpg`): Instrument Serif on the run title, Satoshi across the
+UI, JetBrains Mono on every path and number, the four colours doing only their own
+jobs, and no browser-default control left visible.
+
+### Where this diverges from §2.3, and what task 6 does about it
+
+§2.3 asks for a **horizontal** stepper. What is on screen is a vertical relay
+spine, which reads well but shows two steps in a 900 px window — the gate card
+needed a scroll to reach, which is the one thing on this screen that must never
+need a scroll. Task 6 rebuilds the region as the spec describes: a horizontal
+stepper that always shows the whole DAG, with the detail of one step below it.
+
+---
+
+## Task 6 — the progress region
+
+### The stepper is horizontal, as §2.3 asks, and for a reason
+
+Four chips across the top — persona initial, step id, and one fact each
+("2/2 delivered", an elapsed clock, or **needs you**) — with the detail of one
+step below. The open step is chosen for you: the gate that is waiting, else what
+is running, else the last thing that happened. Clicking a chip holds that step
+open until the run's own focus moves on.
+
+The vertical version showed two of four steps in a 900 px window, which put the
+Approve button below the fold. That is the one thing on this screen that must
+never need a scroll, and a horizontal row is what fixes it at any height.
+
+**A waiting gate grows the region to fit itself** (560 px) and hands the space
+back once answered. The card is one row — Approve, Send back, and a note field —
+rather than a stacked form, so it fits without pushing the canvas away.
+
+### `produces` ticks now fill while the step is running (M2.2.1, item 3)
+
+`produces_matched` is empty on `started` by design: the runner does not claim a
+match it has not verified. So mid-step the step row said nothing had been
+produced while the file list beside it showed the files. The fix is in the
+reducer: a `dsagent.file` event whose `kind` is `deliverable` *is* the runner
+saying that path is covered by a declared entry, so the browser only has to work
+out which entry — `covers()` applies the same segment-wise glob rule `Path.glob`
+gives the runner.
+
+Measured live, while `analyze` was still working:
+
+```
+analyze met=0 unmet=2 files=3     ← two promises, nothing ticked yet
+analyze met=1 unmet=1 files=4     ← the figures glob ticks as the fourth file lands
+analyze met=2 unmet=0 files=8     ← findings.md ticks, step still running
+report  met=0 unmet=2 files=8
+report  met=2 unmet=0 files=10
+```
+
+### A failed step in words (M2.2.1, item 6, half of it)
+
+`StepError` says who could not finish what, and which declared files were never
+written — from the step's own promises, not from the exception text. The runner's
+raw message is behind "Show what the runner reported". Task 8 exercises the path
+with a real failure.
+
+### Verified
+
+All checks green. Live against the replay (`docs/runs/ui-product/t6-gate-inline.jpg`,
+`t6-run-done.jpg`): the gate card sits inline at its step, fully visible, with its
+report rendered beside it and a live "waiting 2m 08s"; approving leaves the wait
+on the run header; the chips walk green left to right; narration opens per step.
+
+---
+
+## Task 7 — the canvas
+
+### Backend (§4.4, §4.5)
+
+- **`GET /runs/{id}/preview/{path}?rows=200`** — a parquet file as JSON columns
+  and rows, read with pandas (which the cartridge's own kernel env requires).
+  No browser reads parquet, so M2.2's canvas could only offer a link out of
+  itself. `NaN` and infinities become `null`, because they are not JSON and a
+  data-quality preview is exactly where they turn up. A server without pandas
+  answers 415 rather than guessing, and so does a file that is not a table.
+- **`GET /runs/{id}/download[?everything=true]`** — the run's declared
+  deliverables as one zip, named after the run. Deliverables by default: what a
+  stakeholder wants is the report and the figures, and the run already knows
+  which files are which because the file events carry `kind`. The uploaded
+  dataset is *not* in the default zip — a deliverable is what the run produced,
+  not what it was given.
+- **`/runs-x/{id}/files/{path}`** — the same bytes as `/runs/…`, with
+  `Content-Security-Policy: sandbox allow-scripts`. §4.5's second prefix: a
+  Plotly dashboard is useless without scripts, and `allow-scripts` together with
+  `allow-same-origin` is not a sandbox at all. Putting the choice in the URL
+  makes it visible, and the header sandboxes the document even if a future canvas
+  forgets the attribute.
+
+### Frontend
+
+The HTML viewer defaults to `sandbox=""` and offers **Run scripts**, which swaps
+the frame to `/runs-x/…` with `allow-scripts` and says plainly that scripts are
+running in an isolated frame. Parquet renders through the preview endpoint, with
+nulls marked. Every file has Download; a finished run has **Download all as
+zip**; and the report can take the whole pane with a **Report** toggle, back with
+**Show files** (§2.4).
+
+### Verified
+
+`pytest` 223 passed / 8 skipped (one of them the parquet test: this venv has no engine, so the parquet test
+skips — the endpoint's failure path is covered instead, and a server without
+pandas is a 415 by design). New API tests cover the zip's exact contents, the
+dataset's absence from it, the 404 on a run that has produced nothing, the
+preview's shapes and its 415s, and that `/runs-x` serves identical bytes with the
+CSP while refusing the same traversal.
+
+In the browser: Download all yields a 378 kB zip of ten deliverables through the
+proxy; the report opens full-width (`docs/runs/ui-product/t7-report-full.jpg`)
+and comes back; Run scripts re-points the frame at `/runs-x` and keeps rendering.
+
+---
+
+## Task 8 — when a run stops
+
+§2.5: a failed step, a rejected gate and an abandoned run are three ways a run
+stands still, and each needs the same two things — a sentence saying what
+happened, and the one button that moves it on. That button is always
+`POST /runs/{id}/start`, which is the runner's own resume: finished steps are
+skipped, a failed step is re-run, a gate is asked again.
+
+- **Failed:** "noel could not finish analyze. Nothing after it ran." ·
+  *Retry from analyze*
+- **Sent back:** "You sent data-gate back: *“The fog rows look wrong…”*" ·
+  *Resume and reopen the gate*
+- **Abandoned:** "Nothing is driving this run — the server that started it is
+  gone." · *Pick it up from here* (this is `live` from the API: `run.json` cannot
+  tell "running" from "was running when the machine died")
+
+The step itself says which declared file was never written, from its own
+promises rather than from the exception text, with the runner's raw line folded
+behind *Show what the runner reported*. That is M2.2.1 item 6 — the old error
+toast opened frames from a minified bundle.
+
+**The stepper always shows the whole DAG.** Steps that have not run are drawn
+from the workflow's declaration as *waiting*; a stepper built only from events
+makes a failed run look complete. And a stopped run — failed, or sent back —
+grows the progress region the same way a waiting gate does, so the reason and the
+button are never below a fold.
+
+**A step keeps its gate history.** `run.json` records the standing decision,
+because that is what the runner acts on; the event log has every decision, and
+§7.10 asks for the rejection *and its note* to still be there after the run has
+been approved and finished. `StepRow.gates` accumulates them, oldest first.
+
+### Verified (no model, and a genuinely failed run)
+
+M2.2.1's item 7 was "a failed step's presentation is unexercised". It is now:
+`.dsagent/runs/eda-to-report-failed-demo` is a real run driven by the real runner
+with the test suite's streaming fake told to skip two figures, so it fails the way
+a real run fails — `produces` unverified on disk
+(`docs/runs/ui-product/t8-failed-step.jpg`).
+
+The full reject → resume → approve cycle, against the replay
+(`t8-sent-back.jpg`, `t8-gate-history.jpg`): sending the gate back with a note
+stops the run and shows the note in two places; Resume reopens the gate; Approve
+finishes the run; and the step's history then reads **"Sent back after 4s — 'The
+fog rows look wrong…'"** followed by **"Approved after 0s"**.
+
+---
+
+## Task 9 — cost, and a gate that survives a restart
+
+### Cost (§4.6)
+
+`prices.yaml` ships with the repository and is the only place a price exists.
+`dsagent.pricing` reads it and multiplies by the usage each step already records;
+the runner writes `cost_usd` and `model` into every `StepRecord`, and the run
+totals them. A model with no entry costs **`None`**, which the UI prints as "—":
+an unknown price is not zero, and a number nobody can source is worse than a dash.
+
+Only one rate is listed, and it is sourced: Sonnet 5 at $2 / $0.20 / $2.50 / $10
+per million (input / cache read / cache write / output), from
+`docs/runs/eda-to-report-003.md`, which reconciles those rates against that run's
+own token counts. The test does the same reconciliation — run 003's usage through
+this code is **$0.466996**, and that document reports **$0.47**.
+
+The arithmetic that is easy to get wrong: `input_tokens` is the *whole* input,
+with `cache_read` and `cache_creation` as sub-counts of it. So uncached input is
+the remainder, not the total. Run 003 is 74 uncached tokens out of 560,421 — get
+this wrong and the bill is 20× too big.
+
+Replayed runs are priced too, from the recording's own tokens. A screen developed
+against "—" would be a screen developed against a lie.
+
+### The checkpointer (§4.3)
+
+`.dsagent/checkpoints.sqlite` under the serve workspace, with `--memory` to keep
+the old behaviour. `langgraph-checkpoint-sqlite` joins the `[ui]` extra, floored
+rather than pinned; without it the server still runs, in memory, rather than
+refusing to start.
+
+The test is the one that matters for §7.11: build a graph, stop it at an
+`interrupt()`, **throw the saver and the graph away**, build both again over the
+same file, and answer — the run goes on. The contrast is asserted too: with an
+in-memory saver the second process finds nothing to resume and `invoke` returns
+`None`. That is the operator coming back to a question nobody is holding.
+
+### Verified
+
+`pytest` 235 passed / 8 skipped, `ruff` clean, `npm` checks clean. Per-step costs
+from a replayed run match run 003's published table line by line — profile
+$0.065, data-gate $0.054, analyze $0.241 — and the home screen shows **$0.47**
+against the run, with "—" against the older ones that were never priced
+(`docs/runs/ui-product/t9-home-costed.jpg`).
+
+---
+
+## Task 10 — the demo, and where it stops
+
+`docs/runs/ui-product/DEMO.md` walks §7 line by line. **Eight of the twelve are
+verified**, against `dsagent serve --replay`, which serves the same API, the same
+event stream and the same screens — it differs only in what drives the run.
+
+Four lines a recording cannot honestly stand in for, and they are the ones that
+need `ANTHROPIC_API_KEY`:
+
+- **§7.3** — a real `profile` step reporting itself inside five seconds.
+- **§7.7** — a real run ending without an error, which is M2.2.1 item 1 end to end.
+- **§7.9** — the orchestrator answering a question from the run's artifacts.
+- **§7.11** — a real server killed at a gate and restarted.
+
+Three runs finish them: one clean, one rejected-then-resumed, one killed at its
+gate. About $1.50 of a six-run budget, **none of which has been spent** — the
+whole milestone was built against run 003's own recording.
+
+Everything else is done and pushed. The branch is `m25-ui-product`, nine commits,
+`pytest` 235 / 8 skipped, `ruff`, `npm run build|typecheck|lint` and
+`dsagent cartridge validate` all green.
+
+---
+
+## Task 10 (completed) — the demo, with a real model
+
+Three runs, **$1.60**, all twelve §7 lines verified:
+`docs/runs/ui-product/DEMO.md` walks them one by one with the evidence.
+
+| run | for | wall | cost |
+|---|---|---|---|
+| A `…-000956` | the clean run, §7.1–§7.9 | 6 m 14 s | $0.62 |
+| B `…-080356` | killed at its gate, then sent back, §7.10–§7.11 | 6 m 46 s | $0.50 |
+| C `…-081412` | the human wait, measured properly | 6 m 28 s | $0.48 |
+
+A fourth run ($0.48) was created through the API during debugging and is on the
+home screen; it is a complete, successful run, and I cannot account for the click
+that made it, which is worth saying rather than tidying away.
+
+### Two real bugs the demo found, both fixed
+
+**The human wait was always reported as 0 s under `serve`.** M2.2.1 item 5 was
+supposedly closed in task 1 — and it was, for the CLI and for the replay. Under
+`serve` the first `ask_human` never returns: it raises a LangGraph interrupt, and
+the whole tool re-executes when the answer arrives. A clock read at that point
+measures the *resume*. The pending record in `run.json` already held the true
+moment; the runner now reads it back, and `RunState.gate_wait` accumulates across
+answers so a gate sent back and later approved counts both waits rather than only
+the second. Run C shows **Waited for you 1m 34s** against a card that counted
+1m 33s.
+
+**The chat died on its first real message.** `SqliteSaver` is sync-only and the
+AG-UI bridge streams with `astream_events`, so task 9's checkpointer turned every
+chat message into *"The SqliteSaver does not support async methods"* and a red
+`terminated`. `InMemorySaver` implements both halves, which is exactly why no test
+caught it. The driver and the bridge now take different savers, and the cost is
+written down where it is made: a run started *from the chat* still loses its gate
+on a restart, because `AsyncSqliteSaver` cannot be constructed outside a running
+event loop and the app is built before uvicorn has one.
+
+Both are the kind of thing only a real run finds. The milestone was right to
+spend its budget at the end rather than the beginning.
+
+### Verified
+
+`pytest` 238 passed / 8 skipped · `ruff check src tests` · `npm run build`,
+`typecheck`, `lint` · `dsagent cartridge validate cartridges/ds`.
+
+---
+
+## Review round — PR #75
+
+Mergeable with small fixes. Five groups, all applied on this branch; the harness
+half is `harness: the gate race, the second gate's wait, and four smaller edges`,
+the UI half the commit that follows it.
+
+### 1. Answering a gate the instant it is announced
+
+The runner writes the pending gate and emits `awaiting_gate` *before*
+`ask_human` raises the interrupt, so between the browser seeing the question and
+the thread actually parking there is a window: a checkpoint write plus the
+runner closing its envs, which with a kernel backend is seconds. An operator who
+approves quickly landed in it and got a 409 for being fast. `answer_gate` now
+asks the *run* whether it is at a gate (so answering a run that is merely working
+still returns at once), then joins its thread for up to `PARK_SECONDS` = 5 s. Past
+that it is not parking, it is working, and the 409 is the honest answer.
+
+`Replay` mirrors it, because every screen is built against the replay and a race
+that only exists in one of them is a race that gets re-found later.
+
+The flaky test is gone: `test_a_gate_can_be_answered_the_instant_it_is_announced`
+holds the window open with a backend whose `close()` sleeps, rather than racing a
+20 ms poll against fake agents that park faster than it can look.
+
+### 2. A finished run reconnecting for ever
+
+The server ends a finished stream with `event: end`, and a *named* SSE event
+never reaches `onmessage` — so the browser never closed its side and
+`EventSource` reconnected every three seconds for as long as the tab stayed open.
+`use-run.ts` now listens on `end` as well. Measured in the network tab on a
+finished run: `{eventsRequestsAfter3s: 1, eventsRequestsAfter15s: 1}`.
+
+### 3. The second gate lost its wait
+
+A decided gate is re-asked on every resume to keep the `interrupt()` sequence
+stable. It was also clearing `state.gate` on the way through — and `state.gate`
+belongs to whichever *later* gate is actually waiting, which is how gate 2 ended
+up with no `asked_at` and a 0 s wait. A standing gate now touches nothing: not
+the pending record, not the accumulated wait, and not the event log, where a
+re-announced "awaiting" for a decided gate is a question nobody is being asked.
+`test_the_second_gate_keeps_its_own_wait_across_a_resume` and
+`test_a_decided_gate_is_never_announced_again` hold it, on a two-gate workflow.
+
+### 4. The smaller edges
+
+- `driver.start()` holds its lock across the check *and* the spawn, so two clicks
+  on Start are one run.
+- `list_run_files` validates `run_id` through the same `_run_workspace` helper
+  `_resolve_in_workspace` uses.
+- A run the orchestrator answered without ever calling `run_workflow` is marked
+  failed with a reason, instead of sitting at `pending` for ever looking like it
+  might still start.
+- The chat-started-gate limitation is written down in the `api.py` module
+  docstring and in DEMO.md's "What the demo does not cover".
+- `/preview` dispatches on extension through a `READERS` table; delimited text
+  goes through stdlib `csv`, so quoted fields survive and no dependency is
+  needed. Two DS-flavoured comments in `api.py` are gone (invariant 1).
+
+### 5. The UI
+
+- CopilotKit telemetry is off in code as well as in `.env`. Not as the review
+  wrote it: 1.72 has no `telemetryDisabled` constructor option (TS2353), so the
+  route sets `COPILOTKIT_TELEMETRY_DISABLED` before constructing the runtime. The
+  comment says why.
+- The launcher no longer prefills the literal `"None"` — a workflow default of
+  `None`, `null`, `nil` or empty renders as an empty optional field, and blanks
+  are omitted from the payload rather than sent as strings.
+- If Start fails after the run directory exists, the orphan is deleted:
+  `DELETE /runs/{id}`, which refuses anything that has actually run, because a
+  run's directory is the record of what happened.
+- A finished run opens its report full-width on its own, and the operator's
+  toggle still wins: `reportChoice ?? (finished && focused)`.
+- `t5-run-1024.jpg` retaken at a real 1024 px viewport on the stepper layout,
+  with the metrics row unclipped.
+
+**Deferred: the Share button.** The review allows it, and this is the write-up.
+Sharing a run means deciding what a link *is* — a read-only view of a run
+directory, with its own auth story — and that is a product decision, not a
+button. `GET /runs/{id}/download` already hands over everything the run produced.
+
+Not touched, as instructed: ruff 0.16 flags four pre-existing issues in
+`cartridges/ds/skills/eda/scripts/profile.py` and `tools/make_replay_fixture.py`.
+
+### Verified
+
+`pytest` 247 passed / 8 skipped · `ruff check src tests` · `npm run build`,
+`typecheck`, `lint` · `dsagent cartridge validate cartridges/ds`.
