@@ -495,104 +495,139 @@ button {
 
 /* --- the stepper ----------------------------------------------------------- */
 
+/* The whole DAG, always visible, at any window height. Chips are connected by a
+   hairline so the row reads as a hand-off rather than as a toolbar. */
 .stepper {
+  list-style: none;
   display: flex;
-  flex-direction: column;
+  flex-wrap: wrap;
+  gap: 0;
+  margin: 0 0 var(--gap-4);
+  padding: 0;
 }
 
-/* A step is a row on a spine: the persona's initial is the node, and the line
-   between nodes is the hand-off. The whole DAG reads top to bottom as a relay. */
-.step {
-  display: grid;
-  grid-template-columns: 34px minmax(0, 1fr);
-  gap: var(--gap-3);
-  padding-bottom: var(--gap-4);
-}
-
-.step-spine {
-  position: relative;
+.chip {
   display: flex;
-  justify-content: center;
+  align-items: center;
+  min-width: 0;
 }
 
-.step-spine::after {
+.chip + .chip::before {
   content: "";
-  position: absolute;
-  top: 30px;
-  bottom: -24px;
-  width: 1px;
+  width: 18px;
+  height: 1px;
   background: var(--rule-strong);
+  flex: none;
 }
 
-.step:last-child .step-spine::after {
-  display: none;
-}
-
-.step-mark {
-  width: 26px;
-  height: 26px;
-  border-radius: 50%;
-  display: grid;
-  place-items: center;
-  font-size: 12px;
-  font-weight: 700;
-  background: var(--surface);
-  border: 1px solid var(--rule-strong);
-  color: var(--ink-dim);
-  z-index: 1;
-}
-
-.step.is-started .step-mark {
-  border-color: var(--accent);
-  background: var(--accent);
-  color: #fff;
-  box-shadow: 0 0 0 4px var(--accent-wash);
-}
-
-.step.is-done .step-mark {
-  border-color: var(--ok);
-  color: var(--ok);
-  background: var(--ok-wash);
-}
-
-.step.is-failed .step-mark {
-  border-color: var(--fail);
-  color: var(--fail);
-  background: var(--fail-wash);
-}
-
-.step.is-waiting .step-mark {
-  border-color: var(--wait);
-  color: var(--wait);
-  background: var(--wait-wash);
-}
-
-.step-head {
-  display: flex;
-  align-items: baseline;
-  gap: var(--gap-2);
-}
-
-.step-name {
-  font-size: 16px;
-}
-
-.step-persona {
-  font-size: 13px;
-}
-
-.step-elapsed {
-  margin-left: auto;
-  font-size: 12px;
-  color: var(--ink-dim);
-}
-
-.step-activity {
-  margin: 2px 0 var(--gap-2);
-  font-size: 13px;
+.chip-button {
   display: flex;
   align-items: center;
   gap: var(--gap-2);
+  padding: 7px 12px 7px 8px;
+  border: 1px solid var(--rule);
+  border-radius: 999px;
+  background: var(--surface);
+  cursor: pointer;
+  max-width: 100%;
+}
+
+.chip-button:hover {
+  border-color: var(--rule-strong);
+}
+
+.chip.is-open .chip-button {
+  border-color: var(--ink);
+}
+
+.chip-name {
+  font-family: var(--mono);
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chip-note {
+  font-size: 11px;
+  color: var(--ink-dim);
+  white-space: nowrap;
+}
+
+.chip-mark {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  font-size: 11px;
+  font-weight: 700;
+  background: var(--surface-sunk);
+  border: 1px solid var(--rule-strong);
+  color: var(--ink-dim);
+  flex: none;
+}
+
+.chip.is-started .chip-mark {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+  animation: pulse 2s ease-in-out infinite;
+}
+
+.chip.is-done .chip-mark {
+  background: var(--ok-wash);
+  border-color: var(--ok);
+  color: var(--ok);
+}
+
+.chip.is-failed .chip-mark {
+  background: var(--fail-wash);
+  border-color: var(--fail);
+  color: var(--fail);
+}
+
+.chip.is-waiting .chip-mark {
+  background: var(--wait);
+  border-color: var(--wait);
+  color: #fff;
+}
+
+.chip.is-waiting .chip-note {
+  color: var(--wait);
+  font-weight: 700;
+}
+
+/* --- the open step --------------------------------------------------------- */
+
+.detail {
+  border-top: 1px solid var(--rule);
+  padding-top: var(--gap-3);
+}
+
+.detail-head {
+  display: flex;
+  align-items: baseline;
+  gap: var(--gap-2);
+  margin-bottom: var(--gap-2);
+}
+
+.detail-name {
+  font-family: var(--mono);
+  font-size: 15px;
+  font-weight: 500;
+}
+
+.detail-activity {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--gap-2);
+  font-size: 13px;
+}
+
+.detail-elapsed {
+  margin-left: auto;
+  font-size: 12px;
 }
 
 .working {
@@ -601,6 +636,19 @@ button {
   border-radius: 50%;
   background: var(--accent);
   animation: pulse 1.4s ease-in-out infinite;
+}
+
+.tools {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--gap-2);
+  margin-top: var(--gap-2);
+  font-size: 11px;
+  color: var(--ink-dim);
+}
+
+.tool b {
+  color: var(--ink);
 }
 
 /* --- promises -------------------------------------------------------------- */
@@ -619,9 +667,8 @@ button {
 
 .promises li {
   display: flex;
-  flex-wrap: wrap;
-  gap: var(--gap-2);
-  align-items: baseline;
+  flex-direction: column;
+  gap: 1px;
   font-size: 12px;
   padding-left: 18px;
   position: relative;
@@ -684,18 +731,42 @@ button.promise:hover {
 }
 
 .step-error {
-  margin-top: var(--gap-2);
-  padding: var(--gap-2) var(--gap-3);
+  margin-top: var(--gap-3);
+  padding: var(--gap-3);
   border-left: 3px solid var(--fail);
   background: var(--fail-wash);
   border-radius: var(--radius);
   font-size: 13px;
 }
 
+.step-error-what {
+  margin: 0 0 var(--gap-1);
+}
+
+.step-error-what code {
+  font-size: 12px;
+}
+
+/* The runner's own words, for whoever wants them — folded away by default,
+   because a stack trace in a minified bundle is what M2.2.1 item 6 is about. */
+.step-error-raw {
+  margin: var(--gap-2) 0 0;
+  padding: var(--gap-2);
+  background: var(--surface);
+  border: 1px solid var(--rule);
+  border-radius: var(--radius);
+  font-family: var(--mono);
+  font-size: 11px;
+  white-space: pre-wrap;
+  max-height: 160px;
+  overflow: auto;
+}
+
 /* --- the gate -------------------------------------------------------------- */
 
 .gate {
   margin-top: var(--gap-3);
+  scroll-margin-top: var(--gap-3);
   padding: var(--gap-3);
   border: 1px solid var(--wait);
   border-radius: var(--radius-lg);
@@ -731,40 +802,27 @@ button.promise:hover {
   font-size: 14px;
 }
 
-.gate-files {
-  list-style: none;
-  margin: 0 0 var(--gap-3);
-  padding: 0;
-  font-size: 12px;
-}
-
 .gate-note {
-  display: block;
-  font-size: 11px;
-  margin-bottom: var(--gap-3);
-}
-
-.gate-note textarea {
-  display: block;
-  width: 100%;
-  margin-top: var(--gap-1);
-  padding: var(--gap-2);
+  flex: 1;
+  min-width: 160px;
+  padding: 8px 10px;
   font: inherit;
   font-size: 13px;
   color: var(--ink);
   background: var(--surface);
   border: 1px solid var(--rule-strong);
   border-radius: var(--radius);
-  resize: vertical;
 }
 
-.gate-note textarea:focus {
+.gate-note:focus {
   border-color: var(--accent);
   outline: none;
 }
 
 .gate-actions {
   display: flex;
+  flex-wrap: wrap;
+  align-items: center;
   gap: var(--gap-2);
 }
 

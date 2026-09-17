@@ -365,3 +365,57 @@ spine, which reads well but shows two steps in a 900 px window — the gate card
 needed a scroll to reach, which is the one thing on this screen that must never
 need a scroll. Task 6 rebuilds the region as the spec describes: a horizontal
 stepper that always shows the whole DAG, with the detail of one step below it.
+
+---
+
+## Task 6 — the progress region
+
+### The stepper is horizontal, as §2.3 asks, and for a reason
+
+Four chips across the top — persona initial, step id, and one fact each
+("2/2 delivered", an elapsed clock, or **needs you**) — with the detail of one
+step below. The open step is chosen for you: the gate that is waiting, else what
+is running, else the last thing that happened. Clicking a chip holds that step
+open until the run's own focus moves on.
+
+The vertical version showed two of four steps in a 900 px window, which put the
+Approve button below the fold. That is the one thing on this screen that must
+never need a scroll, and a horizontal row is what fixes it at any height.
+
+**A waiting gate grows the region to fit itself** (560 px) and hands the space
+back once answered. The card is one row — Approve, Send back, and a note field —
+rather than a stacked form, so it fits without pushing the canvas away.
+
+### `produces` ticks now fill while the step is running (M2.2.1, item 3)
+
+`produces_matched` is empty on `started` by design: the runner does not claim a
+match it has not verified. So mid-step the step row said nothing had been
+produced while the file list beside it showed the files. The fix is in the
+reducer: a `dsagent.file` event whose `kind` is `deliverable` *is* the runner
+saying that path is covered by a declared entry, so the browser only has to work
+out which entry — `covers()` applies the same segment-wise glob rule `Path.glob`
+gives the runner.
+
+Measured live, while `analyze` was still working:
+
+```
+analyze met=0 unmet=2 files=3     ← two promises, nothing ticked yet
+analyze met=1 unmet=1 files=4     ← the figures glob ticks as the fourth file lands
+analyze met=2 unmet=0 files=8     ← findings.md ticks, step still running
+report  met=0 unmet=2 files=8
+report  met=2 unmet=0 files=10
+```
+
+### A failed step in words (M2.2.1, item 6, half of it)
+
+`StepError` says who could not finish what, and which declared files were never
+written — from the step's own promises, not from the exception text. The runner's
+raw message is behind "Show what the runner reported". Task 8 exercises the path
+with a real failure.
+
+### Verified
+
+All checks green. Live against the replay (`docs/runs/ui-product/t6-gate-inline.jpg`,
+`t6-run-done.jpg`): the gate card sits inline at its step, fully visible, with its
+report rendered beside it and a live "waiting 2m 08s"; approving leaves the wait
+on the run header; the chips walk green left to right; narration opens per step.

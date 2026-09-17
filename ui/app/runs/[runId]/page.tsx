@@ -56,7 +56,10 @@ export default function RunScreen() {
       style={
         {
           "--chat-w": `${chatWidth}px`,
-          "--progress-h": `${progressHeight}px`,
+          // A waiting gate is the most important thing on the screen, and the
+          // decision must never be below a fold. The region grows to fit it and
+          // goes back to the operator's own split once it is answered.
+          "--progress-h": `${run.view.gateStep ? Math.max(progressHeight, GATE_MIN_H) : progressHeight}px`,
         } as React.CSSProperties
       }
     >
@@ -67,7 +70,6 @@ export default function RunScreen() {
 
       <div className="run-pane run-pane-work">
         <Progress
-          runId={runId}
           detail={run.detail}
           steps={run.view.steps}
           onOpen={run.pin}
@@ -131,6 +133,7 @@ function Waiting({ run }: { run: ReturnType<typeof useRun> }) {
 /** Limits that keep a drag from making either region useless. */
 const CHAT_RANGE: [number, number] = [280, 720];
 const PROGRESS_RANGE: [number, number] = [120, 900];
+const GATE_MIN_H = 560;
 const HEADER_PX = 56;
 
 /** Whether this server is serving a recording; the chat has nothing behind it. */

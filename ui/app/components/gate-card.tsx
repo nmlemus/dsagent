@@ -2,9 +2,8 @@
 
 import { useState } from "react";
 
-import { fileUrl } from "../lib/api";
 import type { StepRow } from "../lib/run-state";
-import { basename, duration } from "../lib/format";
+import { duration } from "../lib/format";
 import { useClock } from "../lib/use-run";
 
 /**
@@ -16,12 +15,10 @@ import { useClock } from "../lib/use-run";
  * `POST /runs/{id}/gate`; the run is what holds the question, not this browser.
  */
 export function GateCard({
-  runId,
   step,
   onDecide,
   busy,
 }: {
-  runId: string;
   step: StepRow;
   onDecide: (decision: "approve" | "reject", note: string) => void;
   busy: boolean;
@@ -34,7 +31,6 @@ export function GateCard({
   // The wait is the number that says whether this gate earns its cost — run 003
   // spent 37 seconds here and nothing on the screen said so (M2.2.1, item 5).
   const waiting = gate.asked_at ? now - gate.asked_at : 0;
-  const files = Object.values(step.matched).flat();
 
   return (
     <div className="gate">
@@ -50,29 +46,6 @@ export function GateCard({
 
       <p className="gate-message">{gate.prompt}</p>
 
-      {files.length > 0 && (
-        <ul className="gate-files">
-          {files.map((path) => (
-            <li key={path}>
-              <a href={fileUrl(runId, path)} target="_blank" rel="noreferrer" className="mono">
-                {basename(path)}
-              </a>
-            </li>
-          ))}
-        </ul>
-      )}
-
-      <label className="gate-note">
-        <span className="dim">Note — sent with a rejection, kept in the run’s history</span>
-        <textarea
-          value={note}
-          onChange={(e) => setNote(e.target.value)}
-          rows={2}
-          placeholder="What needs changing?"
-          disabled={busy}
-        />
-      </label>
-
       <div className="gate-actions">
         <button
           className="btn btn-primary"
@@ -84,6 +57,17 @@ export function GateCard({
         <button className="btn" onClick={() => onDecide("reject", note.trim())} disabled={busy}>
           Send back
         </button>
+        {/* One line, growing when it is written in: a note is optional on an
+            approval and the reason for a rejection, and neither deserves to push
+            the buttons off the bottom of the panel. */}
+        <input
+          className="gate-note"
+          value={note}
+          onChange={(e) => setNote(e.target.value)}
+          placeholder="Add a note — kept in the run’s history"
+          disabled={busy}
+          aria-label="Note to send with the decision"
+        />
       </div>
     </div>
   );

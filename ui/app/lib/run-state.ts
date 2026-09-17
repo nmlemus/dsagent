@@ -139,7 +139,48 @@ function applyFile(view: RunView, e: Record<string, any>): RunView {
   // Append-only: four figures landing in twenty seconds must not reorder the
   // list under the reader's eye (run 001, observation 2).
   const files = i === -1 ? [...view.files, file] : view.files.map((f, n) => (n === i ? file : f));
-  return { ...view, files };
+
+  // Tick the promise this file satisfies, now, rather than waiting for the step
+  // to end. `produces_matched` is empty on `started` by design — the runner
+  // cannot claim a match before it has verified one — so mid-step the row said
+  // nothing had been produced while the list beside it showed the files
+  // (M2.2.1, item 3). A deliverable file event *is* the runner saying the path
+  // is covered by a declared entry, so the only thing left to work out is which.
+  const steps =
+    file.kind === "deliverable"
+      ? upsert(view.steps, file.step, (row) => (row ? tick(row, file.path) : row))
+      : view.steps;
+  return { ...view, files, steps };
+}
+
+function tick(row: StepRow, path: string): StepRow {
+  const entry = row.produces.find((e) => covers(e, path));
+  if (!entry) return row;
+  const hits = row.matched[entry] ?? [];
+  if (hits.includes(path)) return row;
+  return { ...row, matched: { ...row.matched, [entry]: [...hits, path] } };
+}
+
+/**
+ * Whether a `produces` entry names this path — the runner's `Path.glob` rule.
+ *
+ * Segment by segment, so `figures/*.png` cannot claim `artifacts/figures/x.png`:
+ * `*` and `?` stop at a separator, exactly as they do on the server. This is the
+ * only piece of that rule that lives in two places; the runner's verification is
+ * still the one that decides whether a step passed.
+ */
+function covers(entry: string, path: string): boolean {
+  if (entry === path) return true;
+  const want = entry.split("/");
+  const parts = path.split("/");
+  if (want.length !== parts.length) return false;
+  return want.every((segment, i) => segmentMatches(segment, parts[i]));
+}
+
+function segmentMatches(pattern: string, segment: string): boolean {
+  const escaped = pattern.replace(/[.+^${}()|[\]\\]/g, "\\$&");
+  const regex = new RegExp(`^${escaped.replace(/\*/g, "[^/]*").replace(/\?/g, "[^/]")}$`);
+  return regex.test(segment);
 }
 
 function applyTool(view: RunView, e: Record<string, any>): RunView {

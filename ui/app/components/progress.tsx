@@ -9,45 +9,85 @@ import { useClock } from "../lib/use-run";
 import { GateCard, GateVerdict } from "./gate-card";
 
 /**
- * The progress region: what the team is doing, step by step.
+ * The progress region: the whole DAG across the top, one step open below it.
  *
- * The declared `produces` of each step are drawn as promises with a tick, before
- * the files exist — that is the product's own thesis on screen (a workflow is a
- * contract the runner verifies on disk), and it is the one place this screen
- * spends any visual weight.
+ * A horizontal stepper rather than a list, for one reason above taste: the gate
+ * card must never need a scroll. A vertical stack showed two of four steps in a
+ * 900 px window, which put the one thing an operator has to answer below the
+ * fold. Across the top, four steps fit at any height and the open step is the
+ * interesting one — the gate if a gate is waiting, otherwise whatever is running.
+ *
+ * The declared `produces` are drawn as promises with a tick before the files
+ * exist. That is the product's thesis on screen: a workflow is a contract, and
+ * the runner verifies it on disk.
  */
 export function Progress({
-  runId,
   detail,
   steps,
   onOpen,
   onDecide,
   deciding,
 }: {
-  runId: string;
   detail: RunDetail | null;
   steps: StepRow[];
   onOpen: (path: string) => void;
   onDecide: (decision: "approve" | "reject", note: string) => void;
   deciding: boolean;
 }) {
+  const [picked, setPicked] = useState<string | null>(null);
+  const attention = focusOf(steps);
+  // A click holds until the run's own focus moves on, which is the next moment
+  // there is something better to look at.
+  const open = steps.find((s) => s.step === picked) ?? attention;
+  const declared = detail?.workflow_shape?.steps ?? [];
+
   return (
     <section className="progress" aria-label="Run progress">
       <RunHeader detail={detail} steps={steps} />
-      <div className="stepper">
-        {steps.map((step) => (
-          <StepCard
-            key={step.step}
-            runId={runId}
-            step={step}
-            onOpen={onOpen}
-            onDecide={onDecide}
-            deciding={deciding}
-          />
-        ))}
-        {steps.length === 0 && <StepsPending detail={detail} />}
-      </div>
+
+      {steps.length > 0 ? (
+        <>
+          <ol className="stepper">
+            {steps.map((step) => (
+              <Chip
+                key={step.step}
+                step={step}
+                open={step.step === open?.step}
+                onPick={() => setPicked(step.step === picked ? null : step.step)}
+              />
+            ))}
+          </ol>
+          {open && (
+            <StepDetail
+              step={open}
+              onOpen={onOpen}
+              onDecide={onDecide}
+              deciding={deciding}
+            />
+          )}
+        </>
+      ) : (
+        <ol className="stepper">
+          {declared.map((step, i) => (
+            <li key={step.id} className="chip is-pending">
+              <span className="chip-mark">{initial(step.persona)}</span>
+              <span className="chip-name">{step.id}</span>
+              <span className="chip-note dim">{i === 0 ? "about to start" : "waiting"}</span>
+            </li>
+          ))}
+        </ol>
+      )}
     </section>
+  );
+}
+
+/** The step worth looking at: a waiting gate, else what is running, else the last. */
+export function focusOf(steps: StepRow[]): StepRow | undefined {
+  return (
+    steps.find((s) => s.status === "awaiting_gate" && s.gate?.decision == null) ??
+    steps.find((s) => s.status === "started") ??
+    steps.find((s) => s.status === "failed") ??
+    steps[steps.length - 1]
   );
 }
 
@@ -65,13 +105,21 @@ function RunHeader({ detail, steps }: { detail: RunDetail | null; steps: StepRow
       </div>
       <dl className="metrics">
         <Metric label="Elapsed" value={duration(detail?.duration ?? null)} live={running} />
-        <Metric label="Waited for you" value={duration(detail?.gate_wait ?? 0)} />
+        <Metric
+          label="Waited for you"
+          value={duration(detail?.gate_wait ?? 0)}
+          hint="Time this run spent standing at a gate"
+        />
         <Metric
           label="Tokens"
           value={tokens(input)}
           hint={`${input.toLocaleString()} in · ${(usage.output_tokens ?? 0).toLocaleString()} out`}
         />
-        <Metric label="Cached" value={percent(cached, input)} hint="Share of input read from cache" />
+        <Metric
+          label="Cached"
+          value={percent(cached, input)}
+          hint="Share of input read from cache"
+        />
         <Metric label="Cost" value={money(detail?.cost_usd)} />
       </dl>
     </header>
@@ -97,106 +145,164 @@ function Metric({
   );
 }
 
-function StepCard({
-  runId,
+function Chip({ step, open, onPick }: { step: StepRow; open: boolean; onPick: () => void }) {
+  const waiting = step.status === "awaiting_gate" && step.gate?.decision == null;
+  const met = Object.values(step.matched).filter((hits) => hits.length > 0).length;
+
+  return (
+    <li className={`chip is-${step.status}${waiting ? " is-waiting" : ""}${open ? " is-open" : ""}`}>
+      <button onClick={onPick} className="chip-button">
+        <span className="chip-mark" title={step.persona}>
+          {initial(step.persona)}
+        </span>
+        <span className="chip-name">{step.step}</span>
+        <span className="chip-note">
+          {waiting ? (
+            "needs you"
+          ) : step.status === "started" ? (
+            <Elapsed step={step} />
+          ) : step.status === "failed" ? (
+            "failed"
+          ) : (
+            `${met}/${step.produces.length} delivered`
+          )}
+        </span>
+      </button>
+    </li>
+  );
+}
+
+function StepDetail({
   step,
   onOpen,
   onDecide,
   deciding,
 }: {
-  runId: string;
   step: StepRow;
   onOpen: (path: string) => void;
   onDecide: (decision: "approve" | "reject", note: string) => void;
   deciding: boolean;
 }) {
-  const [open, setOpen] = useState(false);
+  const [notesOpen, setNotesOpen] = useState(false);
   const pending = step.status === "awaiting_gate" && step.gate?.decision == null;
   const calls = Object.entries(step.tools).sort((a, b) => b[1] - a[1]);
   const total = calls.reduce((n, [, count]) => n + count, 0);
 
   return (
-    <article className={`step is-${step.status}${pending ? " is-waiting" : ""}`}>
-      <div className="step-spine">
-        <span className="step-mark" title={step.persona}>
-          {initial(step.persona)}
+    <article className={`detail is-${step.status}`}>
+      <div className="detail-head">
+        <h2 className="detail-name">{step.step}</h2>
+        <span className="dim">{step.persona}</span>
+        <Activity step={step} calls={total} />
+        <span className="detail-elapsed mono dim">
+          <Elapsed step={step} />
         </span>
       </div>
 
-      <div className="step-body">
-        <div className="step-head">
-          <h3 className="step-name">{step.step}</h3>
-          <span className="step-persona dim">{step.persona}</span>
-          <Elapsed step={step} />
+      <ul className="promises">
+        {step.produces.map((entry) => {
+          const hits = step.matched[entry] ?? [];
+          return (
+            <li key={entry} className={hits.length ? "is-met" : "is-unmet"}>
+              {hits.length === 0 ? (
+                <span className="promise mono">{entry}</span>
+              ) : (
+                hits.map((path) => (
+                  <button key={path} className="promise mono" onClick={() => onOpen(path)}>
+                    {path}
+                  </button>
+                ))
+              )}
+            </li>
+          );
+        })}
+      </ul>
+
+      {calls.length > 0 && (
+        <div className="tools">
+          {calls.map(([tool, n]) => (
+            <span key={tool} className="tool mono">
+              {tool} <b>{n}</b>
+            </span>
+          ))}
         </div>
+      )}
 
-        <Activity step={step} calls={total} />
+      {step.notes.length > 0 && (
+        <div className="notes">
+          <button className="btn-quiet btn-small" onClick={() => setNotesOpen((v) => !v)}>
+            {notesOpen ? "Hide" : "Show"} what {step.persona} said · {step.notes.length}
+          </button>
+          {notesOpen && (
+            <div className="notes-body">
+              {step.notes.map((note, i) => (
+                <p key={i}>{note.text}</p>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
 
-        <ul className="promises">
-          {step.produces.map((entry) => {
-            const hits = step.matched[entry] ?? [];
-            return (
-              <li key={entry} className={hits.length ? "is-met" : "is-unmet"}>
-                {hits.length === 0 ? (
-                  <span className="promise mono">{entry}</span>
-                ) : (
-                  hits.map((path) => (
-                    <button key={path} className="promise mono" onClick={() => onOpen(path)}>
-                      {path}
-                    </button>
-                  ))
-                )}
-              </li>
-            );
-          })}
-        </ul>
+      {step.error && <StepError step={step} />}
 
-        {step.notes.length > 0 && (
-          <div className="notes">
-            <button className="btn-quiet btn-small" onClick={() => setOpen((v) => !v)}>
-              {open ? "Hide" : "Show"} what {step.persona} said · {step.notes.length}
-            </button>
-            {open && (
-              <div className="notes-body">
-                {step.notes.map((note, i) => (
-                  <p key={i}>{note.text}</p>
-                ))}
-              </div>
-            )}
-          </div>
-        )}
-
-        {step.error && <div className="step-error">{step.error}</div>}
-
-        {pending ? (
-          <GateCard runId={runId} step={step} onDecide={onDecide} busy={deciding} />
-        ) : (
-          <GateVerdict step={step} />
-        )}
-      </div>
+      {pending ? (
+        <GateCard step={step} onDecide={onDecide} busy={deciding} />
+      ) : (
+        <GateVerdict step={step} />
+      )}
     </article>
   );
 }
 
 /**
- * What the persona is doing right now, in the first ninety seconds when no file
- * has appeared yet — run 001's first observation, and the reason an empty canvas
- * is not allowed to be a blank pane.
+ * A failure in words, not a stack trace.
+ *
+ * The runner's own failure is already a sentence — "step 'analyze' did not
+ * produce: artifacts/findings.md" — so the job here is to say who was working
+ * and what was missing, and to leave the raw text available for whoever wants it
+ * (M2.2.1, item 6).
+ */
+function StepError({ step }: { step: StepRow }) {
+  const [raw, setRaw] = useState(false);
+  const missing = step.produces.filter((entry) => (step.matched[entry] ?? []).length === 0);
+  return (
+    <div className="step-error">
+      <p className="step-error-what">
+        <b>{step.persona}</b> could not finish <b>{step.step}</b>
+        {missing.length > 0 && (
+          <>
+            {" "}
+            — nothing was written for{" "}
+            {missing.map((entry) => (
+              <code key={entry} className="mono">
+                {entry}
+              </code>
+            ))}
+          </>
+        )}
+        .
+      </p>
+      <button className="btn-quiet btn-small" onClick={() => setRaw((v) => !v)}>
+        {raw ? "Hide" : "Show"} what the runner reported
+      </button>
+      {raw && <pre className="step-error-raw">{step.error}</pre>}
+    </div>
+  );
+}
+
+/**
+ * What the persona is doing right now, in the minutes before a file appears —
+ * run 001's first observation, and why an empty canvas is never a blank pane.
  */
 function Activity({ step, calls }: { step: StepRow; calls: number }) {
   if (step.status !== "started") {
-    return (
-      <p className="step-activity dim">
-        {calls > 0 ? `${calls} tool calls` : "no tool calls"}
-      </p>
-    );
+    return <span className="detail-activity dim">{calls} tool calls</span>;
   }
-  const busy = step.running > 0;
   return (
-    <p className="step-activity">
+    <span className="detail-activity">
       <span className="working" aria-hidden="true" />
-      {busy ? `working · ${calls} tool calls so far` : `thinking · ${calls} tool calls so far`}
-    </p>
+      {step.running > 0 ? "working" : "thinking"} · {calls} tool calls so far
+    </span>
   );
 }
 
@@ -204,36 +310,5 @@ function Activity({ step, calls }: { step: StepRow; calls: number }) {
 function Elapsed({ step }: { step: StepRow }) {
   const now = useClock(step.status === "started");
   const end = step.endedAt ?? now;
-  return <span className="step-elapsed mono">{duration(Math.max(0, end - step.startedAt))}</span>;
-}
-
-/** Before the first event: the DAG as declared, so the screen is never blank. */
-function StepsPending({ detail }: { detail: RunDetail | null }) {
-  const steps = detail?.workflow_shape?.steps ?? [];
-  if (steps.length === 0) return null;
-  return (
-    <>
-      {steps.map((step) => (
-        <article key={step.id} className="step is-pending">
-          <div className="step-spine">
-            <span className="step-mark">{initial(step.persona)}</span>
-          </div>
-          <div className="step-body">
-            <div className="step-head">
-              <h3 className="step-name">{step.id}</h3>
-              <span className="step-persona dim">{step.persona}</span>
-            </div>
-            <p className="step-activity dim">waiting to start</p>
-            <ul className="promises">
-              {step.produces.map((entry) => (
-                <li key={entry} className="is-unmet">
-                  <span className="promise mono">{entry}</span>
-                </li>
-              ))}
-            </ul>
-          </div>
-        </article>
-      ))}
-    </>
-  );
+  return <>{duration(Math.max(0, end - step.startedAt))}</>;
 }
