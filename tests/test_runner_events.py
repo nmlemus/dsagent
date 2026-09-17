@@ -110,6 +110,10 @@ def test_step_events_bracket_every_step_in_order(events_runner):
     assert [(s["step"], s["status"]) for s in steps] == [
         ("profile", "started"), ("profile", "done"),
         ("data-gate", "started"), ("data-gate", "done"),
+        # The gate is announced before anyone is asked and again once answered:
+        # a reader who is not the one holding the mouse still sees the run stop,
+        # sees what it stopped for, and sees how long it stood there.
+        ("data-gate", "awaiting_gate"), ("data-gate", "done"),
         ("analyze", "started"), ("analyze", "done"),
         ("report", "started"), ("report", "done"),
     ]
@@ -338,3 +342,133 @@ def test_a_broken_consumer_does_not_break_the_run(tmp_path, monkeypatch):
     state = runner.run("eda-to-report", {"data_path": "x.csv"})
     assert state.status == "done"
     assert any("consumer raised" in m for m in logged)
+
+
+def test_a_pending_gate_is_announced_before_anyone_is_asked(events_runner):
+    """The card is not the only surface that has to know the run stopped.
+
+    A second tab, a reloaded page and a stakeholder on a shared link all read the
+    event log rather than the interrupt, so the pause has to be *in* the log — and
+    it has to be there while the answer is still missing, not after it arrives.
+    """
+    seen: list[tuple[str, str]] = []
+
+    def ask(request):
+        seen.extend((e.value["step"], e.value["status"]) for e in events if e.name == "dsagent.step")
+        return GateDecision.APPROVE
+
+    runner, events = events_runner(ask=ask)
+    runner.run("eda-to-report", {"data_path": "x.csv"})
+    assert seen[-1] == ("data-gate", "awaiting_gate")
+
+    pending = next(
+        s for s in _of(events, "dsagent.step")
+        if s["step"] == "data-gate" and s["status"] == "awaiting_gate"
+    )
+    assert pending["gate"]["kind"] == "human"
+    assert pending["gate"]["prompt"].startswith("Data gate report")
+    assert pending["gate"]["decision"] is None
+    assert pending["gate"]["asked_at"] > 0
+    assert pending["produces_matched"]["artifacts/data-gate.md"] == ["artifacts/data-gate.md"]
+
+
+def test_an_answered_gate_carries_its_decision_and_the_wait(events_runner):
+    from dsagent.runner import GateAnswer
+
+    runner, events = events_runner(
+        ask=lambda request: GateAnswer(GateDecision.REJECT, note="fog looks wrong")
+    )
+    state = runner.run("eda-to-report", {"data_path": "x.csv"})
+
+    last = _of(events, "dsagent.step")[-1]
+    assert (last["step"], last["status"]) == ("data-gate", "awaiting_gate")
+    assert last["gate"]["decision"] == "reject"
+    assert last["gate"]["note"] == "fog looks wrong"
+    assert last["gate"]["decided_at"] >= last["gate"]["asked_at"] > 0
+    # and the note survives into the run record, which is what a resumed run and
+    # a finished run's history are read from
+    assert state.steps["data-gate"].gate.note == "fog looks wrong"
+
+
+def test_an_approved_gate_reports_the_step_back_as_done(events_runner):
+    runner, events = events_runner()
+    runner.run("eda-to-report", {"data_path": "x.csv"})
+    resolved = [
+        s for s in _of(events, "dsagent.step")
+        if s["step"] == "data-gate" and (s.get("gate") or {}).get("decision") == "approve"
+    ]
+    assert len(resolved) == 1
+    assert resolved[0]["status"] == "done"
+
+
+def test_a_step_without_a_gate_carries_no_gate(events_runner):
+    runner, events = events_runner()
+    runner.run("eda-to-report", {"data_path": "x.csv"})
+    for s in _of(events, "dsagent.step"):
+        if s["step"] != "data-gate":
+            assert s["gate"] is None, s
+
+
+def test_personas_narrate_into_the_event_stream(tmp_path, monkeypatch):
+    """Who said it is known here; on the message stream it is a guess.
+
+    M2.2 attributed narration by time — a message that began inside a step's
+    window belonged to that step. The runner is the thing that opened the window,
+    so it says so directly, and the note survives a reload and a run nobody
+    watched, which a live message stream does not.
+    """
+    monkeypatch.setattr(
+        "dsagent.runner.runner.make_env",
+        lambda spec, ws: Env(spec=spec, workspace=ws, backend=FakeBackend()),
+    )
+
+    class Narrating(StreamingFakeAgent):
+        def stream(self, payload, stream_mode=None):
+            yield "updates", {"model": {"messages": [
+                _Msg(content="Reading the eda skill first."),
+                # a content block list, as an Anthropic message arrives
+                _Msg(content=[{"type": "thinking", "thinking": "hmm"},
+                              {"type": "text", "text": "Profiling now."}]),
+            ]}}
+            yield from super().stream(payload, stream_mode)
+
+    events: list[RunnerEvent] = []
+    runner = WorkflowRunner(
+        load_cartridge(DS), tmp_path / "narrated",
+        agent_factory=lambda cart, persona, env, ws: Narrating(persona, ws),
+        log=lambda m: None, on_event=events.append,
+    )
+    runner.run("eda-to-report", {"data_path": "x.csv"})
+
+    notes = _of(events, "dsagent.note")
+    first = [n for n in notes if n["step"] == "profile"]
+    assert [n["text"] for n in first] == ["Reading the eda skill first.", "Profiling now."]
+    assert {n["persona"] for n in first} == {"marie"}
+    assert [n["persona"] for n in notes if n["step"] == "analyze"] == ["noel", "noel"]
+    # a note arrives while the step is still working, not at the end
+    order = [(e.name, e.value.get("step")) for e in events]
+    assert order.index(("dsagent.note", "profile")) < order.index(("dsagent.file", "profile"))
+
+
+def test_tool_results_are_not_narration(tmp_path, monkeypatch):
+    monkeypatch.setattr(
+        "dsagent.runner.runner.make_env",
+        lambda spec, ws: Env(spec=spec, workspace=ws, backend=FakeBackend()),
+    )
+
+    class Chatty(StreamingFakeAgent):
+        def stream(self, payload, stream_mode=None):
+            yield "updates", {"tools": {"messages": [
+                _Msg(content="a 40 kB tool result nobody wants in a narration log",
+                     name="read_file", tool_call_id="call_x"),
+            ]}}
+            yield from super().stream(payload, stream_mode)
+
+    events: list[RunnerEvent] = []
+    runner = WorkflowRunner(
+        load_cartridge(DS), tmp_path / "chatty",
+        agent_factory=lambda cart, persona, env, ws: Chatty(persona, ws),
+        log=lambda m: None, on_event=events.append,
+    )
+    runner.run("eda-to-report", {"data_path": "x.csv"})
+    assert _of(events, "dsagent.note") == []

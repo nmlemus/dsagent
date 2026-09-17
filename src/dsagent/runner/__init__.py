@@ -1,8 +1,12 @@
 from dsagent.runner.dispatch import dispatch_runner_event
 from dsagent.runner.runner import (
+    EVENT_LOG,
     FILE_EVENT,
+    NOTE_EVENT,
+    RUN_LOG,
     STEP_EVENT,
     TOOL_EVENT,
+    GateAnswer,
     GateDecision,
     GateRecord,
     GateRequest,
@@ -10,15 +14,20 @@ from dsagent.runner.runner import (
     RunState,
     StepRecord,
     WorkflowRunner,
+    as_answer,
     is_pattern,
     visible_input_names,
 )
 from dsagent.runner.tools import workflow_run_id, workflow_tools
 
 __all__ = [
+    "EVENT_LOG",
     "FILE_EVENT",
+    "NOTE_EVENT",
+    "RUN_LOG",
     "STEP_EVENT",
     "TOOL_EVENT",
+    "GateAnswer",
     "GateDecision",
     "GateRecord",
     "GateRequest",
@@ -26,6 +35,7 @@ __all__ = [
     "RunnerEvent",
     "StepRecord",
     "WorkflowRunner",
+    "as_answer",
     "dispatch_runner_event",
     "is_pattern",
     "visible_input_names",

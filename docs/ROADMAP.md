@@ -51,6 +51,24 @@ The slice works end to end; these are what an operator hits while using it. Orde
 - [ ] **The error toast shows a stack trace** from a minified bundle. It should name the step and the reason
 - [ ] **A failed step's presentation is unexercised.** The DAG row renders `error`, but no run has failed in the browser, so that path has never been looked at
 
+### M2.5 UI product pass (see docs/ui-product.md) — in progress on `m25-ui-product`
+
+Turning the M2.2 slice into something a stakeholder can watch for ten minutes and want.
+§7 of the spec is the exit condition; `docs/ui-product-log.md` is the working log.
+
+- [x] Replay fixture + replay engine: the runner writes `events.jsonl` and `runner.log`
+      per run, a gate is announced before it is asked, persona narration becomes
+      `dsagent.note`, and `ui/fixtures/run-eda-003` replays run 003 at 10× with no model
+- [ ] Runs API + event-log SSE (§4.1, §4.2) and `dsagent serve --replay`
+- [ ] Home screen + run restore on load
+- [ ] Launcher: cartridges endpoint, upload, form from declared inputs, start
+- [ ] Run screen layout + the Aiuda visual system
+- [ ] Progress region: stepper, header metrics, inline gate card, narration
+- [ ] Canvas: parquet preview, interactive HTML, downloads, zip
+- [ ] Failure / reject / resume presentation
+- [ ] SQLite checkpointer + cost in telemetry (§4.3, §4.6)
+- [ ] Demo script run, evidence, `docs/runs/ui-product/DEMO.md`, PR
+
 ### M2.3 Docker env — next
 - [ ] `DockerBackend` integration test behind `DSAGENT_DOCKER=1` (build `envs/meridian`, `execute("python -c 'import meridian'")`)
 - [ ] Workspace bind-mount + file ownership sanity (non-root user in image)
@@ -77,6 +95,37 @@ The slice works end to end; these are what an operator hits while using it. Orde
 - [ ] chore: `dsagent --version` prints "Missing command" (eager callback vs `no_args_is_help`)
 
 ## Decisions log
+
+- 2026-09-17 — The runner writes `<run_dir>/events.jsonl` and `<run_dir>/runner.log` itself,
+  rather than leaving both to whichever front end drove the run. `dsagent serve` passed
+  `log=lambda m: None`, so a browser-driven run left nothing readable while a CLI run did
+  (M2.2.1 item 2). The event log is what a late reader gets — a reload, a second tab, a
+  stakeholder on a link, a run started by the CLI — and reconstructing the screen from it is
+  what makes those the same screen. `RunState.save` became atomic in the same change: the runs
+  API reads `run.json` while the run is rewriting it.
+- 2026-09-17 — A human gate is announced on the event stream *before* anyone is asked
+  (`dsagent.step` with `status: awaiting_gate` and a `gate` object whose `decision` is null),
+  and again once answered. The interrupt is still how the browser holding it answers; it was
+  also the only thing that knew the run had stopped, which left every other reader watching a
+  run go silently quiet. The same pending question is written to `run.json` (`RunState.gate`),
+  because a run waiting for a person is the one most likely to still be waiting when the
+  process dies (§7.11), and `GateRecord.asked_at` makes the human wait a number rather than a
+  thing nobody can see (M2.2.1 item 5).
+- 2026-09-17 — `ask_human` may return `GateAnswer(decision, note)`. The gate card always
+  collected a note on a rejection and the runner dropped it on the floor; §7.10 asks for that
+  note to be visible in the step's history, which cannot be built from a decision alone.
+- 2026-09-17 — Persona narration is a runner event (`dsagent.note`), not an inference from the
+  message stream. M2.2 attributed it by time — a message starting inside a step's window was
+  that step's — because nothing on the wire says who is talking. The runner opened the window,
+  so it says so directly; and unlike a message stream a note survives a reload, a second tab
+  and a run nobody was attached to. The `messageView` filter stays: it is what keeps a
+  chat-started run's persona messages out of the transcript.
+- 2026-09-17 — The replay fixture is run 003's own record, reconstructed by
+  `tools/make_replay_fixture.py`, not a fresh capture. Real: step boundaries, the 37-second
+  gate wait, file mtimes, per-step tool counts and token usage, each persona's closing summary.
+  Reconstructed: the order and individual timestamps of tool calls inside a step, which
+  `run.json` does not record. It buys the same fixture for none of the six-run budget, which §7
+  needs more than a fifth recording of a run we already have.
 
 - 2026-09-16 — v2 lives as branch `v2` in `nmlemus/dsagent` (not a new repo). `main` keeps v1 and the `datascience-agent` PyPI line until 2.0 ships, then `v2` merges to `main` as 2.0.0.
 - 2026-09-16 — Backend on Deep Agents (not Claude Agent SDK): model-agnostic, sandbox protocol fits Docker-per-workflow, same SKILL.md standard as Claude Code.
