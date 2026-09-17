@@ -10,6 +10,7 @@ from dsagent.runner.runner import (
     RunState,
     StepRecord,
     WorkflowRunner,
+    is_pattern,
     visible_input_names,
 )
 from dsagent.runner.tools import workflow_run_id, workflow_tools
@@ -26,6 +27,7 @@ __all__ = [
     "StepRecord",
     "WorkflowRunner",
     "dispatch_runner_event",
+    "is_pattern",
     "visible_input_names",
     "workflow_run_id",
     "workflow_tools",

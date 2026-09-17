@@ -12,6 +12,7 @@ import pytest
 from dsagent.cartridge import load_cartridge
 from dsagent.envs.base import Env
 from dsagent.runner import GateDecision, RunnerEvent, WorkflowRunner
+from tests.fakes import expand
 
 DS = Path(__file__).resolve().parents[1] / "cartridges" / "ds"
 
@@ -32,11 +33,7 @@ class StreamingFakeAgent:
         self.strays = strays or []
 
     def _produces(self, prompt: str) -> list[str]:
-        return [
-            line[3:-1]
-            for line in prompt.splitlines()
-            if line.startswith("- `") and line.endswith("`")
-        ]
+        return expand(prompt)
 
     def stream(self, payload, stream_mode=None):
         prompt = payload["messages"][0]["content"]

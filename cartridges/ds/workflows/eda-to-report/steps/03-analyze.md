@@ -1,8 +1,9 @@
 Answer this question with the data: **{question}**
 
 Read `artifacts/data-profile.md` and `artifacts/data-gate.md` first so you know what to
-trust. Use `run_python` (state persists) for the analysis. Produce up to five figures
-under `artifacts/figures/` following the chart rules in the `reports` skill.
+trust. Use `run_python` (state persists) for the analysis. Produce between one and five figures
+under `artifacts/figures/` following the chart rules in the `reports` skill — every
+finding in *Evidence* rests on one, so a run with no figure has nothing to show.
 
 Write `artifacts/findings.md` with exactly three sections, in this order:
 

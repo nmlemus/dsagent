@@ -6,6 +6,10 @@ __pycache__/
 .env
 .env.*
 
+# The Claude desktop app drops a copy here when a screenshot is sent to chat.
+# Never repo content — anything worth keeping is committed under docs/runs/.
+Claude outputs/
+
 # ui/ — ui/.env is committed on purpose: it holds no secrets, only the
 # telemetry opt-out and the default agent URL.
 !ui/.env

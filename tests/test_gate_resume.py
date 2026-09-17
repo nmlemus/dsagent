@@ -23,6 +23,7 @@ import pytest
 from dsagent.cartridge import load_cartridge
 from dsagent.envs.base import Env
 from dsagent.runner import GateDecision, RunState, StepRecord, WorkflowRunner
+from tests.fakes import expand
 
 DS = Path(__file__).resolve().parents[1] / "cartridges" / "ds"
 MMM_INPUTS = {"data_source": "csv", "data_path": "d.csv", "kpi": "units"}
@@ -39,9 +40,7 @@ class FakeAgent:
     def invoke(self, payload):
         prompt = payload["messages"][0]["content"]
         FakeAgent.calls.append(prompt.split("step `")[1].split("`")[0])
-        for line in prompt.splitlines():
-            if line.startswith("- `") and line.endswith("`"):
-                rel = line[3:-1]
+        for rel in expand(prompt):
                 p = self.workspace / rel
                 p.parent.mkdir(parents=True, exist_ok=True)
                 # `fit`'s auto gate reads this file for real, so write something
