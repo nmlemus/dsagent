@@ -26,6 +26,7 @@ import base64
 import os
 import shlex
 import subprocess
+import tempfile
 import uuid
 from collections.abc import Callable, Sequence
 from pathlib import Path
@@ -67,7 +68,29 @@ do, which is the whole point — the unit tests hand it a recorder."""
 
 
 def run_docker(argv: Sequence[str], *, timeout: int | None = None) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(list(argv), capture_output=True, text=True, timeout=timeout, check=False)
+    """Run a `docker` argv, collecting its output through files rather than pipes.
+
+    Not `capture_output=True`, which is the obvious way to write this and hangs
+    forever. A pipe ends when every writer closes it, and the Docker CLI leaves
+    writers behind: `docker-credential-desktop get` is spawned with the CLI's own
+    stderr, is orphaned when the CLI exits, and holds that end open. The child is
+    reaped in seconds and `communicate()` then waits on an EOF that never comes —
+    observed here as a `docker build` that sat for forty minutes having never
+    pulled a layer. A file has no such rule: this waits on the process, and the
+    process alone.
+
+    `stdin` is `/dev/null` for the same family of reasons — nothing docker asks
+    for interactively can be answered by a run.
+    """
+    with tempfile.TemporaryFile(mode="w+", encoding="utf-8", errors="replace") as out, \
+         tempfile.TemporaryFile(mode="w+", encoding="utf-8", errors="replace") as err:
+        done = subprocess.run(
+            list(argv), stdin=subprocess.DEVNULL, stdout=out, stderr=err,
+            timeout=timeout, check=False,
+        )
+        out.seek(0)
+        err.seek(0)
+        return subprocess.CompletedProcess(list(argv), done.returncode, out.read(), err.read())
 
 
 # ---- the argv, as values -----------------------------------------------------

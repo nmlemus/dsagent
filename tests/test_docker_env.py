@@ -32,6 +32,7 @@ from dsagent.envs.docker import (
     make_docker_env,
     remove_argv,
     run_argv,
+    run_docker,
 )
 
 DS = Path(__file__).resolve().parents[1] / "cartridges" / "ds"
@@ -125,6 +126,27 @@ def test_an_image_is_named_after_the_cartridge_that_declared_it():
     assert image_tag(built) == "dsagent/ds-meridian:latest"
     assert image_tag(pulled) == "ghcr.io/x/y:2"
     assert image_tag(EnvSpec(name="e", kind="docker")) == "dsagent/cartridge-e:latest"
+
+
+def test_output_survives_a_process_that_leaves_a_writer_behind():
+    """The real `run_docker`, against the thing that made it necessary.
+
+    The Docker CLI spawns `docker-credential-desktop get` with its own stderr and
+    is reaped seconds later; the helper is orphaned and holds that end open. Read
+    through a pipe, the wait is for an EOF that never comes — seen here as a
+    `docker build` that sat for forty minutes having never pulled a layer. So the
+    stand-in: a command that prints, backgrounds a child holding both streams,
+    and exits at once. The timeout is the assertion — this hangs without the fix.
+    """
+    done = run_docker(["bash", "-c", "echo out; echo err >&2; sleep 30 & exit 0"], timeout=15)
+
+    assert (done.returncode, done.stdout.strip(), done.stderr.strip()) == (0, "out", "err")
+
+
+def test_nothing_docker_asks_for_interactively_can_be_answered_by_a_run():
+    done = run_docker(["bash", "-c", "read -r line; echo \"[$line]\""], timeout=15)
+
+    assert done.stdout.strip() == "[]", "stdin should be /dev/null, not this terminal"
 
 
 def test_the_host_user_is_a_uid_gid_pair_on_posix():
@@ -279,9 +301,12 @@ def test_the_meridian_image_builds_and_runs_meridian(tmp_path):
         assert imported.exit_code == 0, imported.output
         assert "meridian" in imported.output
 
-        # The mount is a mount: a file written inside is on the host at once,
-        # and owned by whoever started the run rather than by root.
-        written = env.backend.execute("echo hello > artifacts/from-container.txt")
+        # The mount is a mount: a directory and a file made inside are on the host
+        # at once, owned by whoever started the run rather than by root. The
+        # `mkdir` is the container's, not the fixture's — a step that writes its
+        # first artifact does exactly this, and root-owned output is the failure
+        # `--user` exists to prevent.
+        written = env.backend.execute("mkdir -p artifacts && echo hello > artifacts/from-container.txt")
         assert written.exit_code == 0, written.output
         landed = workspace / "artifacts" / "from-container.txt"
         assert landed.read_text().strip() == "hello"
