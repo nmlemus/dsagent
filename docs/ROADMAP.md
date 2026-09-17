@@ -33,7 +33,7 @@ Status legend: `[ ]` todo · `[~]` in progress · `[x]` done. One task per PR.
 - [x] `ui/` Next.js + CopilotKit shell: chat left, empty canvas right, `/api/copilotkit` relaying to `dsagent serve` via `HttpAgent`. Verified from the browser against a real model (`docs/runs/ui-shell-001.png`)
 - [x] Canvas contents: workspace files from `dsagent.file` — deliverables and working files grouped by `kind`, sandboxed iframe for `.html`, react-markdown for `.md`, `<img>` for figures, a table for `.csv/.tsv`, `<pre>` for json/text. Verified end to end (`docs/runs/ui-canvas-001.png`, `-002.png`). Parquet still has no browser reader; it links out
 - [x] Gate card: `useInterrupt` in the right pane — step, persona, message, `produces` links to `/runs/{id}/files/{path}`, approve/reject with a note. Verified end to end from the browser (`docs/runs/ui-gate-001.png`)
-- [ ] Workflow progress render: DAG with step status from `dsagent.step` events
+- [x] Workflow progress render: DAG panel at the top of the canvas — per-step persona, status, live elapsed, `produces` ticks from `produces_matched`, tool counts. It also owns persona narration: a persona's assistant messages are withheld from the chat by a `messageView` rendering override and shown against their step (`docs/runs/ui-dag-001.png`)
 - [x] Runner: `produces` glob support — a pattern is a contract, satisfied by at least one match; matched files are `kind: deliverable`. `analyze` declares `artifacts/figures/*.png`
 - [ ] Run `eda-to-report` end to end from the browser; screenshot in `docs/runs/`
 - [ ] Then: A2UI panels for agent-composed views; MCP Apps later if needed
@@ -152,3 +152,13 @@ Status legend: `[ ]` todo · `[~]` in progress · `[x]` done. One task per PR.
   `produces` stays unexpanded, because it is the declared contract; the `kind` on a file event is what resolves
   it. `03-analyze.md` now asks for *between one and five* figures rather than "up to five", so the prose
   requires what the contract enforces.
+- 2026-09-16 — `dsagent.step` gains `produces_matched`: each declared entry mapped to the real files it names at
+  event time, empty on `started` and filled on every other status. `produces` stays the promise, patterns and all.
+  Keyed by entry rather than flattened, because with two patterns a flat list cannot say whether both were met.
+- 2026-09-16 — Persona narration is withheld from the chat by a `messageView` rendering override, and shown in the
+  DAG row for its step. The bridge attributes messages only inside a subagent window, opened solely for a tool named
+  `task` (`agent.py:426`), which the runner does not use — so nothing on the wire says which persona is talking and
+  the transcript reads as one voice changing personality mid-conversation. Attribution is by time: a message that
+  starts between a step's `started` and its end is that step's. The slot was chosen over owning `CopilotChatView`
+  (would mean driving input, suggestions, attachments and scroll) and over tagging in `serve` (a backend change for
+  a presentation problem). Nothing about the run or the thread changes — the withheld messages still reach the model.

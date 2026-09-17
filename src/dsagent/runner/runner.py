@@ -218,9 +218,32 @@ class WorkflowRunner:
                 "status": status,
                 "needs": list(step.needs),
                 "produces": list(step.produces),
+                "produces_matched": self._produces_matched(step, status),
                 "error": error or None,
             },
         )
+
+    def _produces_matched(self, step: Step, status: str) -> dict[str, list[str]]:
+        """Each `produces` entry mapped to the real files it names, right now.
+
+        `produces` is the promise and stays as declared; this is what has
+        actually landed. A consumer needs both: before a step runs there is
+        nothing to link to but there is something to show, and once a pattern is
+        involved the promise is not a path at all — `artifacts/figures/*.png`
+        cannot be a link or a tick until it is expanded.
+
+        Keyed by entry rather than flattened so a tick is per promise: with a
+        flat list, a reader cannot tell which pattern a matched file came from,
+        and with two patterns it cannot tell whether both were satisfied.
+
+        Empty lists on `started` — the step has not written anything yet, and
+        anything matching then belongs to an earlier step. Computed for every
+        other status, `failed` included, because what a failed step *did* manage
+        to write is exactly what its reader wants to see.
+        """
+        if status == "started":
+            return {entry: [] for entry in step.produces}
+        return {entry: self.matched(entry) for entry in step.produces}
 
     def matched(self, entry: str) -> list[str]:
         """Workspace-relative files a `produces` entry names right now.

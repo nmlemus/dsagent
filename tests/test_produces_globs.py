@@ -203,3 +203,61 @@ def test_run_json_records_the_matched_figures(runner, tmp_path):
     state = json.loads((tmp_path / "run" / "run.json").read_text())
     written = {f["path"] for f in state["steps"]["analyze"]["files"]}
     assert {f"artifacts/figures/{i:02d}.png" for i in range(1, 5)} <= written
+
+
+# --- produces_matched -------------------------------------------------------
+
+
+def _steps(events, step_id):
+    return [e.value for e in events if e.name == "dsagent.step" and e.value["step"] == step_id]
+
+
+def test_produces_matched_is_empty_while_a_step_is_starting(runner):
+    """Nothing has been written yet, and a match then would be an earlier step's."""
+    r, events = runner(figures=2)
+    r.run("eda-to-report", {"data_path": "x.csv"})
+    started = _steps(events, "analyze")[0]
+    assert started["status"] == "started"
+    assert started["produces_matched"] == {
+        "artifacts/findings.md": [],
+        "artifacts/figures/*.png": [],
+    }
+
+
+def test_produces_matched_expands_every_entry_when_the_step_is_done(runner):
+    r, events = runner(figures=3)
+    r.run("eda-to-report", {"data_path": "x.csv"})
+    done = _steps(events, "analyze")[-1]
+    assert done["status"] == "done"
+    assert done["produces_matched"] == {
+        "artifacts/findings.md": ["artifacts/findings.md"],
+        "artifacts/figures/*.png": [
+            "artifacts/figures/01.png",
+            "artifacts/figures/02.png",
+            "artifacts/figures/03.png",
+        ],
+    }
+    # the promise is untouched — a pattern is still a pattern
+    assert done["produces"] == ["artifacts/findings.md", "artifacts/figures/*.png"]
+
+
+def test_produces_matched_is_present_at_a_gate(runner):
+    """The gate card links these, so they have to be real paths by then."""
+    from dsagent.runner import GateDecision
+
+    r, events = runner(figures=1)
+    r.ask_human = lambda request: GateDecision.REJECT
+    r.run("eda-to-report", {"data_path": "x.csv"})
+    gated = _steps(events, "data-gate")[-1]
+    assert gated["status"] == "awaiting_gate"
+    assert gated["produces_matched"] == {"artifacts/data-gate.md": ["artifacts/data-gate.md"]}
+
+
+def test_an_unmet_entry_reads_as_empty_not_absent(runner):
+    """A failed step still reports what it did write — that is what to look at."""
+    r, events = runner(figures=0)
+    r.run("eda-to-report", {"data_path": "x.csv"})
+    failed = _steps(events, "analyze")[-1]
+    assert failed["status"] == "failed"
+    assert failed["produces_matched"]["artifacts/figures/*.png"] == []
+    assert failed["produces_matched"]["artifacts/findings.md"] == ["artifacts/findings.md"]
