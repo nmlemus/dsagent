@@ -453,3 +453,142 @@ def test_the_smoke_test_is_not_a_reason_to_reach_the_network():
     # handed whatever it is given, and still may not go out.
     message = validate_spec(spec)
     assert "example.invalid" not in message or "not allowed" in message.lower()
+
+
+# ---- amending a chart from the conversation --------------------------------
+
+
+def test_a_chart_can_be_revised_from_outside_the_run(tmp_path):
+    """The round trip the milestone is about: ask for a change, get a version.
+
+    The orchestrator is not inside a run — no workspace, no step, no event log —
+    so the tool it is given takes the run by name and writes into it. Emitted
+    under the same `chart_id`, the answer *replaces* the chart on the page.
+    """
+    from dsagent.runner import RunState, StepRecord
+    from dsagent.runner.charts import amend_tools
+
+    run_dir = tmp_path / "eda-1"
+    (run_dir / "workspace" / "artifacts").mkdir(parents=True)
+    (run_dir / "workspace" / "artifacts" / "by_cat.csv").write_text(
+        "weather,precip\nrain,5.42\nsun,0.0\n"
+    )
+    state = RunState(workflow="w", cartridge="c", inputs={}, status="done",
+                     steps={"analyze": StepRecord(id="analyze", status="done")})
+    state.charts = {"wet": {
+        "chart_id": "wet", "kind": "chart", "title": "Wet days", "data_ref": "artifacts/by_cat.csv",
+        "data_url": "/runs/eda-1/preview/artifacts/by_cat.csv", "step": "analyze",
+        "persona": "noel", "section": "Findings", "spec": good_spec(),
+        "columns": ["weather", "precip"], "rows": 2, "version": 1, "ts": 0.0,
+    }}
+    state.save(run_dir)
+
+    _, amend = amend_tools(tmp_path)
+    changed = {**good_spec(), "mark": {"type": "point"}}
+    out = amend.invoke({
+        "run_id": "eda-1", "chart_id": "wet", "spec": changed,
+        "data_ref": "artifacts/by_cat.csv", "title": "Wet days, as points",
+    })
+
+    assert "v2" in out
+    after = RunState.load(run_dir).charts["wet"]
+    assert after["version"] == 2
+    assert after["spec"]["mark"] == {"type": "point"}
+    assert after["title"] == "Wet days, as points"
+    # And the screen hears about it the same way it hears about everything else.
+    events = [json.loads(line) for line in (run_dir / "events.jsonl").read_text().splitlines()]
+    assert [e["name"] for e in events] == ["dsagent.chart"]
+    assert events[0]["value"]["version"] == 2
+    assert events[0]["value"]["run_id"] == "eda-1"
+
+
+def test_amending_a_run_that_is_not_there_says_so(tmp_path):
+    from dsagent.runner.charts import amend_tools
+
+    _, amend = amend_tools(tmp_path)
+    for run_id in ("nope", "../escape", ""):
+        out = amend.invoke({"run_id": run_id, "chart_id": "c", "spec": good_spec(),
+                            "data_ref": "a.csv", "title": "T"})
+        assert "unknown run" in out
+
+
+def test_an_amendment_is_validated_like_any_other_chart(tmp_path):
+    """Same code, same rules: a spec that will not draw is refused here too."""
+    pytest.importorskip("vl_convert")
+    from dsagent.runner import RunState
+    from dsagent.runner.charts import amend_tools
+
+    run_dir = tmp_path / "eda-1"
+    (run_dir / "workspace").mkdir(parents=True)
+    (run_dir / "workspace" / "t.csv").write_text("a,b\n1,2\n")
+    RunState(workflow="w", cartridge="c", inputs={}, status="done", steps={}).save(run_dir)
+
+    _, amend = amend_tools(tmp_path)
+    broken = good_spec()
+    broken["encoding"]["x"]["type"] = "nominel"
+    out = amend.invoke({"run_id": "eda-1", "chart_id": "c", "spec": broken,
+                        "data_ref": "t.csv", "title": "T"})
+
+    assert "error:" in out
+    assert RunState.load(run_dir).charts == {}
+
+
+def test_a_chart_s_spec_can_be_read_back_from_outside_the_run(tmp_path):
+    """A spec lives on the run, not in its workspace, so no file tool reaches it.
+
+    Without this the orchestrator was told to "read the current spec" from a
+    file it cannot open, and spent a minute failing to find it before answering
+    nothing at all.
+    """
+    from dsagent.runner import RunState
+    from dsagent.runner.charts import amend_tools
+
+    run_dir = tmp_path / "r"
+    (run_dir / "workspace").mkdir(parents=True)
+    state = RunState(workflow="w", cartridge="c", inputs={}, steps={})
+    state.charts = {"wet": {
+        "chart_id": "wet", "kind": "chart", "title": "Wet days", "data_ref": "a.csv",
+        "data_url": "", "step": "analyze", "persona": "noel", "section": "",
+        "spec": good_spec(), "columns": [], "rows": 2, "version": 1, "ts": 0.0,
+    }}
+    state.save(run_dir)
+
+    read, _ = amend_tools(tmp_path)
+
+    listed = read.invoke({"run_id": "r"})
+    assert "wet" in listed and "Wet days" in listed and "a.csv" in listed
+
+    one = json.loads(read.invoke({"run_id": "r", "chart_id": "wet"}))
+    assert one["spec"]["mark"] == {"type": "bar"}
+    assert one["version"] == 1
+
+    assert "no chart" in read.invoke({"run_id": "r", "chart_id": "nope"})
+    assert "unknown run" in read.invoke({"run_id": "nope"})
+
+
+def test_a_revision_stays_where_the_chart_it_replaces_was(tools):
+    """Otherwise an amended chart vanishes off the page instead of changing on it.
+
+    The document groups cards by the step that emitted them. A chart amended
+    from the conversation is emitted by the orchestrator, which is not a step —
+    so a revision inherits the original's step, section and persona. It is the
+    same chart; only its version moved.
+    """
+    show_chart, _, recorded, workspace = tools
+    show_chart.invoke({"spec": good_spec(), "data_ref": REF, "title": "T", "chart_id": "c1"})
+
+    elsewhere: list[ChartRecord] = []
+    amender, _ = chart_tools(
+        workspace, "run-1",
+        on_chart=elsewhere.append,
+        context=lambda: StepContext(step="chat", persona="orchestrator"),
+        known=lambda cid: next((r for r in reversed(recorded) if r.chart_id == cid), None),
+    )
+    amender.invoke({"spec": {**good_spec(), "mark": {"type": "point"}}, "data_ref": REF,
+                    "title": "T, as points", "chart_id": "c1"})
+
+    assert elsewhere[0].version == 2
+    assert elsewhere[0].step == "analyze"
+    assert elsewhere[0].persona == "noel"
+    assert elsewhere[0].section == "Findings"
+    assert elsewhere[0].title == "T, as points"

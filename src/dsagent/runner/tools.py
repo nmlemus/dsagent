@@ -20,6 +20,7 @@ from langchain_core.runnables.config import ensure_config
 from langchain_core.tools import InjectedToolCallId, tool
 
 from dsagent.cartridge.models import Cartridge
+from dsagent.runner.charts import amend_tools
 from dsagent.runner.runner import GateDecision, GateRequest, RunnerEvent, WorkflowRunner
 
 RUN_ID_KEY = "dsagent_run_id"
@@ -163,7 +164,8 @@ def workflow_tools(
             return text[:max_chars] + f"\n… truncated at {max_chars} of {len(text)} chars"
         return text
 
-    return [list_workflows, run_workflow, list_run_files, read_run_file]
+    return [list_workflows, run_workflow, list_run_files, read_run_file,
+            *amend_tools(runs_dir)]
 
 
 def _deliverables(run_dir: Path) -> list[str]:

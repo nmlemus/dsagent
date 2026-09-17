@@ -286,7 +286,7 @@ def add_runs_routes(
         return {"started": True, "resumed": resume}
 
     @app.post("/runs/{run_id}/plan")
-    def plan_run(run_id: str) -> dict[str, Any]:
+    async def plan_run(run_id: str, request: Request) -> dict[str, Any]:
         """What this run will do, before it does any of it.
 
         The plan-first gate the research puts at the top of what a new entrant
@@ -304,9 +304,22 @@ def add_runs_routes(
 
         Stored on the run, because it is the first entry in its audit trail:
         what was offered, and what it was expected to cost.
+
+        A body of `{"inputs": {...}}` is how the operator's edits get there. The
+        plan is editable by design — the guess is a guess — and a plan you can
+        change but whose changes the run never sees is a form that lies. Refused
+        once the run has started: a run keeps the inputs it began with.
         """
         run_dir = run_dir_of(run_id)
         state = read_state(run_dir)
+        edited = (await _json_body(request)).get("inputs") if await request.body() else None
+        if edited:
+            if state.get("status") != "pending":
+                raise HTTPException(status_code=409, detail="this run has already started")
+            if not isinstance(edited, dict):
+                raise HTTPException(status_code=400, detail="inputs must be a JSON object")
+            state["inputs"] = {**(state.get("inputs") or {}), **edited}
+            _rewrite_state(run_dir, state)
         workflow = state.get("workflow", "")
         cartridge = by_workflow.get(workflow)
         if cartridge is None:
@@ -697,11 +710,17 @@ async def _json_body(request: Request) -> dict[str, Any]:
 
 
 def _rewrite_state(run_dir: Path, state: dict[str, Any]) -> None:
-    """Write `run.json` back atomically, the way the runner writes it."""
+    """Write `run.json` back atomically, the way the runner writes it.
+
+    Including the per-thread temp name: this process writes the file from a
+    request handler while the run's own threads write it too, and a shared temp
+    path is a crash waiting for the two to coincide.
+    """
     import os
+    import threading
 
     path = run_dir / "run.json"
-    tmp = path.with_name(".run.json.tmp")
+    tmp = path.with_name(f".run.json.{os.getpid()}.{threading.get_ident()}.tmp")
     tmp.write_text(json.dumps(state, indent=2), encoding="utf-8")
     os.replace(tmp, path)
 

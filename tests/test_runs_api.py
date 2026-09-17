@@ -548,3 +548,27 @@ def test_stopping_a_finished_run_changes_nothing(client, tmp_path):
 
     assert client.post(f"/runs/{run_id}/stop").json() == {"stopping": False, "status": "done"}
     assert client.get(f"/runs/{run_id}").json()["status"] == "done"
+
+
+def test_the_plan_carries_the_operator_s_edits_back_to_the_run(client):
+    """A plan you can change but whose changes the run never sees is a lie."""
+    created = client.post("/runs", json={"workflow": "eda-to-report", "inputs": {}}).json()
+    run_id = created["run_id"]
+
+    client.post(f"/runs/{run_id}/plan", json={"inputs": {"key_column": "date"}})
+
+    assert client.get(f"/runs/{run_id}").json()["inputs"]["key_column"] == "date"
+
+
+def test_a_run_that_has_started_keeps_the_inputs_it_began_with(client, tmp_path):
+    created = client.post("/runs", json={"workflow": "eda-to-report", "inputs": {}}).json()
+    run_id = created["run_id"]
+    runs_dir = tmp_path / "runs"
+    state = json.loads((runs_dir / run_id / "run.json").read_text())
+    state["status"] = "running"
+    (runs_dir / run_id / "run.json").write_text(json.dumps(state))
+
+    refused = client.post(f"/runs/{run_id}/plan", json={"inputs": {"key_column": "date"}})
+
+    assert refused.status_code == 409
+    assert "already started" in refused.json()["detail"]

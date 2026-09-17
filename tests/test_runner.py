@@ -129,3 +129,44 @@ def test_dry_run_touches_no_agent(runner_factory):
 def test_input_options_are_enforced(runner_factory):
     with pytest.raises(ValueError, match="must be one of"):
         runner_factory().run("mmm-meridian", {"data_source": "excel", "data_path": "d", "kpi": "k"}, dry_run=True)
+
+
+def test_a_run_can_be_saved_from_two_threads_at_once(tmp_path):
+    """`show_chart` records itself from whichever thread the tool call lands on.
+
+    With one shared temp path the runner's own save and a tool's save collide:
+    the first `os.replace` consumes `.run.json.tmp` and the second dies with
+    `No such file or directory`. That killed `analyze` five minutes into a real
+    run, after eleven `run_python` calls, with nothing wrong with the analysis.
+    """
+    import threading
+
+    from dsagent.runner import RunState, StepRecord
+
+    run_dir = tmp_path / "run"
+    run_dir.mkdir()
+    state = RunState(workflow="w", cartridge="c", inputs={},
+                     steps={"a": StepRecord(id="a")})
+    state.save(run_dir)
+
+    errors: list[Exception] = []
+    start = threading.Barrier(8)
+
+    def hammer() -> None:
+        start.wait()
+        for _ in range(40):
+            try:
+                state.save(run_dir)
+            except Exception as e:  # noqa: BLE001 — the point is that there are none
+                errors.append(e)
+
+    threads = [threading.Thread(target=hammer) for _ in range(8)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+
+    assert errors == []
+    assert RunState.load(run_dir).workflow == "w"
+    # And no temp files left behind for the next reader to trip over.
+    assert [p.name for p in run_dir.glob(".run.json*")] == []

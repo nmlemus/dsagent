@@ -2986,3 +2986,59 @@ body.is-resizing iframe {
   border-color: var(--ink);
   color: var(--cream);
 }
+
+.sec-failed {
+  margin: var(--gap-3) 0 0;
+  padding: var(--gap-3);
+  background: var(--fail-wash);
+  border-left: 3px solid var(--fail);
+  border-radius: 0 var(--radius-lg) var(--radius-lg) 0;
+}
+
+.sec-failed-what {
+  margin: 0 0 var(--gap-2);
+  color: var(--ink);
+}
+
+.sec-failed-missing {
+  margin: 0 0 2px;
+  font-size: 11.5px;
+  color: var(--fail);
+}
+
+/* The runner's own line, kept but folded down: a stack trace is evidence, not
+   an explanation, and the sentence above it is the explanation. */
+.sec-failed-error {
+  margin: var(--gap-2) 0 0;
+  padding: var(--gap-2);
+  background: var(--surface);
+  border-radius: var(--radius);
+  font-family: var(--mono);
+  font-size: 11.5px;
+  line-height: 1.5;
+  color: var(--ink-dim);
+  overflow-wrap: anywhere;
+}
+
+.sec-failed .sec-resume {
+  margin-top: var(--gap-3);
+}
+
+.card-asking {
+  display: flex;
+  gap: var(--gap-2);
+  padding: var(--gap-2) var(--gap-3);
+  border-top: 1px solid var(--rule);
+  background: var(--surface-sunk);
+}
+
+.card-asking input {
+  flex: 1;
+  font: inherit;
+  font-size: 13px;
+  padding: 5px 9px;
+  border: 1px solid var(--rule-strong);
+  border-radius: var(--radius);
+  background: var(--surface);
+  color: var(--ink);
+}

@@ -185,7 +185,9 @@ function StepItem({
   const running = step.status === "started";
   const state = waiting ? "waiting" : running ? "running" : step.status;
   const elapsed = running ? now - step.startedAt : (step.endedAt ?? 0) - step.startedAt;
-  const shown = open || running || waiting;
+  // A failed step opens itself. It is the only thing on the screen that matters
+  // once a run stops, and "click to find out why" is not an answer.
+  const shown = open || running || waiting || step.status === "failed";
 
   return (
     <>

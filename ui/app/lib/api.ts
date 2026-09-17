@@ -219,8 +219,18 @@ export type RunPlan = {
   estimate: { runs: number; cost_usd: number | null; seconds: number | null };
 };
 
-export const planRun = (runId: string) =>
-  json<RunPlan>(`/runs/${encodeURIComponent(runId)}/plan`, { method: "POST" });
+/**
+ * Ask what a run will do — and, with `inputs`, tell it what you changed first.
+ *
+ * The plan is editable by design: the key-column guess is a guess. A form whose
+ * edits the run never sees is a form that lies, so the values go back with the
+ * request that asks for the plan again, and the run keeps them.
+ */
+export const planRun = (runId: string, inputs?: Record<string, string>) =>
+  json<RunPlan>(`/runs/${encodeURIComponent(runId)}/plan`, {
+    method: "POST",
+    ...(inputs ? { body: JSON.stringify({ inputs }) } : {}),
+  });
 
 /** Ask a run to stop. It stops between steps — see `stop_run`. */
 export const stopRun = (runId: string) =>

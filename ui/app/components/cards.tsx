@@ -101,6 +101,7 @@ export function ChartCard({
   const [mark, setMark] = useState<string | null>(null);
   const [selection, setSelection] = useState<string | null>(null);
   const [failed, setFailed] = useState<string | null>(null);
+  const [asking, setAsking] = useState(false);
   const width = useWidth(host);
 
   // The spec on screen: the run's, with the reader's own mark if they changed
@@ -152,7 +153,7 @@ export function ChartCard({
         // continuous-axis charts on the same screen were fine, which is what
         // made it look like a spec problem rather than an ordering one.
         await result.view.resize().runAsync();
-        listen(result.view, rows, setSelection);
+        listen(result.view, selections(spec), rows, setSelection);
       } catch (e) {
         if (live) setFailed(String((e as Error).message ?? e));
       }
@@ -189,11 +190,7 @@ export function ChartCard({
             How
           </button>
           {ask && (
-            <button
-              type="button"
-              className="card-ask"
-              onClick={() => ask(change(card, selection))}
-            >
+            <button type="button" className="card-ask" onClick={() => setAsking((a) => !a)}>
               Ask {card.persona} to change this
             </button>
           )}
@@ -207,6 +204,33 @@ export function ChartCard({
         <div className="vega" ref={host} />
       </div>
 
+      {/* What should change has to be said. The button used to send "please
+          change it", which is a request nobody can act on — the model has no way
+          to guess what the reader wants different, and answered with nothing.
+          This is the sentence that makes it a request. */}
+      {asking && ask && (
+        <form
+          className="card-asking"
+          onSubmit={(e) => {
+            e.preventDefault();
+            const wanted = new FormData(e.currentTarget).get("wanted");
+            if (!String(wanted ?? "").trim()) return;
+            ask(change(card, String(wanted), selection));
+            setAsking(false);
+          }}
+        >
+          <input
+            name="wanted"
+            autoFocus
+            placeholder={`What should ${card.persona} change? e.g. “add a trend line”`}
+            aria-label={`What should ${card.persona} change about ${card.title}?`}
+          />
+          <button type="submit" className="btn btn-small btn-primary">
+            Ask
+          </button>
+        </form>
+      )}
+
       {selection && <p className="card-selection mono">{selection}</p>}
 
       <p className="card-foot">
@@ -216,6 +240,25 @@ export function ChartCard({
       </p>
     </figure>
   );
+}
+
+/**
+ * The selection parameters this spec declares, wherever it declares them.
+ *
+ * Read off the spec rather than off the view. `view.getState()` lists the
+ * signals it considers *state*, and a selection is not among them — enumerating
+ * that way attached no listener at all, and a brush the reader dragged reported
+ * nothing. The persona wrote the params; they are the authority on what there is
+ * to listen to.
+ */
+function selections(spec: Record<string, unknown>): string[] {
+  const own = (spec.params ?? []) as { name?: string; select?: unknown }[];
+  const layers = ((spec.layer ?? []) as Record<string, unknown>[]).flatMap(
+    (layer) => (layer.params ?? []) as { name?: string; select?: unknown }[],
+  );
+  return [...own, ...layers]
+    .filter((param) => param.select && param.name)
+    .map((param) => param.name as string);
 }
 
 /**
@@ -276,27 +319,44 @@ function laidOut(
  * Not a filter on the chart — the chart already shows what it shows — but an
  * answer to "which part of this are you asking about?", which is the thing a
  * person points at with a finger and cannot type.
+ *
+ * Watched through the selection's **store dataset**, not its signal. A signal
+ * declared inside a layer belongs to that layer's group, so
+ * `view.addSignalListener(name)` on a layered spec raises "unrecognized signal"
+ * — which is why the first version drew the brush rectangle perfectly and
+ * reported nothing at all. Vega-Lite hoists every selection's `_store` to the
+ * top level whatever the spec's shape, so that is what this listens to.
  */
 function listen(
-  view: { getState: () => unknown; addSignalListener: (name: string, fn: (n: string, v: unknown) => void) => void },
+  view: {
+    addDataListener: (name: string, fn: (n: string, v: unknown) => void) => void;
+  },
+  names: string[],
   rows: Row[],
   report: (text: string | null) => void,
 ): void {
-  const signals = (view.getState() as { signals?: Record<string, unknown> })?.signals ?? {};
-  for (const name of Object.keys(signals)) {
-    if (!name.endsWith("_tuple") && !/brush|select/i.test(name)) continue;
+  for (const name of names) {
     try {
-      view.addSignalListener(name, (_signal, value) => {
-        const ranges = value as Record<string, [unknown, unknown]> | null;
-        if (!ranges || typeof ranges !== "object") return report(null);
-        const described = Object.entries(ranges)
-          .filter(([, span]) => Array.isArray(span) && span.length === 2)
-          .map(([field, span]) => `${field} ${format(span[0])} → ${format(span[1])}`);
+      view.addDataListener(`${name}_store`, (_data, value) => {
+        const entries = (value ?? []) as {
+          fields?: { field?: string }[];
+          values?: unknown[];
+        }[];
+        const first = entries[0];
+        if (!first?.fields || !first.values) return report(null);
+        const described = first.fields
+          .map((field, i) => ({ field: field.field, span: first.values?.[i] }))
+          .filter((pair) => pair.field && Array.isArray(pair.span) && pair.span.length === 2)
+          .map(
+            (pair) =>
+              `${pair.field} ${format((pair.span as unknown[])[0])} → ` +
+              `${format((pair.span as unknown[])[1])}`,
+          );
         if (described.length === 0) return report(null);
         report(`selected ${described.join(", ")} · of ${rows.length} rows · sent as context`);
       });
     } catch {
-      /* a signal that is not a selection is not an error */
+      /* a spec whose param is not a selection has no store; that is not an error */
     }
   }
 }
@@ -310,13 +370,23 @@ function format(value: unknown): string {
   return String(value);
 }
 
-/** What to say when the reader asks the persona for a different chart. */
-function change(card: Card, selection: string | null): string {
+/**
+ * What to say when the reader asks for a different chart.
+ *
+ * Deliberately specific. The orchestrator has one tool that can change a chart
+ * in a finished run — `amend_chart` — and it needs the run, the id, and the file
+ * the chart draws from; naming all three is the difference between a new version
+ * appearing on the page and a paragraph explaining what one would look like.
+ */
+function change(card: Card, wanted: string, selection: string | null): string {
   const where = selection ? ` The reader has ${selection.replace(" · sent as context", "")}.` : "";
   return (
-    `About the chart "${card.title}" (chart_id ${card.chartId}, from ${card.dataRef}):` +
-    ` please change it and emit the new version with show_chart using the same chart_id,` +
-    ` so it replaces this one rather than adding a second.${where}`
+    `Change the chart "${card.title}" in run ${runOf(card)}: ${wanted.trim()}\n\n` +
+    `Its chart_id is "${card.chartId}" and it draws from ${card.dataRef}.` +
+    ` Call read_chart to get the current spec, make that change, and call` +
+    ` amend_chart with the same chart_id so the new version replaces this chart` +
+    ` rather than adding another.${where}` +
+    ` If it needs numbers nobody has computed, say so instead of guessing.`
   );
 }
 

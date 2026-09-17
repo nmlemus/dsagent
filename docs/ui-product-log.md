@@ -1137,3 +1137,58 @@ CDN appears anywhere in the document" · `ruff` · `npm run build`, `typecheck`,
 One bug this task exposed: the rail's step list had no `overflow`, so with four
 steps open it painted straight over the conversation below it. A flex item
 shrunk by `flex: 1` still draws its whole content.
+
+## Task 10 (completed) — the demo, with a real model
+
+Five runs, **$2.88 of a ten-run budget**, all thirteen §6 lines verified:
+`docs/runs/ui-product/DEMO.md` walks them one by one with the evidence.
+
+| run | for | wall | cost | cards |
+|---|---|---|---|---|
+| 1 `…103207` | the first run with `show_chart` at all | 5 m 40 s | $0.605 | 6 |
+| 2 `…110638` | the fixture, after validation gained its render check | 6 m 19 s | $0.570 | 7 |
+| 3 `…120426` | the demo run — §6.2–§6.10, §6.13 | 14 m 04 s | $0.603 | 9 |
+| 4 `…123802` | sent back, redone, approved — §6.11 | 7 m 31 s | $0.560 | 7 |
+| 5 `…124606` | killed at its gate and restarted — §6.12 | 6 m 28 s | $0.544 | 6 |
+
+### Five bugs only a real run could find
+
+1. **`run.json` was written from two threads with one temp file.** `show_chart`
+   records itself on whichever thread the tool call lands on, while the runner
+   writes the same file from its own. The first `os.replace` consumed
+   `.run.json.tmp`; the second died with `No such file or directory` — and
+   killed `analyze` five minutes into run 3, after eleven `run_python` calls,
+   with nothing wrong with the analysis. The temp name now carries the thread id.
+   A test hammers `save()` from eight threads.
+2. **"Retry from analyze" stalled silently.** A resumed run re-raises the
+   `interrupt()` for every gate it has already passed — it must, or the next gate
+   receives the previous one's answer — so the graph parks on a question nobody
+   is being asked. The run read `running` with no thread behind it and the step
+   never moved. The driver now answers those from `run.json`, which is where the
+   decision has been all along, and only when `state.gate` shows nobody is
+   actually being asked. Retried from the screen, run 3 then completed.
+3. **A rejected gate was a pause, not a rejection** — the finding that changed
+   the runner, written up under task 7.
+4. **The plan's edits never reached the run.** The key column was guessed,
+   accepted, shown in the field — and the run started without it: *"Key column:
+   not declared"*, on screen, in run 3. `POST /runs/{id}/plan` now takes the
+   edited inputs and writes them back, refused once the run has started.
+5. **"Ask <persona> to change this" asked nothing.** The button sent "please
+   change it", which is not a request anybody can act on; the model answered with
+   silence. It now opens a line to say what should change — and the orchestrator
+   gained `read_chart`, because it was told to read a spec out of `run.json`, a
+   file no file tool can reach, and spent a minute failing to find it.
+
+And two the cards themselves exposed: **a brush reported nothing** (a selection
+signal declared inside a layer belongs to that layer's group, so
+`addSignalListener` raised and was swallowed — the store dataset is top-level
+whatever the spec's shape, and that is what it listens to now); and **an amended
+chart vanished off the page** instead of changing on it, because it was
+attributed to the step `chat`. A revision now inherits the step, section and
+persona of the chart it replaces, and the document puts a card it cannot place in
+the last section rather than dropping it.
+
+### Verified
+
+`pytest` 306 passed / 8 skipped · `ruff check src tests` · `dsagent cartridge
+validate cartridges/ds` · `npm run build`, `typecheck`, `lint`.

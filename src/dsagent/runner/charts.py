@@ -27,10 +27,11 @@ PNG fallback is the honest answer.
 
 from __future__ import annotations
 
+import json
 import re
 import time
 from collections.abc import Callable
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -260,17 +261,22 @@ def chart_tools(
     ) -> ChartRecord:
         here = context()
         previous = known(chart_id)
+        # A revision belongs where the chart it replaces belonged. Without this,
+        # a chart amended from the conversation was attributed to the step
+        # "chat" — which no section of the document has — and vanished off the
+        # page instead of changing on it. Who is asked to change it next stays
+        # the persona who made it, too: it is still their chart, at v2.
         rec = ChartRecord(
             chart_id=chart_id,
             kind=kind,
             title=title,
             data_ref=data_ref,
             data_url=f"/runs/{run_id}/preview/{data_ref}",
-            step=here.step,
-            persona=here.persona,
+            step=previous.step if previous else here.step,
+            persona=previous.persona if previous else here.persona,
             # The step says which section it writes; the persona may name a
             # different one for a card that belongs further down the report.
-            section=section.strip() or here.section,
+            section=(previous.section if previous else "") or section.strip() or here.section,
             spec=spec,
             columns=columns,
             rows=rows,
@@ -391,3 +397,119 @@ def chart_tools(
         )
 
     return [show_chart, show_table]
+
+
+def amend_tools(runs_dir: Path) -> list[Any]:
+    """`show_chart` / `show_table`, for a run that has already finished.
+
+    The reader asks the persona who made a chart to change it, from the
+    conversation beside the document. That request reaches the orchestrator,
+    which is not inside a run — it has no workspace, no step, and no event log —
+    so the tools it is given take the run by name and write into it.
+
+    What makes this a *revision* rather than a second chart is the `chart_id`:
+    emitted again under the same id, it replaces what is on the page, and the
+    version goes up. That is the whole round trip the milestone is about — a
+    figure you can ask for a change to, rather than an image you can only
+    replace by re-running everything.
+
+    Every rule the in-run tools apply still applies here, because it is the same
+    code: the spec is validated and drawn once before it is recorded, and
+    `data_ref` must name a readable file inside *that run's* workspace.
+    """
+    from dsagent.runner.runner import EVENT_LOG, RunState
+
+    def emit(run_id: str) -> Any:
+        run_dir = runs_dir / run_id
+
+        def on_chart(rec: ChartRecord) -> None:
+            state = RunState.load(run_dir)
+            state.charts[rec.chart_id] = asdict(rec)
+            state.save(run_dir)
+            line = json.dumps({
+                "name": CHART_EVENT,
+                "value": {"run_id": run_id, **rec.as_event(), "ts": time.time()},
+            })
+            with (run_dir / EVENT_LOG).open("a", encoding="utf-8") as fh:
+                fh.write(line + "\n")
+
+        return on_chart
+
+    def known(run_id: str) -> Any:
+        def look(chart_id: str) -> ChartRecord | None:
+            try:
+                stored = RunState.load(runs_dir / run_id).charts.get(chart_id)
+            except (OSError, ValueError, TypeError):
+                return None
+            return ChartRecord(**stored) if stored else None
+
+        return look
+
+    def bound(run_id: str) -> list[Any] | None:
+        """The pair of tools, pointed at one run — or None if there is no such run."""
+        if not run_id or "/" in run_id or "\\" in run_id or run_id in (".", ".."):
+            return None
+        run_dir = runs_dir / run_id
+        if not (run_dir / "run.json").is_file():
+            return None
+        return chart_tools(
+            run_dir / "workspace", run_id,
+            on_chart=emit(run_id),
+            context=lambda: StepContext(step="chat", persona="orchestrator"),
+            known=known(run_id),
+        )
+
+    @tool
+    def read_chart(run_id: str, chart_id: str = "") -> str:
+        """Read a run's charts — their specs, titles and the files they draw from.
+
+        Call this before `amend_chart`: a chart's specification lives on the run,
+        not in its workspace, so no file tool can reach it. With no `chart_id`
+        you get the list; with one you get that chart's spec in full.
+        """
+        from dsagent.runner.runner import RunState
+
+        try:
+            charts = RunState.load(runs_dir / run_id).charts
+        except (OSError, ValueError, TypeError):
+            return f"unknown run {run_id}"
+        if not charts:
+            return f"run {run_id} has emitted no charts"
+        if not chart_id:
+            return "\n".join(
+                f"- {c['chart_id']} (v{c['version']}, {c['kind']}): {c['title']}"
+                f" — draws from {c['data_ref']}"
+                for c in charts.values()
+            )
+        one = charts.get(chart_id)
+        if one is None:
+            return (
+                f"run {run_id} has no chart {chart_id!r}. It has: "
+                f"{', '.join(charts)}"
+            )
+        return json.dumps(
+            {k: one[k] for k in ("chart_id", "kind", "title", "data_ref", "version", "spec")},
+            indent=1,
+        )
+
+    @tool
+    def amend_chart(run_id: str, chart_id: str, spec: dict, data_ref: str, title: str) -> str:
+        """Replace a chart in a finished run with a corrected version.
+
+        Use this when somebody asks for a change to a chart they are looking at:
+        call `read_chart` first to get the current spec, change what they asked
+        for, and emit it **under the same `chart_id`**. It becomes the next
+        version of that chart, in place, on everyone's screen.
+
+        `data_ref` is a table already in that run's workspace. If the change needs
+        numbers nobody has computed, say so instead: this tool edits a chart, it
+        does not run an analysis.
+        """
+        tools = bound(run_id)
+        if tools is None:
+            return f"unknown run {run_id}"
+        return tools[0].invoke({
+            "spec": spec, "data_ref": data_ref, "title": title, "chart_id": chart_id,
+        })
+
+    return [read_chart, amend_chart]

@@ -181,3 +181,244 @@ browser-default control is left visible.
 - **Parquet preview** is implemented and tested, but no engine is installed in
   this venv, so the test skips here and the endpoint answers 415 by design.
   `eda-to-report` produces no parquet, so no demo line touches it.
+
+---
+
+# M2.6 — the living report, line by line
+
+`docs/ui-living-report.md` §6 is the exit condition: thirteen lines that must each
+be true from a clean checkout, with the evidence recorded here.
+
+**Status: 13 of 13 verified, with a real model.** Five runs of `eda-to-report` on
+`tests/data/seattle-weather.csv`, **$2.88 of a ten-run budget**, against
+`dsagent serve` and `next build && next start`:
+
+| | run | what it was for | wall | cost | cards |
+|---|---|---|---|---|---|
+| **1** | `eda-charts-…103207` | the first run with `show_chart` at all — recorded the fixture | 5 m 40 s | $0.605 | 6 |
+| **2** | `eda-charts2-…110638` | the fixture the screens were built against, after the validator gained its render check | 6 m 19 s | $0.570 | 7 |
+| **3** | `eda-to-report-…120426` | the demo run: §6.2–§6.10 and §6.13 | 14 m 04 s | $0.603 | 9 |
+| **4** | `eda-to-report-…123802` | sent back, redone, approved: §6.11 | 7 m 31 s | $0.560 | 7 |
+| **5** | `eda-to-report-…124606` | killed at its gate and restarted: §6.12 | 6 m 28 s | $0.544 | 6 |
+
+Run 3 took fourteen minutes because it **failed in the middle and was retried
+from the screen** — see "bugs only a real run could find" below. That is the run
+in most of the screenshots, and its failure is the evidence for §1.7.
+
+## Setup
+
+```
+pip install -e ".[ui,anthropic]"
+cd ui && npm ci && npm run build
+dsagent serve                      # :8000
+cd ui && npm run start             # :3000
+```
+
+---
+
+## 1. Home lists runs with status, duration, cost and personas; Workflows tab shows the team and the gates; empty state on a fresh install
+
+**✓** `m26-1-home.jpg`: eleven runs, each with its status word, progress, the two
+personas who worked on it, when it started, how long it took and what it cost.
+`m26-1-workflows.jpg`: both workflows the cartridge declares, each step with the
+persona on it and **`asks you`** marked on the ones that stop —
+`eda-to-report` stops once, `mmm-meridian` three times — read off the loaded
+cartridge, not written into the page. `m26-1-empty.jpg`: the run directory moved
+aside, *"Nothing has run yet"*, what a run is, and one way to start.
+
+## 2. New run: drop the CSV, type the question → the proposal appears with workflow, inputs, personas, gates and a cost estimate → Start. No chat typing
+
+**✓** `m26-2-plan.jpg`. The file is read where it lands — **1,461 rows × 6
+columns, 47.1 kB**, with its column names — and `key_column` comes back as a
+guess that says why: *"unique across all 1461 rows, with nothing missing"*,
+in an editable field. Who does what, with `data-gate` marked **"then it asks
+you"**. And the estimate: **$0.54 · 4 m 35 s · 1 decision · based on 8 runs**.
+
+Nothing about that proposal is generated: the steps and gates come from the
+workflow, the shape from the file, the money from past runs of this workflow
+that actually finished. A proposal a person is about to approve should not
+itself be able to hallucinate.
+
+Start opened the run screen. Nothing was typed into a chat.
+
+## 3. Within 5 s the document shows the plan and Marie at work in the first section; the rail shows step 1 running with a live tool counter. Nothing is blank
+
+**✓ 6 s from the Start click** to *"marie is working on this section"* on screen.
+`m26-3-first-step.jpg` catches it at 15 s: the rail has `profile` running with
+`read_file 3 · ls 2 · run_skill_script 1`, the document's first section shows
+Marie at work with her counters — **and her profile is already appearing under
+it**, because the file was written and the document picked it up while the step
+was still running. Sections 2–4 are greyed with what will be written in them.
+
+## 4. Sections fill in as steps finish, with a reveal, without losing scroll position
+
+**✓** Visible across `m26-3-first-step.jpg` (section 1 filling, 2–4 greyed) →
+`m26-7-gate.jpg` (1 and 2 written, 3 and 4 still greyed) →
+`m26-9-finished.jpg` (all four). Each section arrives with a 200 ms fade and
+slide, and a pending one is the *plan* rather than an empty space.
+
+Scroll is not touched when a section arrives: the document is one scroller and a
+section is appended to it, so the browser keeps the offset. Measured during §6.8:
+the page was scrolled 3,023 px into `analyze` when a new file event landed and
+the position did not move.
+
+## 5. `analyze` produces at least three interactive Vega-Lite charts: hover shows values, a quantitative chart pans/zooms, changing the mark type re-renders locally, a brush posts context to the chat, and "Ask Noel to change this" yields a modified chart
+
+**✓ seven charts and two tables** in run 3. Every spec carries `params`: `hover`
+selections for tooltips on five of them, and a `zoom` interval bound to scales on
+the temperature trend, so it pans and zooms. Two carry a mark toggle
+(`bar / point / line`); switching it patches the spec on the client and
+re-renders — verified on `Snow days are far colder…`, bars to points, legend and
+all.
+
+**The brush** (`m26-5-brush.jpg`): dragging across the precipitation chart puts
+`selected month 2012-10-08 → 2014-02-10 · of 48 rows · sent as context` under it,
+and that context travels with the next question.
+
+**"Ask Noel to change this"** (`m26-5-amended.jpg`): asked for *"make the fitted
+trend line a thicker dashed red line so it stands out from the monthly series"*.
+Noel read the spec, changed it, and emitted it under the same `chart_id` — the
+card on the page became **v2**, with the dashed red trend, in place. A second
+request added an interval brush to the precipitation chart; that is the brush in
+`m26-5-brush.jpg`. Both are `amend_chart` calls, validated and drawn once before
+they were recorded, exactly like any other chart.
+
+## 6. A table card shows the profile with sort/filter; Pivot opens Perspective on it
+
+**✓** Filtering the column profile for `temp` left **2 of 6 rows**, and the
+footer said so; clicking a column header sorted it. `m26-6-pivot.jpg`: Pivot
+mounts Perspective — grouped by column with a TOTAL row, in its light theme,
+from the inline WebAssembly bundles. No CDN, no asset route, and nothing is
+downloaded until the button is pressed.
+
+## 7. The gate card appears inline at `data-gate` with the checks table rendered as what is being approved and the cost so far/estimate; Approve continues; the header later shows the wait
+
+**✓** `m26-7-gate.jpg`: the card at its own step, under Marie's nine checks
+rendered as a sortable table — the thing being approved, not a link to it — with
+**"What you are approving: that noel starts analyze on this data as it stands"**
+and **"What it costs: $0.18 so far. 8 finished runs of this workflow cost $0.54
+in total on average. The run is paused until you answer; waiting costs nothing."**
+The card counted **waiting 43 s**; approved at 54 s, the header read **54s
+waited** and the step's history kept *"Approved after 54s"*.
+
+## 8. Reload mid-run: the screen restores fully and keeps following
+
+**✓** Reloaded during `analyze` with two cards on screen and the step at
+`run_python × 3`. The screen rebuilt from `events.jsonl` — same cards, same
+steps, `analyze` still running — and the counter had already moved to
+`run_python × 5` by the time it finished rendering, so it was a live attachment
+rather than a snapshot.
+
+```
+before reload: {cards: 2, tools: "read_file × 4 · run_python × 3 · ls × 2 · execute × 1"}
+after  reload: {cards: 2, tools: "run_python × 5 · read_file × 4 · ls × 2 · execute × 1"}
+```
+
+## 9. The run ends with no error; the executive summary lands at the top; Export HTML opens a report whose charts are still interactive; Export zip contains every deliverable; Replay scrubs the run at 10×
+
+**✓** Runs 3, 4 and 5 all ended `done`, 4/4 steps, no error banner and nothing in
+the chat.
+
+`m26-9-finished.jpg`: **14 m 05 s · $0.60 (92 % cached) · 6 deliverables + 6
+charts · 54 s waited**, the share and export row, the report's own opening
+paragraph lifted to the top under *"In one paragraph"*, and **versions v1…v9**
+with v9 — the run being read — marked.
+
+**Export HTML** (`m26-9-export.jpg`), run 5: 948 kB, four live charts with their
+error bars and fitted trends, opened from a plain file server. Measured in the
+browser: **zero external requests**. The only absolute URLs in the file are XML
+namespaces and one URL inside a Vega code comment.
+
+**Export zip**, run 5: 14.7 kB, **six files** — both reports, the findings, the
+gate report and the profile pair — and **not** the uploaded dataset, which is not
+something the run produced.
+
+**Replay** (`m26-9-replay.jpg`): the scrubber rewinds the whole screen at 10× —
+the gate open again, sections 3 and 4 back to their plan, two cards instead of
+nine, the rail's steps un-ticked. It is the same reducer that draws the live
+screen, run over the log up to a moment.
+
+## 10. Ask in the chat "which finding should I be most careful with?" — answered from the artifacts without a new run
+
+**✓** The orchestrator named **Finding #1**, quoted its numbers back — *"snow (26
+days, 8.55 mm/day, 95% CI 5.72–11.39) … rain (641 days, 6.56 mm/day, 95% CI
+5.89–7.23)"* — and explained why it is fragile: the intervals overlap, and
+snow's is wide precisely because n = 26. That is `findings.md` being read, not a
+tool result repeated. No run was started.
+
+## 11. Reject a gate with a note, Resume, Approve — done; the rejection is in the audit trail; the gate card showed a diff of `data-gate.md` on re-entry
+
+**✓** Run 4, sent back with *"The key uniqueness check reads 'not applicable' —
+date was declared as the key for this run, so check it properly and say so in
+the table."*
+
+`m26-11-diff.jpg` is the gate asked the second time, and it carries the diff:
+
+```
+- `key_uniqueness.column` in the profile is `date`, i.e. a key was declared, so this
+- check applies (not "not applicable").
++ `date` was declared as the key for this run (`key_uniqueness.column` in the
++ profile is `date`, not `null`), so the uniqueness check is evaluated against it
++ above rather than marked not applicable: the profile reports `unique: true` with
++ `0` duplicates across all 1,461 rows, so the grain holds.
+```
+
+Marie was re-run **with the note in her prompt** and addressed exactly what was
+raised. Both decisions are in the audit trail — *"Sent back after 27s"* with the
+note, then *"Approved after 1m 17s"* — and the header totalled **1m 45s waited**.
+
+> This line is the reason the runner changed. A rejected gate used to leave its
+> step `done` and simply ask again: the persona never saw the note, nothing was
+> rewritten, and the only way forward was to approve the artifact you had just
+> refused. There was no second version because nothing produced one. A rejection
+> now sends the step back, carries the note into its prompt, and keeps the
+> refused version aside so the two can be compared. See the log.
+
+## 12. Kill `dsagent serve` at a gate, restart, answer it — the run completes
+
+**✓** Run 5 was parked at `data-gate` when `dsagent serve` was killed
+(`curl` to the API then answered `000`). `run.json` still read `awaiting_gate`
+with the pending question and its `asked_at`. On restart the browser showed the
+same gate, still waiting — `m26-12-restart.jpg`, **needs you · data-gate ·
+1m 08s**, counting from when the run originally stopped — it was answerable, and
+the run went on to finish: `done`, 4/4, **$0.544**, with **69 s** of human wait
+recorded across the restart. The interrupt survived in
+`.dsagent/checkpoints.sqlite`.
+
+## 13. Every screen is in the Aiuda visual system; self-hosted fonts; no default CopilotKit or browser control visible
+
+**✓** Every screenshot above: Instrument Serif on run, document and section
+titles; Satoshi across the UI; JetBrains Mono on every path, id, number and
+spec — all self-hosted from `ui/public/fonts`, no third-party font request.
+Cream ground with the navy rail as the one dark surface; the accent on primary
+actions and the running step only; emerald for done, a deep brick for failure,
+amber for a gate that is waiting. The chat is themed through CopilotKit's own
+variables — a second block of them for the rail's navy — and Perspective through
+its own light theme. No browser-default control is left visible.
+
+---
+
+## Also exercised, beyond the thirteen
+
+- **A failed step, with eyes on it** — `m26-x-failed.jpg`: *"noel could not
+  finish analyze. Nothing after it ran."*, the promise it missed, the runner's
+  own line, and **Retry from analyze** — *"the steps before it are kept; only
+  this one runs again."* Pressed, it re-ran that step and the run completed. The
+  chart Noel had already emitted before dying is still on the page, drawn from
+  real data, in a run that failed.
+- **Stop** is on the rail whenever a run is live.
+- **A plan's edits reach the run**: the key column, accepted as a guess and then
+  editable, is written back before Start.
+
+## What the demo does not cover
+
+- **A run started from the chat still loses its gate on a server restart.**
+  Unchanged from M2.5, and unchanged on purpose: the bridge keeps an in-memory
+  saver because `AsyncSqliteSaver` cannot be built outside a running event loop.
+  Runs started from the launcher — the product's path, and every run above —
+  persist, as §6.12 shows.
+- **PDF export** and **a findings diff between two versions** are deferred with
+  reasons, in `docs/ui-product-log.md` under task 9.
+- **Parquet cards.** `show_chart` reads parquet through the same reader as CSV,
+  and the preview endpoint is tested for both, but no persona wrote a parquet in
+  these five runs, so no card on this screen was drawn from one.

@@ -96,6 +96,27 @@ Turning the M2.2 slice into something a stakeholder can watch for ten minutes an
 
 ## Decisions log
 
+- 2026-09-17 — **A rejected gate sends its step back.** It used to leave the step `done` and
+  re-ask on resume: the persona never saw the note, nothing was rewritten, and the only way
+  forward was to approve the artifact you had just refused. A rejection now returns the step
+  to `pending`, the reviewer's words arrive in its prompt under "This work was sent back",
+  and the refused version is copied to `<run_dir>/gate-versions/<step>/v<n>/` so the two can
+  be compared. The cost is stated rather than hidden: resuming re-runs that step. This is
+  the only change M2.6 makes to runner *behaviour*; the contract — declared DAGs, verified
+  `produces`, runner-level gates — is untouched, and four tests that asserted the old
+  behaviour now assert the new one.
+- 2026-09-17 — **A resumed run's already-decided gates are answered by the driver.** Each is
+  re-raised as an `interrupt()` (dropping it would hand the next gate the previous one's
+  answer), so the graph parks on a question nobody is being asked. `run.json` says who is
+  actually being asked — `state.gate` — and when that is empty the driver resumes with the
+  decision already on the record. Without it "Retry from analyze" stalled silently: the run
+  read `running`, no thread behind it, the step never moved.
+- 2026-09-17 — **`run.json` is written from more than one thread**, so its temp file carries
+  the thread id. `show_chart` records itself the moment it is called, on whichever thread
+  the tool lands on, while the runner writes the same file. One shared `.run.json.tmp` meant
+  the first `os.replace` consumed it and the second died — which killed `analyze` five
+  minutes into a real run with nothing wrong with the analysis.
+
 - 2026-09-17 — A figure is a **Vega-Lite spec plus a reference to its data**, not an image.
   `show_chart` / `show_table` (harness) validate the spec against the Vega-Lite schema with
   altair, hand the persona the validator's own message on failure, and give up after three

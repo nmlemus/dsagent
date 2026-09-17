@@ -87,8 +87,7 @@ export function Document({
                 chart under the paragraph that describes it, which is where a
                 figure belongs and where a file list can never put it. */}
             {step &&
-              view.cards
-                .filter((card) => card.step === step.step)
+              cardsFor(view, planned, i)
                 .map((card) =>
                   card.kind === "chart" ? (
                     <ChartCard key={card.chartId} card={card} onOpen={onOpen} />
@@ -130,6 +129,40 @@ export function Document({
                   {step.persona} will look at your note and ask again.
                 </span>
               </p>
+            )}
+            {/* A failed step, with eyes on it: what was promised, what is
+                missing, the error in the words it arrived in, and the one
+                button that does something about it. Nothing after it ran. */}
+            {step && state === "failed" && (
+              <div className="sec-failed">
+                <p className="sec-failed-what">
+                  <b>
+                    {step.persona} could not finish {step.step}.
+                  </b>{" "}
+                  Nothing after it ran.
+                </p>
+                {step.produces
+                  .filter((entry) => (step.matched[entry] ?? []).length === 0)
+                  .map((entry) => (
+                    <p key={entry} className="sec-failed-missing mono">
+                      missing: {entry}
+                    </p>
+                  ))}
+                {step.error && <p className="sec-failed-error">{step.error}</p>}
+                <p className="sec-resume">
+                  <button
+                    type="button"
+                    className="btn btn-primary"
+                    onClick={onResume}
+                    disabled={resuming}
+                  >
+                    {resuming ? "Retrying…" : `Retry from ${step.step}`}
+                  </button>
+                  <span className="dim">
+                    The steps before it are kept; only this one runs again.
+                  </span>
+                </p>
+              </div>
             )}
           </section>
         ))}
@@ -286,6 +319,23 @@ function Sources({ step, onOpen }: { step: StepRow; onOpen: (path: string) => vo
 }
 
 type Planned = { step: StepRow | undefined; state: SectionState; section: string };
+
+/**
+ * The cards that belong in section `i` — and the ones that belong nowhere.
+ *
+ * A card names the step that emitted it. A chart amended from the conversation
+ * was once emitted by the orchestrator, which is not a step, and the card
+ * disappeared off the page rather than changing on it. That is fixed at the
+ * source, but the *document* still owes the reader a rule: a card whose step it
+ * does not recognise goes in the last section, because the one thing a document
+ * may never do is silently drop something a run produced.
+ */
+function cardsFor(view: RunView, planned: Planned[], i: number) {
+  const known = new Set(planned.map((p) => p.step?.step));
+  const mine = view.cards.filter((card) => card.step === planned[i].step?.step);
+  if (i !== planned.length - 1) return mine;
+  return [...mine, ...view.cards.filter((card) => !known.has(card.step))];
+}
 
 /** The step a decision at `i` releases — what is actually being approved. */
 function nextOf(planned: Planned[], i: number): { id: string; persona: string } | null {

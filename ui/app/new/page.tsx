@@ -75,6 +75,10 @@ export default function NewRun() {
     setBusy("starting");
     setError(null);
     try {
+      // The edits first, then the run. Anything typed into the plan — the key
+      // column especially, which arrived as a guess — has to reach the run
+      // before it starts, or the form was decoration.
+      await planRun(runId, filled({ ...values, question }));
       await startRun(runId);
       router.push(`/runs/${encodeURIComponent(runId)}`);
     } catch (e) {

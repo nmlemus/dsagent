@@ -32,6 +32,7 @@ import os
 import re
 import shutil
 import subprocess
+import threading
 import time
 from collections.abc import Callable
 from dataclasses import asdict, dataclass, field
@@ -260,15 +261,23 @@ class RunState:
         return cls(**d)
 
     def save(self, run_dir: Path) -> None:
-        """Write `run.json`, atomically.
+        """Write `run.json`, atomically, from any thread.
 
         A run is written while it is being read: the runs API reads this file on
         every list and every poll, and a plain overwrite has a window where the
         reader gets a truncated — or empty — file. Same-directory temp plus
         `os.replace`, which is atomic on POSIX and on Windows.
+
+        The temp name carries the thread id because a run is also written from
+        **two** threads: the runner's, and whichever one a tool call lands on —
+        `show_chart` records itself the moment it is called. With one shared temp
+        path the two collide, the first `os.replace` consumes it, and the second
+        dies with `No such file or directory: .run.json.tmp`. That killed
+        `analyze` five minutes into a real run, after eleven `run_python` calls,
+        with nothing wrong with the analysis at all.
         """
         path = run_dir / "run.json"
-        tmp = path.with_name(f".{path.name}.tmp")
+        tmp = path.with_name(f".{path.name}.{os.getpid()}.{threading.get_ident()}.tmp")
         tmp.write_text(json.dumps(asdict(self), indent=2), encoding="utf-8")
         os.replace(tmp, path)
 
