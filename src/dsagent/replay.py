@@ -23,6 +23,7 @@ import time
 from pathlib import Path
 from typing import Any
 
+from dsagent.models import default_model
 from dsagent.runner.runner import EVENT_LOG, GateDecision, GateRecord, RunState, StepRecord
 
 DEFAULT_SPEED = 10.0
@@ -41,10 +42,12 @@ class Replay:
     of timestamps and because the runner it stands in for is synchronous too.
     """
 
-    def __init__(self, fixture: Path, runs_dir: Path, *, speed: float = DEFAULT_SPEED) -> None:
+    def __init__(self, fixture: Path, runs_dir: Path, *, speed: float = DEFAULT_SPEED,
+                 prices: Any = None) -> None:
         self.fixture = fixture
         self.runs_dir = runs_dir
         self.speed = max(speed, 0.01)
+        self.prices = prices
         events_path = fixture / EVENTS
         if not events_path.is_file():
             raise ReplayError(f"{fixture} has no {EVENTS} — build one with tools/make_replay_fixture.py")
@@ -207,6 +210,12 @@ class Replay:
             rec.usage = dict(source.get("usage") or {})
             rec.skills_read = list(source.get("skills_read") or [])
             rec.output = source.get("output", "")
+            rec.model = source.get("model") or default_model()
+            # Priced from the recording's own tokens rather than copied: the
+            # recording predates the field, and a screen showing "—" where a real
+            # run shows a cost would be a screen developed against a lie.
+            if self.prices is not None:
+                rec.cost_usd = self.prices.cost(rec.model, rec.usage)
 
     def _copy_file(self, run_dir: Path, rel: str) -> None:
         src = self.fixture / "workspace" / rel

@@ -20,6 +20,7 @@ from rich.table import Table
 from dsagent import __version__, requirements
 from dsagent.cartridge import CartridgeError, load_cartridge, load_cartridges
 from dsagent.cartridge.models import Cartridge, EnvSpec
+from dsagent.pricing import Prices, find_prices
 from dsagent.runner import (
     FILE_EVENT,
     STEP_EVENT,
@@ -227,6 +228,7 @@ def run(
         ask_human=(lambda request: GateDecision.APPROVE) if yes else _ask,
         log=lambda m: console.print(m, style="dim", markup=False),
         on_event=_print_event if not quiet else None,
+        prices=Prices.load(find_prices()),
     )
     state = runner.run(workflow, _parse_inputs(input), resume=resume, dry_run=dry_run)
     color = {"done": "green", "failed": "red"}.get(state.status, "yellow")
@@ -295,6 +297,13 @@ def serve(
         help="serve a recorded run instead of a model (see tools/make_replay_fixture.py)",
     ),
     replay_speed: float = typer.Option(10.0, "--replay-speed", help="playback multiplier"),
+    memory: bool = typer.Option(
+        False, "--memory",
+        help="keep gate interrupts in memory instead of .dsagent/checkpoints.sqlite",
+    ),
+    prices: Path | None = typer.Option(
+        None, "--prices", help="model rate table (default: prices.yaml, searched upwards)"
+    ),
 ):
     """Serve the orchestrator over AG-UI for the web UI. Needs the `ui` extra."""
     try:
@@ -313,13 +322,16 @@ def serve(
     env = None if replay else make_env(carts[0].envs["default"], workspace)
     from dsagent.serve import RECURSION_LIMIT
 
+    rates = Prices.load(prices or find_prices())
     application = build_app(carts, env, workspace, RUNS_DIR, model=model, seed=seed,
                             recursion_limit=recursion_limit or RECURSION_LIMIT,
-                            replay=replay, replay_speed=replay_speed)
+                            replay=replay, replay_speed=replay_speed,
+                            memory_checkpointer=memory, prices=rates)
     mode = f"[yellow]replay[/yellow] {replay} at {replay_speed:g}×" if replay else "live"
+    priced = f"{len(rates.rates)} model rate(s)" if rates.rates else "[yellow]no prices[/yellow]"
     console.print(
         f"[bold]dsagent serve[/bold] {__version__} · cartridges: "
-        f"{', '.join(c.name for c in carts)} · {mode}\n"
+        f"{', '.join(c.name for c in carts)} · {mode} · {priced}\n"
         f"  runs   http://{host}:{port}/runs\n"
         + ("" if replay else f"  agent  http://{host}:{port}/agent\n")
         + f"  files  http://{host}:{port}/runs/{{run_id}}/files/{{path}}"

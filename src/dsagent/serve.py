@@ -141,6 +141,8 @@ def build_app(
     recursion_limit: int = RECURSION_LIMIT,
     replay: Path | None = None,
     replay_speed: float = 10.0,
+    memory_checkpointer: bool = False,
+    prices: Any = None,
 ):
     """The FastAPI app: the orchestrator at `path`, the runs API under `/runs`.
 
@@ -156,7 +158,7 @@ def build_app(
     if replay is not None:
         from dsagent.replay import Replay
 
-        driver: Any = Replay(replay, runs_dir, speed=replay_speed)
+        driver: Any = Replay(replay, runs_dir, speed=replay_speed, prices=prices)
     else:
         from ag_ui_langgraph import add_langgraph_fastapi_endpoint
         from copilotkit import CopilotKitMiddleware, LangGraphAGUIAgent
@@ -169,9 +171,10 @@ def build_app(
             workflow_tools=workflow_tools(
                 cartridges, runs_dir,
                 ask_human=interrupt_gate, on_event=dispatch_runner_event, seed=seed,
+                prices=prices,
             ),
             middleware=[CopilotKitMiddleware()],
-            checkpointer=checkpointer_for(workspace),
+            checkpointer=checkpointer_for(workspace, memory=memory_checkpointer),
         )
         add_langgraph_fastapi_endpoint(
             app,
@@ -195,16 +198,40 @@ def build_app(
     return app
 
 
-def checkpointer_for(workspace: Path):
-    """Where interrupts wait. In-memory for now; SQLite arrives in §4.3.
+CHECKPOINTS = "checkpoints.sqlite"
+"""Where interrupts wait, under the serve workspace's `.dsagent/`."""
 
-    Interrupts need a checkpointer to resume from, and until §8's task 9 that is
-    `InMemorySaver`: `run.json` is what survives a restart, and the thread only
-    has to outlive the gate answer.
+
+def checkpointer_for(workspace: Path, *, memory: bool = False):
+    """Where an interrupted graph waits for its answer.
+
+    SQLite, because a gate can be answered after a restart (§4.3, §7.11): the
+    interrupt lives in the checkpoint, and an in-memory saver loses it with the
+    process — which is precisely the run most likely to still be waiting when the
+    process goes away.
+
+    `memory=True` keeps the old behaviour for a throwaway session, and a missing
+    `langgraph-checkpoint-sqlite` falls back to it rather than refusing to serve:
+    losing resumability is worse than nothing, but not as bad as no server.
     """
     from langgraph.checkpoint.memory import InMemorySaver
 
-    return InMemorySaver()
+    if memory:
+        return InMemorySaver()
+    try:
+        import sqlite3
+
+        from langgraph.checkpoint.sqlite import SqliteSaver
+    except ImportError:
+        return InMemorySaver()
+
+    path = workspace / ".dsagent" / CHECKPOINTS
+    path.parent.mkdir(parents=True, exist_ok=True)
+    # `check_same_thread=False` because the runs are driven on their own threads
+    # (`dsagent.driver`) while the request that answered the gate returns on
+    # another; SQLite's own locking is what keeps those honest.
+    connection = sqlite3.connect(str(path), check_same_thread=False)
+    return SqliteSaver(connection)
 
 
 def resolve_run_file(runs_dir: Path, run_id: str, rel: str) -> Path | None:

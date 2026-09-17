@@ -31,6 +31,11 @@ ui = [
     "copilotkit==0.1.96",
     "fastapi>=0.141",
     "uvicorn>=0.53",
+    # Where a gate's interrupt waits. Floored, not pinned: it is LangGraph's own
+    # checkpoint package and the API it implements is the one `langgraph` defines.
+    # Without it `dsagent serve` still runs, in memory — a gate then cannot be
+    # answered after a restart (docs/ui-product.md §4.3).
+    "langgraph-checkpoint-sqlite>=3.1",
 ]
 anthropic = ["langchain-anthropic"]
 openai = ["langchain-openai"]

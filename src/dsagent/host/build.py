@@ -16,7 +16,6 @@ visible to the persona.
 
 from __future__ import annotations
 
-import os
 import shlex
 import shutil
 from collections.abc import Callable, Sequence
@@ -29,8 +28,11 @@ from langchain_core.tools import tool
 
 from dsagent.cartridge.models import Cartridge, Persona
 from dsagent.envs.base import Env
+from dsagent.models import default_model
 
-DEFAULT_MODEL = os.environ.get("DSAGENT_MODEL", "anthropic:claude-sonnet-5")
+DEFAULT_MODEL = default_model()
+"""Read once at import, as it always was. `dsagent.models.default_model()` is the
+live one; the runner uses that so a per-process override still applies."""
 SKILLS_MOUNT = "/skills/"
 """Where skills are mounted for the file tools. A virtual path: nothing running
 inside the env can resolve it — that is what `run_skill_script` is for."""

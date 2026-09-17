@@ -40,6 +40,7 @@ from typing import Any
 
 from dsagent.cartridge.models import Cartridge, Step, Workflow
 from dsagent.envs.base import Env, make_env
+from dsagent.models import default_model
 
 
 class GateDecision(str, Enum):
@@ -180,6 +181,11 @@ class StepRecord:
     """Paths of SKILL.md files the step read, in first-read order."""
     files: list[dict[str, Any]] = field(default_factory=list)
     """`{path, mtime}` for workspace files the step created or modified, oldest first."""
+    model: str = ""
+    """The model this step actually ran on — the persona's, or the default."""
+    cost_usd: float | None = None
+    """What the step's tokens cost, by `prices.yaml`. `None` when the model has no
+    rate there: an unknown price is not zero."""
 
 
 @dataclass
@@ -248,6 +254,7 @@ class WorkflowRunner:
         ask_human: Callable[[GateRequest], GateDecision | GateAnswer] | None = None,
         log: Callable[[str], None] = print,
         on_event: Callable[[RunnerEvent], None] | None = None,
+        prices: Any = None,
     ) -> None:
         self.cartridge = cartridge
         self.run_dir = run_dir
@@ -260,6 +267,7 @@ class WorkflowRunner:
         self.run_id = run_dir.name
         self.event_log = run_dir / EVENT_LOG
         self.run_log = run_dir / RUN_LOG
+        self.prices = prices
         self._envs: dict[str, Env] = {}
         self._reported: dict[str, float] = {}
         """Workspace mtimes already announced via `dsagent.file` for the running step."""
@@ -515,6 +523,7 @@ class WorkflowRunner:
             rec.output = _last_text(result)
             # Before the produces check: a step that failed is the one worth reading.
             _record_telemetry(rec, result)
+            self._record_cost(rec, step)
             missing = [entry for entry in step.produces if not self.matched(entry)]
             if missing:
                 raise RuntimeError(f"step '{step.id}' did not produce: {', '.join(missing)}")
@@ -532,6 +541,18 @@ class WorkflowRunner:
             rec.finished_at = time.time()
             state.save(self.run_dir)
             self._emit_step(wf, step, rec.status, rec.error)
+
+    def _record_cost(self, rec: StepRecord, step: Step) -> None:
+        """Price the step's tokens, if this run was given a price list.
+
+        The model is the persona's own or the default — the same resolution
+        `build_persona_agent` makes — so a persona that opted into a stronger one
+        is priced as what it actually ran on.
+        """
+        persona = self.cartridge.personas.get(step.persona)
+        rec.model = (persona.model if persona and persona.model else default_model())
+        if self.prices is not None:
+            rec.cost_usd = self.prices.cost(rec.model, rec.usage)
 
     def _drive(self, agent: Any, message: str, step: Step) -> Any:
         """Run the persona, forwarding what it does as it does it.

@@ -1,0 +1,22 @@
+# Model rates, in dollars per million tokens.
+#
+# The harness hardcodes no prices: it reads this file and multiplies by the usage
+# each step already records (`dsagent.pricing`). A model with no entry here costs
+# nothing known, and the UI shows "—" rather than a zero.
+#
+# `cached` is a cache *read*; `cache_write` is what putting tokens in the cache
+# costs. Both are sub-counts of `input`, so the uncached input is the remainder.
+#
+# Only rates this repository can source are listed. Anything else belongs here
+# once someone has checked it against the provider's own page — a price nobody
+# can source is worse than a dash.
+
+models:
+  # Source: docs/runs/eda-to-report-003.md, which reconciles these against the
+  # run's own token counts ($0.4670 computed, $0.47 reported), and the ROADMAP
+  # decision of 2026-09-16 that made this the default model.
+  anthropic:claude-sonnet-5:
+    input: 2.00
+    cached: 0.20
+    cache_write: 2.50
+    output: 10.00

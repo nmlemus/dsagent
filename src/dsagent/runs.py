@@ -116,6 +116,9 @@ def summarize(run_dir: Path, state: dict[str, Any] | None = None) -> RunSummary:
         if gate.get("ts") and gate.get("asked_at"):
             gate_wait += max(0.0, gate["ts"] - gate["asked_at"])
 
+    priced = [s.get("cost_usd") for s in steps.values() if s.get("cost_usd") is not None]
+    cost = round(sum(float(c) for c in priced), 6) if priced else None
+
     error = next((s.get("error") for s in steps.values() if s.get("error")), None)
     return RunSummary(
         run_id=run_dir.name,
@@ -129,6 +132,7 @@ def summarize(run_dir: Path, state: dict[str, Any] | None = None) -> RunSummary:
         steps_done=sum(1 for s in steps.values() if s.get("status") == "done"),
         steps_total=len(steps),
         usage=usage,
+        cost_usd=cost,
         gate_wait=gate_wait,
         awaiting=state.get("gate"),
         error=error,

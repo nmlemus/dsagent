@@ -72,6 +72,7 @@ def workflow_tools(
     on_event: Callable[[RunnerEvent], None] | None = None,
     log: Callable[[str], None] = lambda m: None,
     seed: Path | None = None,
+    prices: Any = None,
 ) -> list[Any]:
     """The workflow and run-reading tools, bound to one front end's gate and events.
 
@@ -114,6 +115,7 @@ def workflow_tools(
         resume = (run_dir / "run.json").exists()
         runner = WorkflowRunner(
             by_wf[name], run_dir, ask_human=ask_human, log=log, on_event=on_event,
+            prices=prices,
         )
         if seed is not None and not resume:
             if not seed.is_dir():

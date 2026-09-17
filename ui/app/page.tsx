@@ -37,6 +37,8 @@ export default function Home() {
         </div>
       )}
 
+      {loading && <p className="dim">Reading the run directory…</p>}
+
       {!error && !loading && runs.length === 0 && <EmptyState />}
 
       {runs.length > 0 && (

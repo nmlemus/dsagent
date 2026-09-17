@@ -514,3 +514,50 @@ The full reject → resume → approve cycle, against the replay
 stops the run and shows the note in two places; Resume reopens the gate; Approve
 finishes the run; and the step's history then reads **"Sent back after 4s — 'The
 fog rows look wrong…'"** followed by **"Approved after 0s"**.
+
+---
+
+## Task 9 — cost, and a gate that survives a restart
+
+### Cost (§4.6)
+
+`prices.yaml` ships with the repository and is the only place a price exists.
+`dsagent.pricing` reads it and multiplies by the usage each step already records;
+the runner writes `cost_usd` and `model` into every `StepRecord`, and the run
+totals them. A model with no entry costs **`None`**, which the UI prints as "—":
+an unknown price is not zero, and a number nobody can source is worse than a dash.
+
+Only one rate is listed, and it is sourced: Sonnet 5 at $2 / $0.20 / $2.50 / $10
+per million (input / cache read / cache write / output), from
+`docs/runs/eda-to-report-003.md`, which reconciles those rates against that run's
+own token counts. The test does the same reconciliation — run 003's usage through
+this code is **$0.466996**, and that document reports **$0.47**.
+
+The arithmetic that is easy to get wrong: `input_tokens` is the *whole* input,
+with `cache_read` and `cache_creation` as sub-counts of it. So uncached input is
+the remainder, not the total. Run 003 is 74 uncached tokens out of 560,421 — get
+this wrong and the bill is 20× too big.
+
+Replayed runs are priced too, from the recording's own tokens. A screen developed
+against "—" would be a screen developed against a lie.
+
+### The checkpointer (§4.3)
+
+`.dsagent/checkpoints.sqlite` under the serve workspace, with `--memory` to keep
+the old behaviour. `langgraph-checkpoint-sqlite` joins the `[ui]` extra, floored
+rather than pinned; without it the server still runs, in memory, rather than
+refusing to start.
+
+The test is the one that matters for §7.11: build a graph, stop it at an
+`interrupt()`, **throw the saver and the graph away**, build both again over the
+same file, and answer — the run goes on. The contrast is asserted too: with an
+in-memory saver the second process finds nothing to resume and `invoke` returns
+`None`. That is the operator coming back to a question nobody is holding.
+
+### Verified
+
+`pytest` 235 passed / 8 skipped, `ruff` clean, `npm` checks clean. Per-step costs
+from a replayed run match run 003's published table line by line — profile
+$0.065, data-gate $0.054, analyze $0.241 — and the home screen shows **$0.47**
+against the run, with "—" against the older ones that were never priced
+(`docs/runs/ui-product/t9-home-costed.jpg`).
