@@ -22,7 +22,7 @@ from fastapi.testclient import TestClient
 from dsagent import serve
 
 DS = Path(__file__).resolve().parents[1] / "cartridges" / "ds"
-FIXTURE = Path(__file__).resolve().parents[1] / "ui" / "fixtures" / "run-eda-003"
+FIXTURE = Path(__file__).resolve().parent / "fixtures" / "replay" / "run-eda-003"
 CSV = Path(__file__).resolve().parents[1] / "tests" / "data" / "seattle-weather.csv"
 
 

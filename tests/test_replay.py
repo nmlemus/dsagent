@@ -1,6 +1,6 @@
 """`dsagent serve --replay`: a recorded run played back, without a model.
 
-The fixture under `ui/fixtures/run-eda-003` is run 003's own record (see
+The fixture under `tests/fixtures/replay/run-eda-003` is run 003's own record (see
 `tools/make_replay_fixture.py`), so these also assert that a replayed run is
 indistinguishable, to every reader downstream, from the run it was made from: the
 same event log, the same run.json shape, the same files on disk.
@@ -15,7 +15,7 @@ from dsagent.replay import Replay
 from dsagent.runner import GateDecision
 from dsagent.runs import read_events, read_state, summarize
 
-FIXTURE = Path(__file__).resolve().parents[1] / "ui" / "fixtures" / "run-eda-003"
+FIXTURE = Path(__file__).resolve().parent / "fixtures" / "replay" / "run-eda-003"
 FAST = 2000.0
 
 
@@ -151,7 +151,7 @@ def test_inputs_from_the_launcher_win_over_the_recording(replay):
 
 # ---- the M2.6 fixture: the same run, with charts in it ----------------------
 
-CHARTS = Path(__file__).resolve().parents[1] / "ui" / "fixtures" / "run-eda-charts"
+CHARTS = Path(__file__).resolve().parent / "fixtures" / "replay" / "run-eda-charts"
 
 
 @pytest.fixture
