@@ -90,7 +90,7 @@ Design settled before task 1: `docs/architecture.md` §3.4, "What a Docker env h
       mount (`:ro` for containment only), chart validation stays on the host and says so
 - [x] `DockerBackend` integration test behind `DSAGENT_DOCKER=1` (build `envs/meridian`, `execute("python -c 'import meridian'")`) + a unit test with a fake docker client for command, mounts and cleanup
 - [x] Workspace bind-mount + `.dsagent/skills` read-only + file ownership: non-root user at the host uid/gid, and a step's `produces` written in the container verified on the host
-- [ ] Auto-gate scripts run inside the step env; the kernel env unchanged. (`run_skill_script`
+- [x] Auto-gate scripts run inside the step env; the kernel env unchanged. (`run_skill_script`
       already does — it resolves a workspace-relative path and runs it through the backend,
       and task 2 executes that in a container. The auto-gate is what still shells out to the host.)
 - [ ] Env lifecycle: one container per run reused across steps, `rm -f` in a `finally` on exit/failure/stop, fresh container on resume, container id + image in `runner.log` and a `dsagent.env` event
@@ -115,6 +115,19 @@ Design settled before task 1: `docs/architecture.md` §3.4, "What a Docker env h
 - [ ] chore: `dsagent --version` prints "Missing command" (eager callback vs `no_args_is_help`)
 
 ## Decisions log
+
+- 2026-09-17 — **The auto-gate runs through `env.backend.execute()`, on a check copied into the
+  workspace.** It used to be `subprocess.run(["python3", <path in the cartridge>],
+  cwd=workspace)` on the host, which is wrong twice over for a Docker step: the evidence it
+  reads was written inside a container, and the cartridge tree is not mounted there at all.
+  The check is copied to `<workspace>/.dsagent/gates/<workflow>/<check>` and run as
+  `env.python <relative path>` — one command, identical for both env kinds. Copied at the gate
+  rather than at run start (which is what §3.4 proposed): unlike skills there is nothing to
+  race, because the whole workspace is a single mount and a file written there is inside the
+  container the moment it exists. A check is one file; one that wants helpers beside it wants
+  a skill. The kernel env changes too, and for the better — `env.python` is the interpreter
+  running DSAgent, so a check now sees the cartridge's declared requirements instead of
+  whatever `python3` resolves to on PATH.
 
 - 2026-09-17 — **`materialize_skills` empties the skills root; it never replaces it.** A Docker
   env bind-mounts `<workspace>/.dsagent/skills` read-only, and the real order is that

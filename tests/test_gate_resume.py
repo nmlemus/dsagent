@@ -15,15 +15,16 @@ two human gates — `data-gate` after step 2 and `model-spec` after step 3.
 """
 
 import json
+import shlex
+import sys
 from pathlib import Path
 from typing import ClassVar
 
 import pytest
 
 from dsagent.cartridge import load_cartridge
-from dsagent.envs.base import Env
 from dsagent.runner import GateDecision, RunState, StepRecord, WorkflowRunner
-from tests.fakes import expand
+from tests.fakes import FakeBackend, expand, stub_env
 
 DS = Path(__file__).resolve().parents[1] / "cartridges" / "ds"
 MMM_INPUTS = {"data_source": "csv", "data_path": "d.csv", "kpi": "units"}
@@ -53,11 +54,6 @@ class FakeAgent:
         return {"messages": [{"role": "assistant", "content": "done"}]}
 
 
-class FakeBackend:
-    def close(self):
-        pass
-
-
 class Answers:
     """A scripted human, recording which prompt got which answer."""
 
@@ -77,7 +73,7 @@ def mmm(tmp_path, monkeypatch):
     FakeAgent.calls = []
     monkeypatch.setattr(
         "dsagent.runner.runner.make_env",
-        lambda spec, ws: Env(spec=spec, workspace=ws, backend=FakeBackend()),
+        stub_env,
     )
 
     def make(answers):
@@ -171,7 +167,7 @@ def test_a_completed_run_records_approve_on_its_gate(tmp_path, monkeypatch):
     """`eda-to-report` has one human gate and no auto gate — a clean finish."""
     monkeypatch.setattr(
         "dsagent.runner.runner.make_env",
-        lambda spec, ws: Env(spec=spec, workspace=ws, backend=FakeBackend()),
+        stub_env,
     )
     runner = WorkflowRunner(
         load_cartridge(DS), tmp_path / "eda",
@@ -205,7 +201,7 @@ def test_a_full_run_reaches_the_auto_gate_and_records_its_verdict(mmm):
 def _fit_gate(tmp_path, monkeypatch, diagnostics: dict | None):
     monkeypatch.setattr(
         "dsagent.runner.runner.make_env",
-        lambda spec, ws: Env(spec=spec, workspace=ws, backend=FakeBackend()),
+        stub_env,
     )
     cart = load_cartridge(DS)
     runner = WorkflowRunner(cart, tmp_path / "auto", log=lambda m: None)
@@ -238,6 +234,53 @@ def test_a_failing_auto_gate_records_reject_and_fails_the_step(tmp_path, monkeyp
     assert "GATE FAIL" in rec.gate.note
     assert rec.status == "failed"
     assert state.status == "failed"
+
+
+def test_the_auto_gate_runs_inside_the_step_env(tmp_path, monkeypatch):
+    """Not `subprocess` on the host: the check runs where the step ran.
+
+    `fit` in a Docker env writes `artifacts/diagnostics.json` inside a container.
+    A check reading that path on the host would be reading a different machine's
+    filesystem — and it would read it with the host's interpreter rather than the
+    one the env declares. One command, through the backend, for both env kinds.
+    """
+    runner, wf, step, rec, state = _fit_gate(
+        tmp_path, monkeypatch, {"rhat_max": 1.01, "divergences": 0, "params": {}}
+    )
+    env = runner.env_for(step.env or wf.env)
+
+    assert runner._gate(wf, step, rec, state, dry_run=False) is True
+
+    assert env.backend.commands == [
+        f"{shlex.quote(env.python)} .dsagent/gates/mmm-meridian/scripts/check_rhat.py"
+    ], "the gate did not go through the env"
+    # `fit` declares the Docker env, whose interpreter is the container's. The
+    # gate used to hard-code `python3` on the host, which happens to be a
+    # different program with different packages.
+    assert env.python != sys.executable
+
+
+def test_the_check_is_copied_into_the_workspace_where_an_env_can_reach_it(tmp_path, monkeypatch):
+    """The script ships in the cartridge, which no env can see.
+
+    A container is mounted on the workspace and nothing else, so a path into the
+    cartridge tree resolves to nothing inside it. The check is materialized under
+    `.dsagent/`, which `_snapshot` skips — so it never shows up as a file the
+    step produced.
+    """
+    runner, wf, step, rec, state = _fit_gate(
+        tmp_path, monkeypatch, {"rhat_max": 1.01, "divergences": 0, "params": {}}
+    )
+
+    runner._gate(wf, step, rec, state, dry_run=False)
+
+    copied = runner.workspace / ".dsagent" / "gates" / "mmm-meridian" / "scripts" / "check_rhat.py"
+    assert copied.is_file()
+    assert copied.read_text() == (wf.path / "scripts" / "check_rhat.py").read_text()
+    assert str(wf.path) not in runner.env_for(step.env or wf.env).backend.commands[0], (
+        "the command names a path in the cartridge, which no container can resolve"
+    )
+    assert rec.files == [], "a materialized check is harness plumbing, not step output"
 
 
 def test_a_passed_auto_gate_is_not_re_run(tmp_path, monkeypatch):
@@ -342,7 +385,7 @@ def test_a_persona_never_inherits_the_callers_checkpointer(tmp_path):
     cart = load_cartridge(DS)
     workspace = tmp_path / "ws"
     workspace.mkdir()
-    env = _Env(spec=cart.envs["default"], workspace=workspace, backend=FakeBackend())
+    env = _Env(spec=cart.envs["default"], workspace=workspace, backend=FakeBackend(workspace))
 
     def agent_for(persona: str):
         replies = iter([AIMessage(content=f"I am {persona}")])
@@ -398,14 +441,13 @@ def test_the_wait_is_measured_from_when_the_run_stopped(tmp_path, monkeypatch):
     import time
 
     from dsagent.cartridge import load_cartridge
-    from dsagent.envs.base import Env
     from dsagent.runner import GateDecision, WorkflowRunner
     from dsagent.runs import read_state, summarize
-    from tests.test_runner_events import FakeBackend, StreamingFakeAgent
+    from tests.test_runner_events import StreamingFakeAgent
 
     monkeypatch.setattr(
         "dsagent.runner.runner.make_env",
-        lambda spec, ws: Env(spec=spec, workspace=ws, backend=FakeBackend()),
+        stub_env,
     )
     ds = Path(__file__).resolve().parents[1] / "cartridges" / "ds"
     run_dir = tmp_path / "waited"

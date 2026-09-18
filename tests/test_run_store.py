@@ -11,7 +11,6 @@ from pathlib import Path
 import pytest
 
 from dsagent.cartridge import load_cartridge
-from dsagent.envs.base import Env
 from dsagent.runner import EVENT_LOG, RUN_LOG, GateAnswer, GateDecision, WorkflowRunner
 from dsagent.runs import (
     deliverables,
@@ -22,7 +21,8 @@ from dsagent.runs import (
     read_log,
     summarize,
 )
-from tests.test_runner_events import FakeBackend, StreamingFakeAgent
+from tests.fakes import stub_env
+from tests.test_runner_events import StreamingFakeAgent
 
 DS = Path(__file__).resolve().parents[1] / "cartridges" / "ds"
 
@@ -31,7 +31,7 @@ DS = Path(__file__).resolve().parents[1] / "cartridges" / "ds"
 def runs_dir(tmp_path, monkeypatch):
     monkeypatch.setattr(
         "dsagent.runner.runner.make_env",
-        lambda spec, ws: Env(spec=spec, workspace=ws, backend=FakeBackend()),
+        stub_env,
     )
     return tmp_path / "runs"
 

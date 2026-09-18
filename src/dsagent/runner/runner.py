@@ -30,8 +30,8 @@ from __future__ import annotations
 import json
 import os
 import re
+import shlex
 import shutil
-import subprocess
 import threading
 import time
 from collections.abc import Callable
@@ -86,6 +86,15 @@ GATE_VERSIONS = "gate-versions"
 Deliberately *outside* `workspace/`: the workspace is what the run produced and
 what its zip contains, and a copy kept so a person can see what changed is
 neither. Read back through `GET /runs/{id}/gate-version/...`.
+"""
+
+GATES_DIR = Path(".dsagent") / "gates"
+"""Where a workflow's auto-gate checks are materialized, relative to the workspace.
+
+*Inside* the workspace, unlike `GATE_VERSIONS`: a check has to be reachable from
+the env that runs it, and the workspace is the only thing an env can see. Under
+`.dsagent/` so it is not mistaken for something the run produced — `_snapshot`
+skips that directory, so a materialized check never appears as a step's file.
 """
 
 EVENT_LOG = "events.jsonl"
@@ -923,6 +932,27 @@ class WorkflowRunner:
                 kept.append(rel)
         return kept
 
+    def _materialize_check(self, wf: Workflow, check: str) -> str:
+        """Copy a gate's check script into the workspace; return its path there.
+
+        The check ships in the cartridge, which is outside the workspace and so
+        outside every env — a container cannot see it at all, and a kernel only
+        could by accident. Copying it in is the trick `materialize_skills`
+        already uses, and it buys one rule for both kinds: the command that runs
+        it is the same whether it lands in a shell or a container.
+
+        Copied at the gate rather than at run start, because unlike skills there
+        is nothing to race: the whole workspace is one mount, so a file written
+        here is inside the container the moment it exists. No second bind, no
+        ordering.
+
+        One file. A check that wants helpers beside it wants a skill.
+        """
+        dest = self.workspace / GATES_DIR / wf.name / check
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(wf.path / check, dest)
+        return dest.relative_to(self.workspace).as_posix()
+
     def _auto_gate(self, wf: Workflow, step: Step, rec: StepRecord, state: RunState,
                    dry_run: bool, decided: str | None) -> bool:
         gate = step.gate
@@ -930,15 +960,13 @@ class WorkflowRunner:
         if decided == GateDecision.APPROVE.value or dry_run:
             return True
         self.log(f"[gate] auto check {gate.check} after {step.id}")
-        env = self.env_for(step.env or wf.env)  # noqa: F841  # M2.3: auto-gate runs inside the env
-        script = wf.path / gate.check
+        env = self.env_for(step.env or wf.env)
+        script = self._materialize_check(wf, gate.check)
         asked_at = time.time()
-        r = subprocess.run(
-            ["python3", str(script)], cwd=self.workspace, capture_output=True, text=True, check=False
-        )
-        output = f"{r.stdout}{r.stderr}".strip()
+        r = env.backend.execute(f"{shlex.quote(env.python)} {shlex.quote(script)}")
+        output = r.output.strip()
         prompt = f"auto check {gate.check}"
-        if r.returncode != 0:
+        if r.exit_code != 0:
             rec.gate = GateRecord(decision=GateDecision.REJECT.value, note=output[-500:],
                                   ts=time.time(), asked_at=asked_at)
             rec.status, rec.error = "failed", f"auto gate failed:\n{output}"

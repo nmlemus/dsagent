@@ -13,10 +13,9 @@ from typing import ClassVar
 
 import pytest
 
-from dsagent.envs.base import Env
 from dsagent.runner import RunnerEvent, WorkflowRunner
 from dsagent.runner.runner import is_pattern
-from tests.fakes import paths_for, produces_of, tiny_cartridge
+from tests.fakes import paths_for, produces_of, stub_env, tiny_cartridge
 
 STEPS = [
     {"id": "analyze", "produces": ["artifacts/findings.md", "artifacts/figures/*.png"]},
@@ -65,17 +64,12 @@ class FakeAgent:
         return paths_for(entry, self.figures)
 
 
-class FakeBackend:
-    def close(self):
-        pass
-
-
 @pytest.fixture
 def runner(tmp_path, monkeypatch):
     FakeAgent.calls = []
     monkeypatch.setattr(
         "dsagent.runner.runner.make_env",
-        lambda spec, ws: Env(spec=spec, workspace=ws, backend=FakeBackend()),
+        stub_env,
     )
 
     def make(figures: int = 2):
@@ -188,7 +182,7 @@ def test_the_persona_is_told_a_pattern_is_one_or_more(runner, tmp_path, monkeypa
     """A bare `*.png` in the prompt reads like a filename to write."""
     monkeypatch.setattr(
         "dsagent.runner.runner.make_env",
-        lambda spec, ws: Env(spec=spec, workspace=ws, backend=FakeBackend()),
+        stub_env,
     )
     seen: list[str] = []
 

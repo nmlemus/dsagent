@@ -12,9 +12,9 @@ from types import SimpleNamespace
 import pytest
 
 from dsagent.cartridge import load_cartridge
-from dsagent.envs.base import Env
 from dsagent.runner import RunState, WorkflowRunner
 from dsagent.runner.runner import StepRecord
+from tests.fakes import stub_env
 
 DS = Path(__file__).resolve().parents[1] / "cartridges" / "ds"
 WORKFLOW = "eda-to-report"
@@ -57,17 +57,12 @@ class ScriptedAgent:
             os.utime(p, (mtime, mtime))
 
 
-class FakeBackend:
-    def close(self):
-        pass
-
-
 @pytest.fixture
 def run_step(tmp_path, monkeypatch):
     """Run the workflow with a scripted first step; return that step's record."""
     monkeypatch.setattr(
         "dsagent.runner.runner.make_env",
-        lambda spec, ws: Env(spec=spec, workspace=ws, backend=FakeBackend()),
+        stub_env,
     )
 
     def go(script, **kwargs):
@@ -190,7 +185,7 @@ def test_later_steps_only_report_their_own_files(run_step):
 def test_telemetry_is_recorded_when_the_step_fails_its_produces(tmp_path, monkeypatch):
     monkeypatch.setattr(
         "dsagent.runner.runner.make_env",
-        lambda spec, ws: Env(spec=spec, workspace=ws, backend=FakeBackend()),
+        stub_env,
     )
 
     class SilentAgent(ScriptedAgent):

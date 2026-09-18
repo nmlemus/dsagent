@@ -23,7 +23,8 @@ from dsagent.host import build_orchestrator
 from dsagent.runner import GateDecision, workflow_tools
 from dsagent.runs import read_state, summarize
 from dsagent.serve import interrupt_gate
-from tests.test_runner_events import FakeBackend, StreamingFakeAgent
+from tests.fakes import FakeBackend, stub_env
+from tests.test_runner_events import StreamingFakeAgent
 
 pytest.importorskip("langgraph.checkpoint.memory")
 
@@ -61,7 +62,7 @@ def orchestrator_replies(inputs: dict | None = None, turns: int = 4):
 def driver(tmp_path, monkeypatch):
     monkeypatch.setattr(
         "dsagent.runner.runner.make_env",
-        lambda spec, ws: Env(spec=spec, workspace=ws, backend=FakeBackend()),
+        stub_env,
     )
     monkeypatch.setattr(
         "dsagent.host.build.build_persona_agent",
@@ -73,7 +74,7 @@ def driver(tmp_path, monkeypatch):
     runs_dir = tmp_path / "runs"
 
     def make(replies=None):
-        env = Env(spec=cart.envs["default"], workspace=tmp_path / "ws", backend=FakeBackend())
+        env = Env(spec=cart.envs["default"], workspace=tmp_path / "ws", backend=FakeBackend(tmp_path / "ws"))
         graph = build_orchestrator(
             [cart], env, tmp_path / "ws",
             model=ToolCapableFake(messages=replies or orchestrator_replies()),

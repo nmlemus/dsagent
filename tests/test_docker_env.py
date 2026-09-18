@@ -457,3 +457,57 @@ def test_a_skill_script_runs_inside_the_container(tmp_path):
         assert "argv hello" in out
     finally:
         env.close()
+
+
+@pytest.mark.skipif(
+    os.environ.get("DSAGENT_DOCKER") != "1",
+    reason="needs a Docker daemon; set DSAGENT_DOCKER=1",
+)
+def test_an_auto_gate_runs_in_the_container_the_step_ran_in(tmp_path):
+    """The whole reason the gate moved off the host.
+
+    The step writes its evidence inside a container. A check that ran on the host
+    would be reading a different machine — here, literally: the file the check
+    needs is written by `execute` and never touched from the host, and the check
+    reports the container's own interpreter to prove where it ran.
+    """
+    from dsagent.runner import WorkflowRunner
+    from tests.fakes import tiny_cartridge
+
+    check = tmp_path / "cart" / "workflows" / "w" / "scripts"
+    check.mkdir(parents=True)
+    (check / "check.py").write_text(
+        "import pathlib, sys\n"
+        "seen = pathlib.Path('artifacts/evidence.txt').read_text().strip()\n"
+        "print('check ran on', sys.executable, 'and read', seen)\n"
+        "sys.exit(0 if seen == 'from inside' else 1)\n"
+    )
+    cartridge = tiny_cartridge(
+        tmp_path / "cart",
+        [{"id": "work", "produces": ["artifacts/evidence.txt"],
+          "gate": {"kind": "auto", "check": "scripts/check.py"}}],
+        envs={"default": {"kind": "docker", "image": BASE}},
+    )
+
+    class ContainerAgent:
+        def __init__(self, env):
+            self.env = env
+
+        def invoke(self, payload):
+            self.env.backend.execute("mkdir -p artifacts && echo 'from inside' > artifacts/evidence.txt")
+            return {"messages": [{"role": "assistant", "content": "done"}]}
+
+    runner = WorkflowRunner(
+        cartridge, tmp_path / "run",
+        agent_factory=lambda cart, persona, env, ws: ContainerAgent(env),
+        log=lambda m: None,
+    )
+    try:
+        state = runner.run("w", {"data_path": "data/x.csv"})
+    finally:
+        runner.close()
+
+    assert state.status == "done", state.steps["work"].error
+    note = state.steps["work"].gate.note
+    assert "and read from inside" in note, note
+    assert "/usr/local/bin/python" in note, f"the check ran on the host, not in the image: {note}"

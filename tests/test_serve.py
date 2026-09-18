@@ -24,13 +24,9 @@ pytest.importorskip("copilotkit", reason="needs the 'ui' extra")
 from fastapi.testclient import TestClient
 
 from dsagent import serve
+from tests.fakes import FakeBackend
 
 DS = Path(__file__).resolve().parents[1] / "cartridges" / "ds"
-
-
-class FakeBackend:
-    def close(self):
-        pass
 
 
 @pytest.fixture
@@ -52,7 +48,7 @@ def client(tmp_path, runs_dir, monkeypatch):
     monkeypatch.setenv("DSAGENT_MODEL", "anthropic:claude-sonnet-5")
     cart = load_cartridge(DS)
     spec = cart.envs["default"]
-    env = Env(spec=spec, workspace=tmp_path / "ws", backend=FakeBackend())
+    env = Env(spec=spec, workspace=tmp_path / "ws", backend=FakeBackend(tmp_path / "ws"))
     app = serve.build_app([cart], env, tmp_path / "ws", runs_dir)
     return TestClient(app)
 
