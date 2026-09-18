@@ -63,11 +63,23 @@ def test_the_agent_endpoint_is_mounted_and_healthy(client):
 
 
 def test_the_agent_accepts_posts(client):
-    """`add_langgraph_fastapi_endpoint` registers POST at the path; GET is not it."""
+    """The per-project endpoint registers POST at the path; GET is not it."""
     assert client.get("/agent").status_code in (404, 405)
     # A malformed RunAgentInput is rejected by validation, which proves the route
     # exists and is typed — without starting a model.
     assert client.post("/agent", json={"nope": True}).status_code == 422
+
+
+def test_the_agent_reads_its_input_from_the_body_not_the_query(client):
+    """The hand-written per-project endpoint must parse `RunAgentInput` from the
+    request body. Under `from __future__ import annotations`, FastAPI resolves a
+    route's annotations against the *module* globals; if the function-local
+    `RunAgentInput`/`Request` imports are not published there, FastAPI treats
+    both params as required query fields and every real chat POST 422s."""
+    post = client.app.openapi()["paths"]["/agent"]["post"]
+    assert "requestBody" in post
+    query_params = {p["name"] for p in post.get("parameters", []) if p.get("in") == "query"}
+    assert not query_params & {"input_data", "request"}
 
 
 # --- the files route -------------------------------------------------------

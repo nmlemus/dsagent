@@ -151,9 +151,24 @@ def build_app(
     against a replayed run is built against the same API. No model is loaded and
     no agent endpoint is mounted in that mode — there is nothing behind it.
     """
+    from contextlib import asynccontextmanager
+
     from fastapi import FastAPI
 
-    app = FastAPI(title="DSAgent")
+    @asynccontextmanager
+    async def lifespan(app: Any):
+        yield
+        # Each non-default project's chat holds a live env (a kernel/container);
+        # release them on shutdown. The default env is the caller's to close.
+        for pid, chat_env in getattr(app.state, "chat_envs", {}).items():
+            if pid == "default":
+                continue
+            try:
+                chat_env.close()
+            except Exception:
+                pass
+
+    app = FastAPI(title="DSAgent", lifespan=lifespan)
 
     from dsagent.projects import ProjectStore
     from dsagent.sessions import SessionStore
@@ -172,11 +187,17 @@ def build_app(
 
         driver: Any = Replay(replay, runs_dir, speed=replay_speed, prices=prices)
     else:
-        from ag_ui_langgraph import add_langgraph_fastapi_endpoint
+        from ag_ui.core.types import RunAgentInput
+        from ag_ui.encoder import EventEncoder
         from copilotkit import CopilotKitMiddleware, LangGraphAGUIAgent
+        from fastapi import Request
+        from fastapi.responses import StreamingResponse
 
+        from dsagent.datasets import seed_run
         from dsagent.driver import GraphDriver
+        from dsagent.envs.base import make_env
         from dsagent.host import build_orchestrator
+        from dsagent.projects import DEFAULT_ID
 
         tools = workflow_tools(
             cartridges, runs_dir,
@@ -184,43 +205,88 @@ def build_app(
             prices=prices, store=store, session_project=sessions.project_of,
         )
 
-        def orchestrator(checkpointer: Any):
+        def orchestrator(chat_env: Env, ws: Path, checkpointer: Any):
             return build_orchestrator(
-                cartridges, env, workspace, model=model, workflow_tools=tools,
+                cartridges, chat_env, ws, model=model, workflow_tools=tools,
                 middleware=[CopilotKitMiddleware()], checkpointer=checkpointer,
             )
 
-        # Two graphs, two savers, because the two callers are not the same shape.
+        # One chat orchestrator per project, so a chat's filesystem — its
+        # datasets and the files a persona writes — is the project's, not a
+        # global scratch dir every project shares (that leak is what made the
+        # orchestrator list one project's datasets in another). Invariant 1
+        # holds: a "project workspace" is a generic container. `default` keeps
+        # the legacy serve workspace in place (mirrors ProjectStore adopting the
+        # legacy runs dir); every other project gets its own workspace and env,
+        # built on first use and cached.
         #
-        # The bridge streams with `astream_events`, and `SqliteSaver` raises
-        # "does not support async methods" the moment anyone types in the chat —
-        # which is exactly what the first real demo run did. Its async twin cannot
-        # be built here either: `AsyncSqliteSaver.__init__` calls
-        # `asyncio.get_running_loop()`, and an app is constructed before uvicorn
-        # has a loop.
-        #
-        # So the chat keeps an in-memory saver, as it had in M2.2, and the runs —
-        # which is what §4.3 and §7.11 are actually about — get the file. What
-        # that costs, stated plainly: a run started *from the chat* still loses
-        # its gate when the server restarts. A run started from the launcher does
-        # not. Giving the chat the same durability needs the agent built inside
-        # the server's lifespan, which is a change to make deliberately rather
-        # than in passing.
-        add_langgraph_fastapi_endpoint(
-            app,
-            # `thread_id` comes off each `RunAgentInput` and the bridge puts it into
-            # `config["configurable"]`, so one browser tab is one resumable thread.
-            # The bridge merges this `config` into what it hands `astream_events`.
-            LangGraphAGUIAgent(
-                name="dsagent",
-                graph=orchestrator(checkpointer_for(workspace, memory=True)),
-                description="DSAgent orchestrator",
-                config={"recursion_limit": recursion_limit},
-            ),
-            path=path,
-        )
+        # Each chat keeps an in-memory saver, as it had in M2.2 — an `interrupt()`
+        # in the chat resumes within the process. `SqliteSaver` is not an option
+        # here: the bridge streams with `astream_events` and the sync saver raises
+        # "does not support async methods", and `AsyncSqliteSaver.__init__` calls
+        # `asyncio.get_running_loop()`, which has no loop at construction time.
+        # A run started *from the chat* therefore still loses its gate on restart;
+        # a run started from the launcher (the file-backed driver below) does not.
+        env_spec = cartridges[0].envs["default"]
+
+        def project_workspace(project_id: str) -> Path:
+            if project_id == DEFAULT_ID:
+                return workspace
+            return store.dir(project_id) / "workspace"
+
+        chat_agents: dict[str, Any] = {}
+        chat_envs: dict[str, Env] = {}
+
+        def chat_agent_for(project_id: str) -> Any:
+            if project_id not in chat_agents:
+                ws = project_workspace(project_id)
+                ws.mkdir(parents=True, exist_ok=True)
+                chat_env = env if project_id == DEFAULT_ID else make_env(env_spec, ws)
+                chat_envs[project_id] = chat_env
+                chat_agents[project_id] = LangGraphAGUIAgent(
+                    name="dsagent",
+                    graph=orchestrator(chat_env, ws, checkpointer_for(ws, memory=True)),
+                    description="DSAgent orchestrator",
+                    config={"recursion_limit": recursion_limit},
+                )
+            # Keep the chat's `data/` current with the project's datasets, so a
+            # dataset uploaded mid-session shows up on the next turn.
+            seed_run(store.data_dir(project_id), project_workspace(project_id))
+            return chat_agents[project_id]
+
+        # FastAPI resolves a route's annotations against the *module* globals,
+        # and `from __future__ import annotations` makes them strings — so these
+        # function-local imports must be published there, or FastAPI can't see
+        # `RunAgentInput` as the body and treats both params as query fields.
+        globals()["RunAgentInput"] = RunAgentInput
+        globals()["Request"] = Request
+
+        # The body of `ag_ui_langgraph.add_langgraph_fastapi_endpoint`, with the
+        # single fixed agent replaced by a per-project lookup keyed on the
+        # thread id: the bridge can serve only one graph per path, and we need
+        # one per project. `thread_id` comes off each `RunAgentInput`; an
+        # unregistered thread maps to `default`.
+        @app.post(path)
+        async def agent_endpoint(input_data: RunAgentInput, request: Request):
+            project_id = sessions.project_of(input_data.thread_id or "")
+            request_agent = chat_agent_for(project_id).clone()
+            encoder = EventEncoder(accept=request.headers.get("accept"))
+
+            async def event_generator():
+                async for event in request_agent.run(input_data):
+                    yield encoder.encode(event)
+
+            return StreamingResponse(event_generator(), media_type=encoder.get_content_type())
+
+        @app.get(f"{path.rstrip('/')}/health")
+        def agent_health() -> dict[str, Any]:
+            return {"status": "ok", "agent": {"name": "dsagent"}}
+
+        # The lifespan shutdown closes these (the per-project kernels/containers).
+        app.state.chat_envs = chat_envs
+
         driver = GraphDriver(
-            orchestrator(checkpointer_for(workspace, memory=memory_checkpointer)),
+            orchestrator(env, workspace, checkpointer_for(workspace, memory=memory_checkpointer)),
             cartridges, runs_dir, recursion_limit=recursion_limit, store=store,
         )
 
