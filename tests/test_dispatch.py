@@ -23,9 +23,9 @@ from langgraph.graph import END, START, StateGraph
 from langgraph.prebuilt import ToolNode
 
 from dsagent.cartridge import load_cartridge
-from dsagent.envs.base import Env
 from dsagent.runner import RunnerEvent, WorkflowRunner, dispatch_runner_event
 from dsagent.runner import dispatch as dispatch_module
+from tests.fakes import stub_env
 
 DS = Path(__file__).resolve().parents[1] / "cartridges" / "ds"
 
@@ -45,11 +45,6 @@ class FakeAgent:
                 p.parent.mkdir(parents=True, exist_ok=True)
                 p.write_text("x")
         return {"messages": [{"role": "assistant", "content": "done"}]}
-
-
-class FakeBackend:
-    def close(self):
-        pass
 
 
 # --- 1. the adapter --------------------------------------------------------
@@ -72,7 +67,7 @@ def test_a_run_dispatches_the_three_event_names_with_their_documented_keys(tmp_p
                         lambda name, value: seen.append((name, value)))
     monkeypatch.setattr(
         "dsagent.runner.runner.make_env",
-        lambda spec, ws: Env(spec=spec, workspace=ws, backend=FakeBackend()),
+        stub_env,
     )
     WorkflowRunner(
         load_cartridge(DS), tmp_path / "run",
@@ -130,7 +125,7 @@ def _graph_around(fn, tool_name: str):
 def test_events_from_a_sync_tool_reach_an_async_consumer(tmp_path, monkeypatch):
     monkeypatch.setattr(
         "dsagent.runner.runner.make_env",
-        lambda spec, ws: Env(spec=spec, workspace=ws, backend=FakeBackend()),
+        stub_env,
     )
 
     def run_workflow() -> str:

@@ -6,9 +6,8 @@ from typing import ClassVar
 import pytest
 
 from dsagent.cartridge import load_cartridge
-from dsagent.envs.base import Env
 from dsagent.runner import GateAnswer, GateDecision, RunState, WorkflowRunner
-from tests.fakes import paths_for, produces_of
+from tests.fakes import paths_for, produces_of, stub_env
 
 DS = Path(__file__).resolve().parents[1] / "cartridges" / "ds"
 
@@ -34,16 +33,11 @@ class FakeAgent:
         return {"messages": [{"role": "assistant", "content": f"{self.persona} done"}]}
 
 
-class FakeBackend:
-    def close(self):
-        pass
-
-
 @pytest.fixture
 def runner_factory(tmp_path, monkeypatch):
     FakeAgent.calls = []
     # no real envs: patch make_env to a stub
-    monkeypatch.setattr("dsagent.runner.runner.make_env", lambda spec, ws: Env(spec=spec, workspace=ws, backend=FakeBackend()))
+    monkeypatch.setattr("dsagent.runner.runner.make_env", stub_env)
 
     def make(skip=None, ask=None):
         c = load_cartridge(DS)
@@ -178,14 +172,13 @@ def test_a_stop_is_honoured_between_steps_and_before_a_gate(tmp_path, monkeypatc
     The check used to sit *after* the gate, so a stop pressed while a gated step
     was running stopped the run by way of putting a question to somebody first.
     """
-    from dsagent.envs.base import Env
     from dsagent.runner import WorkflowRunner
     from dsagent.runner.runner import STOP_FILE
     from tests.fakes import tiny_cartridge
 
     monkeypatch.setattr(
         "dsagent.runner.runner.make_env",
-        lambda spec, ws: Env(spec=spec, workspace=ws, backend=FakeBackend()),
+        stub_env,
     )
     steps = [
         {"id": "one", "produces": ["a.md"], "gate": {"kind": "human", "prompt": "Go on?"}},

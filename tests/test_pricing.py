@@ -9,11 +9,11 @@ from pathlib import Path
 import pytest
 
 from dsagent.cartridge import load_cartridge
-from dsagent.envs.base import Env
 from dsagent.pricing import Prices, find_prices
 from dsagent.runner import WorkflowRunner
 from dsagent.runs import summarize
-from tests.test_runner_events import FakeBackend, StreamingFakeAgent
+from tests.fakes import stub_env
+from tests.test_runner_events import StreamingFakeAgent
 
 DS = Path(__file__).resolve().parents[1] / "cartridges" / "ds"
 REPO = Path(__file__).resolve().parents[1]
@@ -71,7 +71,7 @@ def test_a_step_records_what_it_cost(tmp_path, monkeypatch):
     """The number lands in `run.json`, per step, and totals on the run."""
     monkeypatch.setattr(
         "dsagent.runner.runner.make_env",
-        lambda spec, ws: Env(spec=spec, workspace=ws, backend=FakeBackend()),
+        stub_env,
     )
 
     class Costly(StreamingFakeAgent):
@@ -106,7 +106,7 @@ def test_a_step_records_what_it_cost(tmp_path, monkeypatch):
 def test_without_a_table_a_run_reports_no_cost_rather_than_zero(tmp_path, monkeypatch):
     monkeypatch.setattr(
         "dsagent.runner.runner.make_env",
-        lambda spec, ws: Env(spec=spec, workspace=ws, backend=FakeBackend()),
+        stub_env,
     )
     runner = WorkflowRunner(
         load_cartridge(DS), tmp_path / "unpriced",

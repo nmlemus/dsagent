@@ -20,7 +20,7 @@ from langchain_core.messages import AIMessage
 
 from dsagent.cartridge import load_cartridge
 from dsagent.envs.base import Env
-from tests.fakes import ScriptedChatModel, expand
+from tests.fakes import FakeBackend, ScriptedChatModel, expand, stub_env
 
 pytest.importorskip("copilotkit", reason="needs the 'ui' extra")
 pytest.importorskip("ag_ui_langgraph", reason="needs the 'ui' extra")
@@ -37,11 +37,6 @@ from dsagent.serve import RECURSION_LIMIT, interrupt_gate
 
 DS = Path(__file__).resolve().parents[1] / "cartridges" / "ds"
 WORKFLOW = "eda-to-report"  # four steps, one human gate
-
-
-class FakeBackend:
-    def close(self):
-        pass
 
 
 class FakePersona:
@@ -62,7 +57,7 @@ def _served(tmp_path, monkeypatch, *, recursion_limit, extra_rounds=0):
     """The serve stack, with a scripted orchestrator that runs the workflow."""
     monkeypatch.setattr(
         "dsagent.runner.runner.make_env",
-        lambda spec, ws: Env(spec=spec, workspace=ws, backend=FakeBackend()),
+        stub_env,
     )
     monkeypatch.setattr(
         "dsagent.runner.runner.WorkflowRunner._default_factory",
@@ -73,7 +68,7 @@ def _served(tmp_path, monkeypatch, *, recursion_limit, extra_rounds=0):
     workspace, runs = tmp_path / "ws", tmp_path / "runs"
     workspace.mkdir()
     runs.mkdir()
-    env = Env(spec=cart.envs["default"], workspace=workspace, backend=FakeBackend())
+    env = Env(spec=cart.envs["default"], workspace=workspace, backend=FakeBackend(workspace))
 
     # `extra_rounds` stands in for an orchestrator that keeps calling tools after
     # the workflow returns — reading artifacts to summarise, which is the shape

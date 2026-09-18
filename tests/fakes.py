@@ -1,22 +1,63 @@
-"""Shared helpers for the fake agents.
+"""Shared helpers for the fakes a runner test runs on.
 
-Every fake satisfies a step by reading the `produces` block out of its prompt and
-writing what it names. Since `produces` entries may be globs, "what it names" is
-no longer a filename, and one definition of the expansion beats three.
+Every fake agent satisfies a step by reading the `produces` block out of its
+prompt and writing what it names. Since `produces` entries may be globs, "what it
+names" is no longer a filename, and one definition of the expansion beats three.
+
+`FakeBackend` and `stub_env` are the env half: what `make_env` is patched to when
+a test wants the runner without a kernel or a container.
 """
 
 from __future__ import annotations
 
+import subprocess
 from pathlib import Path
 from typing import Any
 
 import yaml
+from deepagents.backends.protocol import ExecuteResponse
 from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import AIMessage
 from langchain_core.outputs import ChatGeneration, ChatResult
 from pydantic import Field
 
+from dsagent.envs.base import Env
 from dsagent.runner import is_pattern
+
+
+class FakeBackend:
+    """A stub env backend that records what was run — and runs it.
+
+    Six copies of a two-line `close()`-only stub used to live across the test
+    suite, and they were enough until the auto-gate started going through
+    `backend.execute()`. A backend that only pretended would leave those tests
+    asserting the gate's bookkeeping against an invented exit code; running the
+    command for real keeps the verdict the check script's, which is the whole
+    point of the gate.
+
+    `commands` is what a test reads to assert *where* something ran — the gate's
+    command has to be one the env can honour, not a host path.
+    """
+
+    def __init__(self, workspace: Path | None = None) -> None:
+        self.workspace = workspace
+        self.commands: list[str] = []
+
+    def execute(self, command: str, *, timeout: int | None = None) -> ExecuteResponse:
+        self.commands.append(command)
+        r = subprocess.run(command, shell=True, cwd=self.workspace,
+                           capture_output=True, text=True, timeout=timeout, check=False)
+        return ExecuteResponse(output=(r.stdout or "") + (r.stderr or ""),
+                               exit_code=r.returncode, truncated=False)
+
+    def close(self) -> None:
+        pass
+
+
+def stub_env(spec, workspace: Path) -> Env:
+    """What every runner test patches `make_env` to: no kernel, no container."""
+    return Env(spec=spec, workspace=workspace, backend=FakeBackend(workspace))
+
 
 PRODUCES_PREFIX = "- `"
 

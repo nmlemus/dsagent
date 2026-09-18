@@ -10,9 +10,8 @@ from pathlib import Path
 import pytest
 
 from dsagent.cartridge import load_cartridge
-from dsagent.envs.base import Env
 from dsagent.runner import GateDecision, RunnerEvent, WorkflowRunner
-from tests.fakes import expand
+from tests.fakes import expand, stub_env
 
 DS = Path(__file__).resolve().parents[1] / "cartridges" / "ds"
 
@@ -72,16 +71,11 @@ class _Msg:
         self.usage_metadata = {}
 
 
-class FakeBackend:
-    def close(self):
-        pass
-
-
 @pytest.fixture
 def events_runner(tmp_path, monkeypatch):
     monkeypatch.setattr(
         "dsagent.runner.runner.make_env",
-        lambda spec, ws: Env(spec=spec, workspace=ws, backend=FakeBackend()),
+        stub_env,
     )
 
     def make(skip=None, ask=None, strays=None):
@@ -225,7 +219,7 @@ def test_no_on_event_means_no_cost(events_runner, tmp_path, monkeypatch):
     """The callback is optional; the runner behaves identically without it."""
     monkeypatch.setattr(
         "dsagent.runner.runner.make_env",
-        lambda spec, ws: Env(spec=spec, workspace=ws, backend=FakeBackend()),
+        stub_env,
     )
     c = load_cartridge(DS)
     runner = WorkflowRunner(
@@ -263,7 +257,7 @@ def test_stream_contract_holds_against_a_real_deep_agents_graph(tmp_path, monkey
 
     monkeypatch.setattr(
         "dsagent.runner.runner.make_env",
-        lambda spec, ws: Env(spec=spec, workspace=ws, backend=FakeBackend()),
+        stub_env,
     )
 
     def factory(cart, persona, env, ws):
@@ -330,7 +324,7 @@ def test_a_broken_consumer_does_not_break_the_run(tmp_path, monkeypatch):
     """A browser disconnecting mid-run is not a reason to lose the run."""
     monkeypatch.setattr(
         "dsagent.runner.runner.make_env",
-        lambda spec, ws: Env(spec=spec, workspace=ws, backend=FakeBackend()),
+        stub_env,
     )
     logged: list[str] = []
     runner = WorkflowRunner(
@@ -419,7 +413,7 @@ def test_personas_narrate_into_the_event_stream(tmp_path, monkeypatch):
     """
     monkeypatch.setattr(
         "dsagent.runner.runner.make_env",
-        lambda spec, ws: Env(spec=spec, workspace=ws, backend=FakeBackend()),
+        stub_env,
     )
 
     class Narrating(StreamingFakeAgent):
@@ -453,7 +447,7 @@ def test_personas_narrate_into_the_event_stream(tmp_path, monkeypatch):
 def test_tool_results_are_not_narration(tmp_path, monkeypatch):
     monkeypatch.setattr(
         "dsagent.runner.runner.make_env",
-        lambda spec, ws: Env(spec=spec, workspace=ws, backend=FakeBackend()),
+        stub_env,
     )
 
     class Chatty(StreamingFakeAgent):
