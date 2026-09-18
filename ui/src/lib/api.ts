@@ -43,6 +43,23 @@ export const api = {
     return fetch(`/projects/${project}/runs?${q}`).then(json<{ runs: RunSummary[] }>).then((r) => r.runs);
   },
 
+  // --- project datasets (uploaded once, seeded into each run) ---
+  datasets: (project: string) =>
+    fetch(`/projects/${project}/data`)
+      .then(json<{ datasets: { name: string; bytes: number }[] }>)
+      .then((r) => r.datasets),
+
+  uploadDataset: (project: string, file: File) =>
+    fetch(`/projects/${project}/data/${encodeURIComponent(file.name)}`, {
+      method: "PUT",
+      body: file,
+    }).then(json<{ name: string; bytes: number }>),
+
+  deleteDataset: (project: string, name: string) =>
+    fetch(`/projects/${project}/data/${encodeURIComponent(name)}`, { method: "DELETE" }).then(
+      json<{ deleted: string }>,
+    ),
+
   // Tell the server which project a chat belongs to, so a run the orchestrator
   // starts in it lands in the right project.
   registerSession: (id: string, project: string) =>

@@ -3,6 +3,7 @@ import { api } from "../lib/api";
 import { ago, cost } from "../lib/format";
 import type { Conversation } from "../lib/conversations";
 import type { Project, RunSummary } from "../lib/types";
+import { DatasetsSection } from "./DatasetsSection";
 import { ProjectSwitcher } from "./ProjectSwitcher";
 import { StatusPill } from "./StatusPill";
 
@@ -132,6 +133,8 @@ export function Sidebar({
             </div>
           </div>
         ))}
+
+        <DatasetsSection project={activeProjectId} />
       </div>
 
       <button className="sidebar-user" onClick={onOpenSettings} title="Settings">
