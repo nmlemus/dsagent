@@ -60,14 +60,29 @@ export const api = {
       json<{ deleted: string }>,
     ),
 
-  // Tell the server which project a chat belongs to, so a run the orchestrator
-  // starts in it lands in the right project.
-  registerSession: (id: string, project: string) =>
-    fetch("/sessions", {
-      method: "POST",
+  // --- sessions (chats live on the server: durable, shared, project-mapped) ---
+  sessions: (project: string) =>
+    fetch(`/projects/${project}/sessions`)
+      .then(json<{ sessions: { id: string; title: string; updated_at: number; project: string }[] }>)
+      .then((r) => r.sessions),
+
+  getSession: (id: string) =>
+    fetch(`/sessions/${id}`).then(
+      json<{ id: string; project: string; title: string; updated_at: number; messages: unknown[] }>,
+    ),
+
+  saveSession: (
+    id: string,
+    body: { project: string; title: string; messages: unknown[]; updated_at?: number },
+  ) =>
+    fetch(`/sessions/${id}`, {
+      method: "PUT",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ id, project }),
+      body: JSON.stringify(body),
     }).then(json<{ id: string; project: string }>),
+
+  deleteSession: (id: string) =>
+    fetch(`/sessions/${id}`, { method: "DELETE" }).then(json<{ deleted: string }>),
 
   create: (
     workflow: string,

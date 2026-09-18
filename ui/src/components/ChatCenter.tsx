@@ -1,22 +1,24 @@
-import { type ReactNode, Suspense, lazy, useEffect, useMemo, useState } from "react";
+import { type ReactNode, Suspense, lazy, useEffect, useMemo, useRef, useState } from "react";
 import { HttpAgent } from "@ag-ui/client";
 import {
   AssistantRuntimeProvider,
   ComposerPrimitive,
+  ExportedMessageRepository,
   MessagePrimitive,
   type TextMessagePartProps,
+  type ThreadHistoryAdapter,
   type ToolCallMessagePartProps,
   ThreadPrimitive,
   useAssistantInstructions,
 } from "@assistant-ui/react";
-import { useAgUiRuntime } from "@assistant-ui/react-ag-ui";
+import { fromAgUiMessages, useAgUiRuntime } from "@assistant-ui/react-ag-ui";
 import DOMPurify from "dompurify";
 import { marked } from "marked";
 import { api } from "../lib/api";
 import { cost } from "../lib/format";
 import { isVegaLite } from "../lib/vega-detect";
 import type { RunSummary } from "../lib/types";
-import { type Conversation, loadMessages, saveMessages, titleFrom } from "../lib/conversations";
+import { type Conversation, titleFrom } from "../lib/conversations";
 import { StatusPill } from "./StatusPill";
 
 const ChartView = lazy(() => import("./ChartView"));
@@ -174,38 +176,95 @@ interface Props {
   onOpenRun: (runId: string) => void;
 }
 
-export function ChatCenter({ conversation, project, onTitle, onOpenRun }: Props) {
-  const agent = useMemo(
-    () =>
-      new HttpAgent({
-        url: "/agent",
-        threadId: conversation.threadId,
-        initialMessages: loadMessages(conversation.id),
-      }),
-    [conversation.id, conversation.threadId],
-  );
-  const runtime = useAgUiRuntime({ agent });
-
-  // Tell the server this chat's project, so a run the orchestrator starts here
-  // lands in the right project (not `default`).
+// Fetch the chat's messages first, then mount the thread with them as the
+// agent's initial messages — assistant-ui's runtime reads messages at agent
+// creation, so loading past history has to happen before the agent exists.
+export function ChatCenter(props: Props) {
+  const [initial, setInitial] = useState<unknown[] | null>(null);
   useEffect(() => {
-    api.registerSession(conversation.threadId, project).catch(() => {});
-  }, [conversation.threadId, project]);
+    let live = true;
+    setInitial(null);
+    api
+      .getSession(props.conversation.id)
+      .then((rec) => {
+        if (live) setInitial(Array.isArray(rec.messages) ? rec.messages : []);
+      })
+      .catch(() => {
+        if (!live) return;
+        setInitial([]);
+        // New chat: register its project (empty, untitled — not listed) so a run
+        // started here resolves to it before the first message is saved.
+        api
+          .saveSession(props.conversation.id, { project: props.project, title: "", messages: [] })
+          .catch(() => {});
+      });
+    return () => {
+      live = false;
+    };
+  }, [props.conversation.id, props.project]);
 
-  // Persist the conversation as it grows (client owns the thread).
+  if (initial === null)
+    return (
+      <div className="chat-center">
+        <div className="thread-viewport">
+          <div className="empty">Cargando chat…</div>
+        </div>
+      </div>
+    );
+  return <ChatThread key={props.conversation.id} {...props} initial={initial} />;
+}
+
+function ChatThread({
+  conversation,
+  project,
+  onTitle,
+  onOpenRun,
+  initial,
+}: Props & { initial: unknown[] }) {
+  const agent = useMemo(
+    () => new HttpAgent({ url: "/agent", threadId: conversation.threadId }),
+    [conversation.threadId],
+  );
+  // Restoring past messages goes through a history adapter — the runtime reads
+  // its load() on mount (not the agent's messages), and the messages it returns
+  // both render and become the context for the next run.
+  const history = useMemo<ThreadHistoryAdapter>(
+    () => ({
+      load: async () => ExportedMessageRepository.fromArray(fromAgUiMessages(initial)),
+      append: async () => {}, // saving is handled by the subscribe() below
+    }),
+    // `initial` is fixed for this mounted thread (keyed by conversation.id).
+    [], // eslint-disable-line react-hooks/exhaustive-deps
+  );
+  const runtime = useAgUiRuntime({ agent, adapters: { history } });
+  const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Persist the conversation as it grows — debounced, to the server.
   useEffect(() => {
     const sub = agent.subscribe({
       onMessagesChanged: () => {
-        saveMessages(conversation.id, agent.messages);
-        onTitle(titleFrom(agent.messages));
+        const title = titleFrom(agent.messages);
+        onTitle(title);
+        if (saveTimer.current) clearTimeout(saveTimer.current);
+        saveTimer.current = setTimeout(() => {
+          api
+            .saveSession(conversation.id, {
+              project,
+              title,
+              messages: agent.messages as unknown[],
+              updated_at: Date.now() / 1000,
+            })
+            .catch(() => {});
+        }, 600);
       },
     });
     return () => {
       const s = sub as unknown as { unsubscribe?: () => void };
       if (typeof sub === "function") (sub as () => void)();
       else s?.unsubscribe?.();
+      if (saveTimer.current) clearTimeout(saveTimer.current);
     };
-  }, [agent, conversation.id, onTitle]);
+  }, [agent, conversation.id, project, onTitle]);
 
   return (
     <AssistantRuntimeProvider runtime={runtime}>
@@ -250,7 +309,7 @@ export function ChatCenter({ conversation, project, onTitle, onOpenRun }: Props)
               <ComposerPrimitive.Send className="ccomposer-send" aria-label="Send">↑</ComposerPrimitive.Send>
             </ComposerPrimitive.Root>
             <div className="composer-hint faint">
-              Historial guardado en este navegador · el orquestador puede iniciar runs (míralos en la barra izquierda).
+              Historial guardado en el servidor · el orquestador puede iniciar runs (míralos en la barra izquierda).
             </div>
           </div>
         </ThreadPrimitive.Root>

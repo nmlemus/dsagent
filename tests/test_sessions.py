@@ -72,26 +72,29 @@ def test_project_runs_filter_by_session(tmp_path):
 # ---- session→project registry + run-dir resolution (Phase 3.5) -------------
 
 
-def test_session_registry_roundtrip(tmp_path):
-    from dsagent.sessions import SessionRegistry
+def test_session_store_roundtrip(tmp_path):
+    from dsagent.sessions import SessionStore
 
-    reg = SessionRegistry(tmp_path / "sessions.json")
+    reg = SessionStore(tmp_path / "sessions")
     assert reg.project_of("s1") == "default"  # unknown → default
-    reg.set("s1", "titanic")
+    reg.save("s1", project="titanic", title="hi", messages=[{"role": "user"}], updated_at=1.0)
     assert reg.project_of("s1") == "titanic"
-    reg.set("", "x")  # empty id is ignored
-    assert reg.project_of("") == "default"
+    assert reg.get("s1")["messages"] == [{"role": "user"}]
+    assert [s["id"] for s in reg.list_for("titanic")] == ["s1"]
+    assert reg.list_for("other") == []
+    assert reg.delete("s1") is True
+    assert reg.get("s1") is None
 
 
 def test_resolve_run_dir_chat_goes_to_the_sessions_project(tmp_path):
     from dsagent.runner.tools import resolve_run_dir, workflow_run_id
-    from dsagent.sessions import SessionRegistry
+    from dsagent.sessions import SessionStore
 
     store = ProjectStore(tmp_path / "projects", tmp_path / "runs")
     store.ensure_default()
     proj = store.create("Titanic")
-    reg = SessionRegistry(tmp_path / "projects" / "sessions.json")
-    reg.set("thread-1", proj.id)
+    reg = SessionStore(tmp_path / "projects" / "sessions")
+    reg.save("thread-1", project=proj.id, title="t", messages=[], updated_at=0.0)
 
     # chat path: no RUN_ID_KEY, thread maps to the project
     rd = resolve_run_dir(

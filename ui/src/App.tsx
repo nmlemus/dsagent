@@ -1,4 +1,4 @@
-import { type CSSProperties, useCallback, useEffect, useMemo, useState } from "react";
+import { type CSSProperties, useCallback, useEffect, useState } from "react";
 import { ChatCenter } from "./components/ChatCenter";
 import { LauncherModal } from "./components/LauncherModal";
 import { RunDock } from "./components/RunDock";
@@ -7,22 +7,10 @@ import { Sidebar } from "./components/Sidebar";
 import { Spine } from "./components/Spine";
 import { api } from "./lib/api";
 import type { Project } from "./lib/types";
-import {
-  type Conversation,
-  deleteConversation,
-  listConversations,
-  newConversation,
-  saveConversations,
-  upsertConversation,
-} from "./lib/conversations";
+import { type Conversation, fromHeader, newConversation } from "./lib/conversations";
 
 const SIDEBAR_KEY = "ds.sidebarCollapsed";
 const PROJECT_KEY = "ds.activeProject";
-
-// A conversation is "real" (listed in the sidebar) once it has a message, i.e. a
-// title. A fresh chat is a draft: active in the center, but not listed — so the
-// sidebar never fills with empty "New chat" rows.
-const isReal = (c: Conversation) => !!c.title && c.title !== "New chat";
 
 export function App() {
   const [projects, setProjects] = useState<Project[]>([]);
@@ -33,10 +21,7 @@ export function App() {
       return "default";
     }
   });
-  // Only real (titled) conversations live here and in the sidebar.
-  const [conversations, setConversations] = useState<Conversation[]>(() =>
-    listConversations().filter(isReal),
-  );
+  const [conversations, setConversations] = useState<Conversation[]>([]);
   const [active, setActive] = useState<Conversation | null>(null);
   const [activeRunId, setActiveRunId] = useState<string | null>(null);
   const [launcherOpen, setLauncherOpen] = useState(false);
@@ -50,10 +35,7 @@ export function App() {
     }
   });
 
-  // One-time cleanup of legacy empty "New chat" rows, then load projects.
   useEffect(() => {
-    const all = listConversations();
-    if (all.some((c) => !isReal(c))) saveConversations(all.filter(isReal));
     api
       .projects()
       .then((ps) => {
@@ -66,21 +48,30 @@ export function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const projectConvs = useMemo(
-    () =>
-      conversations
-        .filter((c) => c.projectId === activeProjectId)
-        .sort((a, b) => b.updatedAt - a.updatedAt),
-    [conversations, activeProjectId],
-  );
+  const refreshSessions = useCallback((projectId: string) => {
+    api
+      .sessions(projectId)
+      .then((headers) => setConversations(headers.map(fromHeader)))
+      .catch(() => setConversations([]));
+  }, []);
 
-  // Keep `active` pointed at a conversation in the current project (a real one if
-  // there is any, else a fresh draft). Runs on mount and on project switch.
+  // Load the project's chats from the server; pick or draft an active one.
   useEffect(() => {
-    setActive((cur) => {
-      if (cur && cur.projectId === activeProjectId) return cur;
-      return projectConvs[0] ?? newConversation(activeProjectId);
-    });
+    api
+      .sessions(activeProjectId)
+      .then((headers) => {
+        const convs = headers.map(fromHeader);
+        setConversations(convs);
+        setActive((cur) =>
+          cur && cur.projectId === activeProjectId ? cur : convs[0] ?? newConversation(activeProjectId),
+        );
+      })
+      .catch(() => {
+        setConversations([]);
+        setActive((cur) =>
+          cur && cur.projectId === activeProjectId ? cur : newConversation(activeProjectId),
+        );
+      });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeProjectId]);
 
@@ -112,7 +103,7 @@ export function App() {
 
   const removeChat = useCallback(
     (id: string) => {
-      deleteConversation(id);
+      api.deleteSession(id).catch(() => {});
       setConversations((prev) => prev.filter((c) => c.id !== id));
       setActive((cur) => {
         if (cur?.id !== id) return cur;
@@ -123,21 +114,19 @@ export function App() {
     [conversations, activeProjectId],
   );
 
-  // ChatCenter reports the derived title; a real title promotes the draft into
-  // the sidebar (and updates an existing one).
+  // ChatCenter reports the derived title as the chat grows (and saves it to the
+  // server). Reflect it, and pull a freshly-created chat into the list.
   const onTitle = useCallback(
     (id: string, title: string) => {
       if (!title || title === "New chat") return;
-      setConversations((prev) => {
-        const base = prev.find((c) => c.id === id) ?? (active?.id === id ? active : null);
-        if (!base) return prev;
-        const updated: Conversation = { ...base, title, updatedAt: Date.now() };
-        upsertConversation(updated);
-        return [updated, ...prev.filter((c) => c.id !== id)];
-      });
       setActive((a) => (a && a.id === id ? { ...a, title } : a));
+      setConversations((prev) => {
+        if (prev.some((c) => c.id === id)) return prev.map((c) => (c.id === id ? { ...c, title } : c));
+        setTimeout(() => refreshSessions(activeProjectId), 900);
+        return prev;
+      });
     },
-    [active],
+    [activeProjectId, refreshSessions],
   );
 
   const shellStyle = {
@@ -158,7 +147,7 @@ export function App() {
             setProjects((prev) => [...prev, p]);
             setProject(p.id);
           }}
-          conversations={projectConvs}
+          conversations={conversations}
           activeConvId={active?.id ?? null}
           onSelectConv={selectConv}
           onNewChat={newChat}

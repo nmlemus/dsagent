@@ -77,21 +77,46 @@ def add_projects_routes(app, store: ProjectStore, sessions: Any = None) -> None:
             raise HTTPException(status_code=404, detail="no such dataset")
         return {"deleted": name}
 
-    @app.post("/sessions")
-    async def register_session(request: Request) -> dict[str, Any]:
-        """Tell the server which project a chat session belongs to, so a run the
-        orchestrator starts in that chat lands in the right project. JSON:
-        `{id, project}`. Best-effort; an unregistered session is `default`."""
+    @app.get("/projects/{project_id}/sessions")
+    def list_sessions(project_id: str) -> dict[str, Any]:
+        if store.get(project_id) is None:
+            raise HTTPException(status_code=404, detail="unknown project")
+        return {"sessions": sessions.list_for(project_id) if sessions is not None else []}
+
+    @app.get("/sessions/{session_id}")
+    def get_session(session_id: str) -> dict[str, Any]:
+        rec = sessions.get(session_id) if sessions is not None else None
+        if rec is None:
+            raise HTTPException(status_code=404, detail="unknown session")
+        return rec
+
+    @app.put("/sessions/{session_id}")
+    async def save_session(session_id: str, request: Request) -> dict[str, Any]:
+        """Persist a chat: its project, title and messages. The client saves as
+        the thread grows, so a chat is durable and shared across tabs."""
+        import time as _time
+
         try:
             body = await request.json()
         except Exception:
             body = {}
-        sid = str((body or {}).get("id") or "").strip()
-        project = str((body or {}).get("project") or "default")
-        if not sid:
-            raise HTTPException(status_code=400, detail="a session needs an id")
+        if not isinstance(body, dict):
+            raise HTTPException(status_code=400, detail="body must be a JSON object")
+        project = str(body.get("project") or "default")
         if store.get(project) is None:
             raise HTTPException(status_code=400, detail=f"unknown project {project!r}")
         if sessions is not None:
-            sessions.set(sid, project)
-        return {"id": sid, "project": project}
+            sessions.save(
+                session_id,
+                project=project,
+                title=str(body.get("title") or ""),
+                messages=body.get("messages") or [],
+                updated_at=float(body.get("updated_at") or _time.time()),
+            )
+        return {"id": session_id, "project": project}
+
+    @app.delete("/sessions/{session_id}")
+    def delete_session(session_id: str) -> dict[str, Any]:
+        if sessions is None or not sessions.delete(session_id):
+            raise HTTPException(status_code=404, detail="unknown session")
+        return {"deleted": session_id}

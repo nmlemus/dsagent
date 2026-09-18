@@ -156,16 +156,16 @@ def build_app(
     app = FastAPI(title="DSAgent")
 
     from dsagent.projects import ProjectStore
-    from dsagent.sessions import SessionRegistry
+    from dsagent.sessions import SessionStore
 
     # Projects sit beside the runs dir; `default` adopts today's runs in place,
     # so an existing deployment keeps working and only new projects namespace.
     projects_root = runs_dir.parent / "projects"
     store = ProjectStore(projects_root, runs_dir)
     store.ensure_default()
-    # session_id → project, so a run the orchestrator starts in a chat lands in
-    # that chat's project. The browser registers a conversation's project.
-    sessions = SessionRegistry(projects_root / "sessions.json")
+    # Chats live on the server (durable, shared, project-mapped): a run the
+    # orchestrator starts in a chat lands in that chat's project.
+    sessions = SessionStore(projects_root / "sessions")
 
     if replay is not None:
         from dsagent.replay import Replay
