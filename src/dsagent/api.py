@@ -56,6 +56,7 @@ from dsagent.runs import (
     read_state,
     summarize,
 )
+from dsagent.datasets import seed_run
 from dsagent.serve import decision_of, resolve_run_file
 from dsagent.sessions import mark_session
 from dsagent.tabular import READERS, TableUnreadable, read_table
@@ -238,6 +239,8 @@ def add_runs_routes(
         except Exception as e:
             raise HTTPException(status_code=400, detail=str(e)) from e
         mark_session(run_dir, session)
+        if store is not None:
+            seed_run(store.data_dir(project), run_dir / "workspace")
         return {"run_id": run_id, "project": project, "session": session, "inputs": inputs}
 
     @app.delete("/runs/{run_id}")

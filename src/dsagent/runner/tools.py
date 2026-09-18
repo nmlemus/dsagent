@@ -20,6 +20,7 @@ from langchain_core.runnables.config import ensure_config
 from langchain_core.tools import InjectedToolCallId, tool
 
 from dsagent.cartridge.models import Cartridge
+from dsagent.datasets import seed_run
 from dsagent.runner.charts import amend_tools
 from dsagent.runner.runner import GateDecision, GateRequest, RunnerEvent, WorkflowRunner
 from dsagent.sessions import mark_session
@@ -154,6 +155,12 @@ def workflow_tools(
                 return f"seed directory {seed} does not exist"
             shutil.copytree(seed, runner.workspace, dirs_exist_ok=True)
             log(f"[seed] copied {seed} into {runner.workspace}")
+        # Seed the run with the project's datasets so `data_path` resolves — the
+        # same reuse the launcher gets, for a run the orchestrator starts.
+        if not resume and store is not None:
+            names = seed_run(store.data_dir(store.project_of(run_dir)), runner.workspace)
+            if names:
+                log(f"[seed] project data {names} into {runner.workspace}")
         state = runner.run(name, inputs or {}, resume=resume)
         # Link the run to the chat that started it: the AG-UI thread id is the
         # session id. Best-effort — a run started outside a chat has no thread.

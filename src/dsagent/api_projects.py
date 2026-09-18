@@ -7,6 +7,7 @@ from typing import Any
 
 from fastapi import HTTPException, Request
 
+from dsagent.datasets import delete_dataset, list_datasets, store_dataset
 from dsagent.projects import ProjectStore
 from dsagent.runs import list_runs, run_dirs
 
@@ -49,6 +50,32 @@ def add_projects_routes(app, store: ProjectStore, sessions: Any = None) -> None:
         if session:
             runs = [r for r in runs if r.session == session]
         return {"runs": [s.dict() for s in runs]}
+
+    @app.get("/projects/{project_id}/data")
+    def list_data(project_id: str) -> dict[str, Any]:
+        if store.get(project_id) is None:
+            raise HTTPException(status_code=404, detail="unknown project")
+        return {"datasets": list_datasets(store.data_dir(project_id))}
+
+    @app.put("/projects/{project_id}/data/{name}")
+    async def upload_data(project_id: str, name: str, request: Request) -> dict[str, Any]:
+        """Upload a dataset to a project (raw body, like the run upload). It is
+        seeded into every new run of the project."""
+        if store.get(project_id) is None:
+            raise HTTPException(status_code=404, detail="unknown project")
+        payload = await request.body()
+        if not payload:
+            raise HTTPException(status_code=400, detail="empty upload")
+        stored = store_dataset(store.data_dir(project_id), name, payload)
+        return {"name": stored, "bytes": len(payload)}
+
+    @app.delete("/projects/{project_id}/data/{name}")
+    def remove_data(project_id: str, name: str) -> dict[str, Any]:
+        if store.get(project_id) is None:
+            raise HTTPException(status_code=404, detail="unknown project")
+        if not delete_dataset(store.data_dir(project_id), name):
+            raise HTTPException(status_code=404, detail="no such dataset")
+        return {"deleted": name}
 
     @app.post("/sessions")
     async def register_session(request: Request) -> dict[str, Any]:
