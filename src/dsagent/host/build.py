@@ -27,7 +27,7 @@ from deepagents.backends import CompositeBackend, FilesystemBackend
 from langchain_core.tools import tool
 
 from dsagent.cartridge.models import Cartridge, Persona
-from dsagent.envs.base import Env
+from dsagent.envs.base import SKILLS_DIR, Env
 from dsagent.models import default_model
 
 DEFAULT_MODEL = default_model()
@@ -36,15 +36,25 @@ live one; the runner uses that so a per-process override still applies."""
 SKILLS_MOUNT = "/skills/"
 """Where skills are mounted for the file tools. A virtual path: nothing running
 inside the env can resolve it — that is what `run_skill_script` is for."""
-SKILLS_DIR = Path(".dsagent") / "skills"
-"""Where skills are materialized on disk, relative to the workspace."""
 
 
 def materialize_skills(cartridges: list[Cartridge], workspace: Path) -> Path:
-    """Copy each persona's granted skills into a per-persona folder. Idempotent."""
+    """Copy each persona's granted skills into a per-persona folder. Idempotent.
+
+    The root is *emptied*, never replaced. A Docker env bind-mounts this exact
+    directory read-only, and a bind-mount follows the inode: swapping the root
+    for a fresh one leaves the container reading a directory that no longer
+    exists. On macOS it does not even get that far — the mount makes the
+    directory undeletable, so `rmtree` wipes the contents and then raises
+    `PermissionError`, taking the run with it.
+    """
     root = workspace / SKILLS_DIR
-    if root.exists():
-        shutil.rmtree(root)
+    root.mkdir(parents=True, exist_ok=True)
+    for child in root.iterdir():
+        if child.is_dir():
+            shutil.rmtree(child)
+            continue
+        child.unlink()
     for c in cartridges:
         for p in c.personas.values():
             dest = root / p.name

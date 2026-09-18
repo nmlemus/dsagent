@@ -84,7 +84,8 @@ class ScriptedChatModel(BaseChatModel):
         return ChatResult(generations=[ChatGeneration(message=reply)])
 
 
-def tiny_cartridge(root, steps: list[dict[str, Any]], *, name: str = "tiny"):
+def tiny_cartridge(root, steps: list[dict[str, Any]], *, name: str = "tiny",
+                   envs: dict[str, Any] | None = None):
     """A one-persona cartridge on disk, loaded — a fixture for harness behaviour.
 
     A harness test that needs a particular `produces` shape used to reach for
@@ -93,7 +94,8 @@ def tiny_cartridge(root, steps: list[dict[str, Any]], *, name: str = "tiny"):
     Declaring the shape the test is about is both clearer and stable.
 
     `steps` are step dicts as `workflow.yaml` writes them, minus `instructions`,
-    which is generated.
+    which is generated. `envs` replaces the single kernel env, which is how a test
+    asks for a step that runs somewhere else.
     """
     from dsagent.cartridge import load_cartridge
 
@@ -114,7 +116,7 @@ def tiny_cartridge(root, steps: list[dict[str, Any]], *, name: str = "tiny"):
         "personas": {"ana": {"role": "worker", "workflows": ["w"]}},
         "skills": {"only": {"scope": "all"}},
         "workflows": ["workflows/w"],
-        "envs": {"default": {"kind": "kernel", "requirements": []}},
+        "envs": envs or {"default": {"kind": "kernel", "requirements": []}},
     }, sort_keys=False))
 
     declared = []

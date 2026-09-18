@@ -88,9 +88,11 @@ document the team writes into. 13/13 §6 demo lines with a real model, 5 runs, $
 Design settled before task 1: `docs/architecture.md` §3.4, "What a Docker env has to honour".
 - [x] Design: bind-mounted workspace, materialized gate scripts, skills already inside the
       mount (`:ro` for containment only), chart validation stays on the host and says so
-- [ ] `DockerBackend` integration test behind `DSAGENT_DOCKER=1` (build `envs/meridian`, `execute("python -c 'import meridian'")`) + a unit test with a fake docker client for command, mounts and cleanup
-- [ ] Workspace bind-mount + `.dsagent/skills` read-only + file ownership: non-root user at the host uid/gid, and a step's `produces` written in the container verified on the host
-- [ ] Auto-gate scripts and `run_skill_script` run inside the step env; the kernel env unchanged
+- [x] `DockerBackend` integration test behind `DSAGENT_DOCKER=1` (build `envs/meridian`, `execute("python -c 'import meridian'")`) + a unit test with a fake docker client for command, mounts and cleanup
+- [x] Workspace bind-mount + `.dsagent/skills` read-only + file ownership: non-root user at the host uid/gid, and a step's `produces` written in the container verified on the host
+- [ ] Auto-gate scripts run inside the step env; the kernel env unchanged. (`run_skill_script`
+      already does — it resolves a workspace-relative path and runs it through the backend,
+      and task 2 executes that in a container. The auto-gate is what still shells out to the host.)
 - [ ] Env lifecycle: one container per run reused across steps, `rm -f` in a `finally` on exit/failure/stop, fresh container on resume, container id + image in `runner.log` and a `dsagent.env` event
 
 ### M2.4 `mmm-meridian` on the Meridian sample dataset
@@ -113,6 +115,17 @@ Design settled before task 1: `docs/architecture.md` §3.4, "What a Docker env h
 - [ ] chore: `dsagent --version` prints "Missing command" (eager callback vs `no_args_is_help`)
 
 ## Decisions log
+
+- 2026-09-17 — **`materialize_skills` empties the skills root; it never replaces it.** A Docker
+  env bind-mounts `<workspace>/.dsagent/skills` read-only, and the real order is that
+  `env_for` starts the container *before* the persona's agent is built — so the host rebuilds
+  a directory the container is already holding. A bind-mount follows the inode, so a fresh
+  root leaves the container reading one that no longer exists; on macOS it does not get that
+  far, because the mount makes the root undeletable and `rmtree` raises `PermissionError`
+  with the contents already gone. Emptying the root fixes chat mode too, which has the same
+  order, and needed no reordering anywhere. The path itself now has one definition, in
+  `envs/base.py`: the Docker env and the host builder each used to spell it out, which is how
+  two spellings of one path drift.
 
 - 2026-09-17 — **Docker's output is collected through files, never `capture_output=True`.** A pipe
   ends when every writer closes it, and the Docker CLI leaves writers behind: it spawns
