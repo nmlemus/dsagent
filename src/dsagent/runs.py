@@ -18,6 +18,8 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
 
+from dsagent.sessions import session_of
+
 from dsagent.runner.runner import EVENT_LOG, RUN_LOG
 
 RUN_JSON = "run.json"
@@ -62,6 +64,8 @@ class RunSummary:
     driver owns the threads, so the API fills this in — a spinner that never
     stops is worse than "this run was interrupted"."""
     error: str | None = None
+    session: str = ""
+    """The session (chat thread) that launched this run, or "" for a bare run."""
 
     def dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -142,6 +146,7 @@ def summarize(run_dir: Path, state: dict[str, Any] | None = None) -> RunSummary:
         gate_wait=gate_wait,
         awaiting=state.get("gate"),
         error=error,
+        session=session_of(run_dir),
     )
 
 

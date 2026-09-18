@@ -57,6 +57,7 @@ from dsagent.runs import (
     summarize,
 )
 from dsagent.serve import decision_of, resolve_run_file
+from dsagent.sessions import mark_session
 from dsagent.tabular import READERS, TableUnreadable, read_table
 
 POLL_SECONDS = 0.25
@@ -156,13 +157,18 @@ def new_run_id(runs_dir: Path, workflow: str) -> str:
 
 
 def add_runs_routes(
-    app: FastAPI, cartridges: list[Cartridge], runs_dir: Path, driver: Any
+    app: FastAPI, cartridges: list[Cartridge], runs_dir: Path, driver: Any, store: Any = None
 ) -> None:
     by_workflow = {w: c for c in cartridges for w in c.workflows}
 
     def run_dir_of(run_id: str) -> Path:
         if not run_id or "/" in run_id or "\\" in run_id or run_id in (".", ".."):
             raise HTTPException(status_code=404, detail="unknown run")
+        if store is not None:
+            found = store.locate_run(run_id)
+            if found is None:
+                raise HTTPException(status_code=404, detail="unknown run")
+            return found
         run_dir = runs_dir / run_id
         if not (run_dir / "run.json").is_file():
             raise HTTPException(status_code=404, detail="unknown run")
@@ -201,12 +207,13 @@ def add_runs_routes(
 
     @app.post("/runs")
     async def create_run(request: Request) -> dict[str, Any]:
-        """Create a run directory. JSON: `{workflow, inputs}`.
+        """Create a run directory. JSON: `{workflow, inputs, project?}`.
 
         The run exists from this moment — listed, openable, `pending` — so the
         file the operator dropped has somewhere to land and the browser has a URL
         before anything starts. `PUT /runs/{id}/data/{input}` puts the file there;
-        `POST /runs/{id}/start` sets it going.
+        `POST /runs/{id}/start` sets it going. `project` (default `default`) is the
+        project the run belongs to; its dir lives under that project.
         """
         body = await _json_body(request)
         workflow = str(body.get("workflow") or "")
@@ -216,12 +223,22 @@ def add_runs_routes(
         if not isinstance(inputs, dict):
             raise HTTPException(status_code=400, detail="inputs must be a JSON object")
 
-        run_id = new_run_id(runs_dir, workflow)
+        project = str(body.get("project") or "default")
+        if store is not None and store.get(project) is None:
+            raise HTTPException(status_code=400, detail=f"unknown project {project!r}")
+        target = store.runs_dir(project) if store is not None else runs_dir
+
+        session = str(body.get("session") or "")
+        run_id = new_run_id(target, workflow)
         try:
-            driver.create(run_id, inputs, workflow)
+            if project == "default":
+                run_dir = driver.create(run_id, inputs, workflow)
+            else:
+                run_dir = driver.create(run_id, inputs, workflow, project=project)
         except Exception as e:
             raise HTTPException(status_code=400, detail=str(e)) from e
-        return {"run_id": run_id, "inputs": inputs}
+        mark_session(run_dir, session)
+        return {"run_id": run_id, "project": project, "session": session, "inputs": inputs}
 
     @app.delete("/runs/{run_id}")
     def delete_run(run_id: str) -> dict[str, Any]:
@@ -332,7 +349,7 @@ def add_runs_routes(
 
         shape = workflow_shape(cartridge, workflow)
         inputs = dict(state.get("inputs") or {})
-        profile = _profile_inputs(runs_dir, run_id, inputs)
+        profile = _profile_inputs(runs_dir, run_id, inputs, store)
         plan = {
             "workflow": workflow,
             "description": shape["description"],
@@ -590,7 +607,9 @@ def add_runs_routes(
         )
 
 
-def _profile_inputs(runs_dir: Path, run_id: str, inputs: dict[str, Any]) -> dict[str, Any] | None:
+def _profile_inputs(
+    runs_dir: Path, run_id: str, inputs: dict[str, Any], store: Any = None
+) -> dict[str, Any] | None:
     """The shape of whatever table this run was given, read where it landed.
 
     Domain-agnostic on purpose: rows, columns, how many distinct values each
@@ -604,7 +623,7 @@ def _profile_inputs(runs_dir: Path, run_id: str, inputs: dict[str, Any]) -> dict
     for name, value in inputs.items():
         if not isinstance(value, str):
             continue
-        target = resolve_run_file(runs_dir, run_id, value)
+        target = resolve_run_file(runs_dir, run_id, value, store)
         if target is None or target.suffix.lower() not in READERS:
             continue
         try:

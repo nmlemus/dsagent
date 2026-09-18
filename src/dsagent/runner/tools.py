@@ -22,6 +22,7 @@ from langchain_core.tools import InjectedToolCallId, tool
 from dsagent.cartridge.models import Cartridge
 from dsagent.runner.charts import amend_tools
 from dsagent.runner.runner import GateDecision, GateRequest, RunnerEvent, WorkflowRunner
+from dsagent.sessions import mark_session
 
 RUN_ID_KEY = "dsagent_run_id"
 """`configurable` key naming the run directory one invocation must use.
@@ -65,6 +66,30 @@ def workflow_run_id(workflow: str, tool_call_id: str = "") -> str:
     return f"{workflow}-{suffix}"
 
 
+def resolve_run_dir(
+    given: str | None,
+    thread_id: str | None,
+    name: str,
+    tool_call_id: str,
+    runs_dir: Path,
+    store: Any = None,
+    session_project: Callable[[str], str] | None = None,
+) -> Path:
+    """Where a workflow run's directory goes.
+
+    Launcher path (`given` = `RUN_ID_KEY`): the run was pre-created in its own
+    project, so locate it by id rather than recompute a path. Chat path (no
+    `given`): the orchestrator started it, so put it in the chat session's
+    project — resolved from the AG-UI `thread_id` via the session registry.
+    """
+    if given:
+        located = store.locate_run(given) if store is not None else None
+        return located or (runs_dir / given)
+    project = session_project(thread_id) if (session_project and thread_id) else "default"
+    base = store.runs_dir(project) if store is not None else runs_dir
+    return base / workflow_run_id(name, tool_call_id)
+
+
 def workflow_tools(
     cartridges: list[Cartridge],
     runs_dir: Path,
@@ -74,6 +99,8 @@ def workflow_tools(
     log: Callable[[str], None] = lambda m: None,
     seed: Path | None = None,
     prices: Any = None,
+    store: Any = None,
+    session_project: Callable[[str], str] | None = None,
 ) -> list[Any]:
     """The workflow and run-reading tools, bound to one front end's gate and events.
 
@@ -111,8 +138,12 @@ def workflow_tools(
         """Run a cartridge workflow end to end. `inputs` is a dict matching the workflow's declared inputs."""
         if name not in by_wf:
             return f"unknown workflow {name}; use list_workflows"
-        given = (ensure_config().get("configurable") or {}).get(RUN_ID_KEY)
-        run_dir = runs_dir / (given or workflow_run_id(name, tool_call_id))
+        configurable = ensure_config().get("configurable") or {}
+        given = configurable.get(RUN_ID_KEY)
+        thread_id = configurable.get("thread_id")
+        run_dir = resolve_run_dir(
+            given, thread_id, name, tool_call_id, runs_dir, store, session_project
+        )
         resume = (run_dir / "run.json").exists()
         runner = WorkflowRunner(
             by_wf[name], run_dir, ask_human=ask_human, log=log, on_event=on_event,
@@ -124,6 +155,10 @@ def workflow_tools(
             shutil.copytree(seed, runner.workspace, dirs_exist_ok=True)
             log(f"[seed] copied {seed} into {runner.workspace}")
         state = runner.run(name, inputs or {}, resume=resume)
+        # Link the run to the chat that started it: the AG-UI thread id is the
+        # session id. Best-effort — a run started outside a chat has no thread.
+        if thread_id:
+            mark_session(run_dir, str(thread_id))
         # `status` is the work and no longer says "paused", so report the gate
         # decisions alongside it — otherwise a paused run reads as all-done.
         return json.dumps({

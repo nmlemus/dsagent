@@ -155,6 +155,18 @@ def build_app(
 
     app = FastAPI(title="DSAgent")
 
+    from dsagent.projects import ProjectStore
+    from dsagent.sessions import SessionRegistry
+
+    # Projects sit beside the runs dir; `default` adopts today's runs in place,
+    # so an existing deployment keeps working and only new projects namespace.
+    projects_root = runs_dir.parent / "projects"
+    store = ProjectStore(projects_root, runs_dir)
+    store.ensure_default()
+    # session_id → project, so a run the orchestrator starts in a chat lands in
+    # that chat's project. The browser registers a conversation's project.
+    sessions = SessionRegistry(projects_root / "sessions.json")
+
     if replay is not None:
         from dsagent.replay import Replay
 
@@ -169,7 +181,7 @@ def build_app(
         tools = workflow_tools(
             cartridges, runs_dir,
             ask_human=interrupt_gate, on_event=dispatch_runner_event, seed=seed,
-            prices=prices,
+            prices=prices, store=store, session_project=sessions.project_of,
         )
 
         def orchestrator(checkpointer: Any):
@@ -209,16 +221,60 @@ def build_app(
         )
         driver = GraphDriver(
             orchestrator(checkpointer_for(workspace, memory=memory_checkpointer)),
-            cartridges, runs_dir, recursion_limit=recursion_limit,
+            cartridges, runs_dir, recursion_limit=recursion_limit, store=store,
         )
 
     from dsagent.api import add_runs_routes
+    from dsagent.api_projects import add_projects_routes
 
     app.state.driver = driver
     app.state.runs_dir = runs_dir
-    add_runs_routes(app, cartridges, runs_dir, driver)
-    _add_files_route(app, runs_dir)
+    app.state.projects = store
+    app.state.sessions = sessions
+    add_runs_routes(app, cartridges, runs_dir, driver, store)
+    add_projects_routes(app, store, sessions)
+    _add_files_route(app, runs_dir, store)
+    _mount_ui(app)
     return app
+
+
+UI_DIST_ENV = "DSAGENT_UI_DIST"
+"""Override for where the built SPA lives; defaults to `<repo>/ui/dist`."""
+
+
+def _ui_dist() -> Path | None:
+    """The built SPA directory, or None when the UI has not been built.
+
+    A bare checkout, or an API-only deployment, simply has no `ui/dist`; the
+    server then runs exactly as before with nothing mounted at `/`.
+    """
+    import os
+
+    override = os.environ.get(UI_DIST_ENV)
+    candidate = (
+        Path(override)
+        if override
+        # <repo>/src/dsagent/serve.py -> <repo>/ui/dist
+        else Path(__file__).resolve().parents[2] / "ui" / "dist"
+    )
+    return candidate if (candidate / "index.html").is_file() else None
+
+
+def _mount_ui(app) -> None:
+    """Serve the built SPA at `/`, without shadowing any API route.
+
+    Registered last: `/agent`, `/runs…`, `/cartridges` and the files endpoint
+    are all added before this, and Starlette matches routes in registration
+    order, so a mount at `/` only ever catches what no API route claimed — the
+    SPA's `index.html` and its assets. The UI keeps its own state in memory (no
+    client-side URL routes), so there is nothing here to collide with `/runs/{id}`.
+    """
+    dist = _ui_dist()
+    if dist is None:
+        return
+    from fastapi.staticfiles import StaticFiles
+
+    app.mount("/", StaticFiles(directory=str(dist), html=True), name="ui")
 
 
 CHECKPOINTS = "checkpoints.sqlite"
@@ -265,17 +321,27 @@ LangGraph's SQLite savers each implement one half of the protocol: `SqliteSaver`
         return InMemorySaver()
 
 
-def resolve_run_file(runs_dir: Path, run_id: str, rel: str) -> Path | None:
+def resolve_run_file(runs_dir: Path, run_id: str, rel: str, store: Any = None) -> Path | None:
     """The file `rel` names inside a run's workspace, or None if it may not be served.
 
     Refusals, in order: a run id that is not a single path segment; a path that
     escapes the workspace once resolved (`..`, an absolute path, a symlink out);
     anything under `.dsagent/`, which is the harness's own materialized skills and
     not the run's output; and anything that is not a regular file.
+
+    With a `store`, the run is located across projects; without one it is the
+    single-dir behaviour it always had.
     """
     if not run_id or "/" in run_id or "\\" in run_id or run_id in (".", ".."):
         return None
-    workspace = (runs_dir / run_id / "workspace").resolve()
+    # Locate across projects when a store is wired; fall back to the default dir
+    # so a run whose `run.json` is not (yet) written still serves its files.
+    base = None
+    if store is not None:
+        base = store.locate_run(run_id)
+    if base is None:
+        base = runs_dir / run_id
+    workspace = (base / "workspace").resolve()
     try:
         target = (workspace / rel).resolve()
     except OSError:
@@ -310,12 +376,12 @@ and denies it a base URI and anywhere to post a form.
 """
 
 
-def _add_files_route(app, runs_dir: Path) -> None:
+def _add_files_route(app, runs_dir: Path, store: Any = None) -> None:
     from fastapi import HTTPException
     from fastapi.responses import FileResponse
 
     def serve_file(run_id: str, path: str, headers: dict[str, str] | None = None):
-        target = resolve_run_file(runs_dir, run_id, path)
+        target = resolve_run_file(runs_dir, run_id, path, store)
         if target is None:
             raise HTTPException(status_code=404, detail="not found")
         media_type, _ = mimetypes.guess_type(target.name)

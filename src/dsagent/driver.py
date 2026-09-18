@@ -131,21 +131,38 @@ class GraphDriver:
         *,
         recursion_limit: int,
         log: Callable[[str], None] = lambda m: None,
+        store: Any = None,
     ) -> None:
         self.graph = graph
         self.runs_dir = runs_dir
         self.recursion_limit = recursion_limit
         self.log = log
+        # Optional ProjectStore: when present, a run lives under its project's
+        # dir and is located by id across projects. Without it the driver is the
+        # single-dir driver it always was (every existing test).
+        self.store = store
         self._by_workflow = {w: c for c in cartridges for w in c.workflows}
         self._threads: dict[str, threading.Thread] = {}
         self._errors: dict[str, str] = {}
         self._starting = threading.Lock()
 
+    def _run_dir(self, run_id: str) -> Path:
+        """Where an existing run lives — searched across projects when a store is
+        wired, else the single runs dir."""
+        if self.store is not None:
+            found = self.store.locate_run(run_id)
+            if found is not None:
+                return found
+        return self.runs_dir / run_id
+
     # ---- the Driver surface -------------------------------------------------
 
-    def create(self, run_id: str, inputs: dict[str, Any], workflow: str = "") -> Path:
+    def create(
+        self, run_id: str, inputs: dict[str, Any], workflow: str = "", project: str = "default"
+    ) -> Path:
         cartridge = self._by_workflow[workflow]
-        run_dir = self.runs_dir / run_id
+        base = self.store.runs_dir(project) if self.store is not None else self.runs_dir
+        run_dir = base / run_id
         (run_dir / "workspace").mkdir(parents=True, exist_ok=True)
         pending_state(cartridge.workflows[workflow], cartridge, inputs).save(run_dir)
         return run_dir
@@ -172,7 +189,7 @@ class GraphDriver:
         with self._starting:
             if self.is_running(run_id):
                 return
-            state = RunState.load(self.runs_dir / run_id)
+            state = RunState.load(self._run_dir(run_id))
             cartridge = self._by_workflow[state.workflow]
             say = resume_message if resume else start_message
             message = say(cartridge.workflows[state.workflow], run_id, state.inputs)
@@ -236,7 +253,7 @@ class GraphDriver:
             if self.is_running(run_id) or not self._interrupted(run_id):
                 continue
             try:
-                state = RunState.load(self.runs_dir / run_id)
+                state = RunState.load(self._run_dir(run_id))
             except (OSError, ValueError, TypeError):
                 return
             if state.gate or state.status in ("done", "failed", "stopped"):
@@ -259,7 +276,7 @@ class GraphDriver:
         working returns at once instead of holding the request for `timeout`.
         """
         try:
-            state = RunState.load(self.runs_dir / run_id)
+            state = RunState.load(self._run_dir(run_id))
         except (OSError, ValueError, TypeError):
             return False
         return bool(state.gate) or state.status == "awaiting_gate"
@@ -328,7 +345,7 @@ class GraphDriver:
         orchestrator refusing to call the tool. Without this the screen would
         show a run that is simply never going to move again.
         """
-        run_dir = self.runs_dir / run_id
+        run_dir = self._run_dir(run_id)
         try:
             state = RunState.load(run_dir)
         except (OSError, ValueError):
