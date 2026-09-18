@@ -11,7 +11,7 @@ import {
   ThreadPrimitive,
   useAssistantInstructions,
 } from "@assistant-ui/react";
-import { fromAgUiMessages, useAgUiRuntime } from "@assistant-ui/react-ag-ui";
+import { fromAgUiMessages, toAgUiMessages, useAgUiRuntime } from "@assistant-ui/react-ag-ui";
 import DOMPurify from "dompurify";
 import { marked } from "marked";
 import { api } from "../lib/api";
@@ -237,32 +237,75 @@ function ChatThread({
     [], // eslint-disable-line react-hooks/exhaustive-deps
   );
   const runtime = useAgUiRuntime({ agent, adapters: { history } });
+  // The runtime's thread holds the conversation in the right order (parent-linked
+  // and deduplicated); the raw agent.messages array does not, so persistence
+  // reads from here. A ref keeps the latest runtime without re-subscribing.
+  const runtimeRef = useRef(runtime);
+  runtimeRef.current = runtime;
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // The title is set once — auto-derived from a new chat's first message — and
+  // then sticks. An existing chat keeps its stored title; later turns never
+  // overwrite it (so a rename would survive too).
+  const titleRef = useRef(
+    conversation.title && conversation.title !== "New chat" ? conversation.title : "",
+  );
 
-  // Persist the conversation as it grows — debounced, to the server.
+  // Persist the conversation as it grows. Debounced while typing/streaming, but
+  // flushed immediately when the thread unmounts (switching chats) or the page
+  // unloads (reload/close) with `keepalive`, so the last turn is never lost to a
+  // save that was still pending or in flight.
   useEffect(() => {
+    let dirty = false; // unsaved change since the last write — avoids re-saving on a pure view
+    const save = (keepalive: boolean) => {
+      let messages: unknown[];
+      try {
+        messages = toAgUiMessages(runtimeRef.current.thread.getState().messages as never);
+      } catch {
+        messages = agent.messages as unknown[]; // fallback if the runtime shape shifts
+      }
+      if (!dirty || messages.length === 0) return;
+      dirty = false;
+      api
+        .saveSession(
+          conversation.id,
+          { project, title: titleRef.current || "New chat", messages, updated_at: Date.now() / 1000 },
+          { keepalive },
+        )
+        .catch(() => {
+          dirty = true; // failed — let a later flush retry
+        });
+    };
+    const flush = () => {
+      if (saveTimer.current) {
+        clearTimeout(saveTimer.current);
+        saveTimer.current = null;
+      }
+      save(true);
+    };
     const sub = agent.subscribe({
       onMessagesChanged: () => {
-        const title = titleFrom(agent.messages);
-        onTitle(title);
+        dirty = true;
+        if (!titleRef.current) {
+          const derived = titleFrom(agent.messages);
+          if (derived && derived !== "New chat") {
+            titleRef.current = derived;
+            onTitle(derived);
+          }
+        }
         if (saveTimer.current) clearTimeout(saveTimer.current);
         saveTimer.current = setTimeout(() => {
-          api
-            .saveSession(conversation.id, {
-              project,
-              title,
-              messages: agent.messages as unknown[],
-              updated_at: Date.now() / 1000,
-            })
-            .catch(() => {});
+          saveTimer.current = null;
+          save(false);
         }, 600);
       },
     });
+    window.addEventListener("pagehide", flush);
     return () => {
+      window.removeEventListener("pagehide", flush);
       const s = sub as unknown as { unsubscribe?: () => void };
       if (typeof sub === "function") (sub as () => void)();
       else s?.unsubscribe?.();
-      if (saveTimer.current) clearTimeout(saveTimer.current);
+      flush(); // switching away: write any pending change now
     };
   }, [agent, conversation.id, project, onTitle]);
 

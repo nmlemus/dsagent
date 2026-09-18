@@ -74,11 +74,15 @@ export const api = {
   saveSession: (
     id: string,
     body: { project: string; title: string; messages: unknown[]; updated_at?: number },
+    opts: { keepalive?: boolean } = {},
   ) =>
     fetch(`/sessions/${id}`, {
       method: "PUT",
       headers: { "content-type": "application/json" },
       body: JSON.stringify(body),
+      // `keepalive` lets a save started as the page unloads still complete, so
+      // the last turn isn't lost when the user reloads or closes right after it.
+      keepalive: opts.keepalive,
     }).then(json<{ id: string; project: string }>),
 
   deleteSession: (id: string) =>
