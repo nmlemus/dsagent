@@ -40,6 +40,32 @@ def write_script(workspace, persona, skill, name, body):
     (d / name).write_text(body)
 
 
+def test_rematerializing_empties_the_skills_root_without_replacing_it(tmp_path):
+    """A Docker env bind-mounts this exact directory, and a mount follows the inode.
+
+    `materialize_skills` used to `rmtree` the root and build a fresh one. Under a
+    live mount that leaves the container reading a directory that no longer
+    exists on the host; on macOS it does not even get that far, because the mount
+    makes the root undeletable and `rmtree` raises `PermissionError` with the
+    contents already gone. So: same directory, new contents.
+    """
+    cartridge = load_cartridge(DS)
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+
+    root = materialize_skills([cartridge], workspace)
+    identity = root.stat().st_ino
+    stale = root / "gone-in-the-next-pass"
+    stale.mkdir()
+
+    again = materialize_skills([cartridge], workspace)
+
+    assert again == root
+    assert again.stat().st_ino == identity, "the root was replaced; a mount would be stale"
+    assert not stale.exists(), "old content survived, so the root was not emptied"
+    assert (root / "marie").is_dir(), "and it was refilled"
+
+
 def test_the_virtual_skills_path_is_not_reachable_from_the_env(env_and_workspace):
     """The bug this tool exists for: /skills/... is a file-tool mount, not a path."""
     env, _ = env_and_workspace

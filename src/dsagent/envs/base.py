@@ -17,6 +17,15 @@ from deepagents.backends.protocol import BackendProtocol
 
 from dsagent.cartridge.models import EnvSpec
 
+SKILLS_DIR = Path(".dsagent") / "skills"
+"""Where a run's skills are materialized, relative to the workspace.
+
+The harness knows this path without knowing what any skill *is*: it is workspace
+layout, the same way `artifacts/` would be. It lives here rather than beside the
+code that fills it because the Docker env has to bind-mount the directory and the
+host builder has to write it, and two spellings of one path is how they drift.
+"""
+
 
 class EnvRequirementsError(RuntimeError):
     """An env was provisioned without the packages its cartridge declared."""

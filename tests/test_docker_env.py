@@ -36,6 +36,10 @@ from dsagent.envs.docker import (
 )
 
 DS = Path(__file__).resolve().parents[1] / "cartridges" / "ds"
+BASE = "python:3.12-slim"
+"""The image the cartridge's own Dockerfile starts from, for the tests that are
+about the mount rather than about Meridian. Already local once the build below has
+run once, so these cost seconds."""
 
 
 class FakeDocker:
@@ -324,3 +328,132 @@ def test_the_meridian_image_builds_and_runs_meridian(tmp_path):
         capture_output=True, text=True, check=False,
     )
     assert still_there.stdout.strip() == "", "the container outlived its env"
+
+
+@pytest.mark.skipif(
+    os.environ.get("DSAGENT_DOCKER") != "1",
+    reason="needs a Docker daemon; set DSAGENT_DOCKER=1",
+)
+def test_skills_rematerialize_under_a_live_mount(tmp_path):
+    """The container mounts `.dsagent/skills`, and then the host rebuilds it.
+
+    That is the real order: `env_for` starts the container, and the persona's
+    agent is built after it. `materialize_skills` used to replace the root
+    directory, which a bind-mount cannot follow — and on macOS the mount makes
+    the root undeletable, so it emptied the contents and raised `PermissionError`
+    on the first step of every Docker run.
+    """
+    from dsagent.cartridge import load_cartridge
+    from dsagent.host.build import materialize_skills
+
+    cartridge = load_cartridge(DS)
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    spec = EnvSpec(name="e", cartridge="ds", kind="docker", image=BASE)
+
+    env = make_docker_env(spec, workspace)
+    try:
+        materialize_skills([cartridge], workspace)  # the call that used to raise
+
+        listed = env.backend.execute(f"ls {WORKDIR}/{SKILLS}")
+        assert listed.exit_code == 0, listed.output
+        assert "marie" in listed.output, "the container is reading a stale directory"
+        refused = env.backend.execute(f"touch {WORKDIR}/{SKILLS}/nope")
+        assert refused.exit_code != 0, "re-materializing must not make the bind writable"
+    finally:
+        env.close()
+
+
+@pytest.mark.skipif(
+    os.environ.get("DSAGENT_DOCKER") != "1",
+    reason="needs a Docker daemon; set DSAGENT_DOCKER=1",
+)
+def test_a_step_writes_its_produces_in_the_container_and_the_host_verifies_it(tmp_path):
+    """Invariant 5, across a machine boundary.
+
+    `produces` is verified on the host by the runner, against the run directory,
+    with one check for every env kind. That only holds because the workspace is a
+    bind-mount and not a copy: a container writing to its own copy would leave a
+    run whose evidence does not exist. Nothing here patches `make_env` — the step
+    really runs in a container.
+    """
+    from dsagent.runner import WorkflowRunner
+    from tests.fakes import produces_of, tiny_cartridge
+
+    cartridge = tiny_cartridge(
+        tmp_path / "cart",
+        [{"id": "work", "produces": ["artifacts/out.txt", "figures/*.txt"]}],
+        envs={"default": {"kind": "docker", "image": BASE}},
+    )
+
+    class ContainerAgent:
+        """A persona that works where a real one does: inside the env."""
+
+        def __init__(self, env):
+            self.env = env
+
+        def invoke(self, payload):
+            for entry in produces_of(payload["messages"][0]["content"]):
+                for rel in (entry.replace("*", "one"), entry.replace("*", "two")):
+                    self.env.backend.execute(
+                        f"mkdir -p $(dirname {rel}) && echo 'written in the container' > {rel}"
+                    )
+            return {"messages": [{"role": "assistant", "content": "done"}]}
+
+    runner = WorkflowRunner(
+        cartridge, tmp_path / "run",
+        agent_factory=lambda cart, persona, env, ws: ContainerAgent(env),
+        log=lambda m: None,
+    )
+    try:
+        state = runner.run("w", {"data_path": "data/x.csv"})
+    finally:
+        runner.close()
+
+    assert state.status == "done", state.steps["work"].error
+    landed = tmp_path / "run" / "workspace" / "artifacts" / "out.txt"
+    assert landed.read_text().strip() == "written in the container"
+    assert sorted(p.name for p in (tmp_path / "run" / "workspace" / "figures").iterdir()) == [
+        "one.txt", "two.txt",
+    ], "a glob written inside the container expands on the host"
+    if hasattr(os, "getuid"):
+        assert landed.stat().st_uid == os.getuid(), "the run's own record is owned by root"
+
+
+@pytest.mark.skipif(
+    os.environ.get("DSAGENT_DOCKER") != "1",
+    reason="needs a Docker daemon; set DSAGENT_DOCKER=1",
+)
+def test_a_skill_script_runs_inside_the_container(tmp_path):
+    """#77 concluded skills need no mount of their own. This executes the claim.
+
+    They are materialized *inside* the workspace, and `run_skill_script` resolves
+    a workspace-relative path and runs it through the backend — so the one
+    bind-mount carries them, and the tool works in Docker with no Docker-shaped
+    code path anywhere near it.
+    """
+    from dsagent.cartridge import load_cartridge
+    from dsagent.envs.base import SKILLS_DIR
+    from dsagent.host.build import _skill_script_tool, materialize_skills
+
+    cartridge = load_cartridge(DS)
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    env = make_docker_env(EnvSpec(name="e", cartridge="ds", kind="docker", image=BASE), workspace)
+    try:
+        materialize_skills([cartridge], workspace)
+        skill = min(s.name for s in cartridge.skills_for("marie"))
+        scripts = workspace / SKILLS_DIR / "marie" / skill / "scripts"
+        scripts.mkdir(parents=True, exist_ok=True)
+        (scripts / "where.py").write_text(
+            "import os, sys; print('cwd', os.getcwd()); print('argv', sys.argv[1])\n"
+        )
+
+        run_skill_script = _skill_script_tool(cartridge, "marie", env, workspace)
+        out = run_skill_script.invoke({"skill": skill, "script": "where.py", "argv": ["hello"]})
+
+        assert "exit code: 0" in out, out
+        assert f"cwd {WORKDIR}" in out, "the script ran outside the mounted workspace"
+        assert "argv hello" in out
+    finally:
+        env.close()

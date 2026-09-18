@@ -35,7 +35,7 @@ from deepagents.backends.protocol import ExecuteResponse, FileDownloadResponse, 
 from deepagents.backends.sandbox import BaseSandbox
 
 from dsagent.cartridge.models import EnvSpec
-from dsagent.envs.base import Env
+from dsagent.envs.base import SKILLS_DIR, Env
 
 WORKDIR = "/workspace"
 """Where the run's workspace is mounted, and the container's working directory.
@@ -44,7 +44,7 @@ Fixed rather than configurable: `run_skill_script` and the auto-gate run paths
 that are relative to the workspace root, so "the workspace root" has to mean one
 thing on both sides of the boundary."""
 
-SKILLS = ".dsagent/skills"
+SKILLS = SKILLS_DIR.as_posix()
 """Materialized skills, relative to the workspace. Inside the mount already;
 bound a second time read-only so a step cannot edit what it was granted."""
 
