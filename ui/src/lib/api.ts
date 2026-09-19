@@ -88,6 +88,15 @@ export const api = {
   deleteSession: (id: string) =>
     fetch(`/sessions/${id}`, { method: "DELETE" }).then(json<{ deleted: string }>),
 
+  // --- project artifacts (files a chat wrote: reports, charts) ---
+  projectArtifacts: (project: string) =>
+    fetch(`/projects/${project}/artifacts`)
+      .then(json<{ artifacts: { path: string; bytes: number; mtime: number }[] }>)
+      .then((r) => r.artifacts),
+
+  projectFileUrl: (project: string, path: string) =>
+    `/projects/${project}/files/${path.split("/").map(encodeURIComponent).join("/")}`,
+
   create: (
     workflow: string,
     inputs: Record<string, unknown>,

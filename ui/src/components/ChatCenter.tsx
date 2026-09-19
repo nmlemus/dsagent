@@ -169,6 +169,46 @@ function SessionRuns({
   );
 }
 
+// Files the chat wrote into the project workspace — a persona's report, its
+// charts. They live per-project (the chat workspace is the project's), so this
+// is "what this project has produced", polled so a fresh report shows up. An
+// HTML report opens in its own tab (a sandboxed iframe under the composited page
+// paints blank — see the runs canvas); everything else opens in a tab too.
+function ProjectArtifacts({ project }: { project: string }) {
+  const [files, setFiles] = useState<{ path: string; bytes: number; mtime: number }[]>([]);
+  useEffect(() => {
+    let live = true;
+    const load = () =>
+      api.projectArtifacts(project).then((f) => live && setFiles(f)).catch(() => {});
+    load();
+    const t = setInterval(load, 5000);
+    return () => {
+      live = false;
+      clearInterval(t);
+    };
+  }, [project]);
+
+  if (files.length === 0) return null;
+  return (
+    <div className="session-runs">
+      <span className="faint" style={{ fontSize: 11 }}>Archivos del proyecto:</span>
+      {files.slice(0, 12).map((f) => (
+        <a
+          key={f.path}
+          className="run-chip"
+          href={api.projectFileUrl(project, f.path)}
+          target="_blank"
+          rel="noreferrer"
+          title={f.path}
+        >
+          <span aria-hidden>▤</span>
+          <span className="mono" style={{ fontSize: 11 }}>{f.path.split("/").pop()}</span>
+        </a>
+      ))}
+    </div>
+  );
+}
+
 interface Props {
   conversation: Conversation;
   project: string;
@@ -346,6 +386,7 @@ function ChatThread({
           </ThreadPrimitive.Viewport>
 
           <div className="composer-wrap">
+            <ProjectArtifacts project={project} />
             <SessionRuns project={project} session={conversation.threadId} onOpen={onOpenRun} />
             <ComposerPrimitive.Root className="ccomposer">
               <ComposerPrimitive.Input className="ccomposer-input" placeholder="Message the DS team…" autoFocus rows={1} />

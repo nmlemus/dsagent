@@ -170,7 +170,7 @@ def build_app(
 
     app = FastAPI(title="DSAgent", lifespan=lifespan)
 
-    from dsagent.projects import ProjectStore
+    from dsagent.projects import DEFAULT_ID, ProjectStore
     from dsagent.sessions import SessionStore
 
     # Projects sit beside the runs dir; `default` adopts today's runs in place,
@@ -181,6 +181,15 @@ def build_app(
     # Chats live on the server (durable, shared, project-mapped): a run the
     # orchestrator starts in a chat lands in that chat's project.
     sessions = SessionStore(projects_root / "sessions")
+
+    # A chat's files (a persona's report, its charts) are written to the project's
+    # chat workspace. `default` uses the legacy serve workspace in place; every
+    # other project namespaces under its own dir. Defined here so both the chat
+    # orchestrator and the artifacts route below agree on one location.
+    def project_workspace(project_id: str) -> Path:
+        if project_id == DEFAULT_ID:
+            return workspace
+        return store.dir(project_id) / "workspace"
 
     if replay is not None:
         from dsagent.replay import Replay
@@ -197,7 +206,6 @@ def build_app(
         from dsagent.driver import GraphDriver
         from dsagent.envs.base import make_env
         from dsagent.host import build_orchestrator
-        from dsagent.projects import DEFAULT_ID
 
         tools = workflow_tools(
             cartridges, runs_dir,
@@ -242,11 +250,6 @@ def build_app(
         # the launcher keep their gate across restarts via the file-backed driver
         # below — that path has no competing transcript store.
         env_spec = cartridges[0].envs["default"]
-
-        def project_workspace(project_id: str) -> Path:
-            if project_id == DEFAULT_ID:
-                return workspace
-            return store.dir(project_id) / "workspace"
 
         chat_agents: dict[str, Any] = {}
         chat_envs: dict[str, Env] = {}
@@ -314,6 +317,7 @@ def build_app(
     add_runs_routes(app, cartridges, runs_dir, driver, store)
     add_projects_routes(app, store, sessions)
     _add_files_route(app, runs_dir, store)
+    _add_project_files_route(app, project_workspace)
     _mount_ui(app)
     return app
 
@@ -482,6 +486,73 @@ def _add_files_route(app, runs_dir: Path, store: Any = None) -> None:
         return serve_file(run_id, path, headers={"Content-Security-Policy": SCRIPTED_CSP})
 
 
+ARTIFACT_SKIP_DIRS = frozenset({".dsagent", "data", "work", "model", "large_tool_results"})
+"""Top-level workspace dirs that are seeds or harness scratch, not a chat's output.
+`data/` is the project's seeded datasets; the rest is materialized skills and
+tooling. What is left — `report/`, `artifacts/`, charts, top-level files — is what
+a persona actually produced for the user to see."""
+
+
+def resolve_project_file(project_workspace: Path, rel: str) -> Path | None:
+    """A file inside a project's chat workspace, or None if it may not be served.
+
+    Same rules as `resolve_run_file`: the path may not escape the workspace, may
+    not reach into `.dsagent/`, and must be a regular file.
+    """
+    ws = project_workspace.resolve()
+    try:
+        target = (ws / rel).resolve()
+    except OSError:
+        return None
+    if not target.is_relative_to(ws) or target == ws:
+        return None
+    if ".dsagent" in target.relative_to(ws).parts:
+        return None
+    return target if target.is_file() else None
+
+
+def list_project_artifacts(project_workspace: Path, *, limit: int = 200) -> list[dict[str, Any]]:
+    """The files a chat wrote under the project workspace — reports and charts —
+    skipping seeds and harness scratch. Relative paths, newest first."""
+    ws = project_workspace
+    if not ws.is_dir():
+        return []
+    out: list[dict[str, Any]] = []
+    for p in ws.rglob("*"):
+        if not p.is_file():
+            continue
+        rel = p.relative_to(ws)
+        if rel.parts and rel.parts[0] in ARTIFACT_SKIP_DIRS:
+            continue
+        try:
+            st = p.stat()
+        except OSError:
+            continue
+        out.append({"path": str(rel), "bytes": st.st_size, "mtime": st.st_mtime})
+    out.sort(key=lambda a: a["mtime"], reverse=True)
+    return out[:limit]
+
+
+def _add_project_files_route(app, project_workspace) -> None:
+    """Serve and list a project's chat-workspace artifacts, so files a persona
+    writes in a chat (a report, its charts) are reachable — the runs files route
+    only ever covered files produced by a *run*."""
+    from fastapi import HTTPException
+    from fastapi.responses import FileResponse
+
+    @app.get("/projects/{project_id}/artifacts")
+    def project_artifacts(project_id: str):
+        return {"artifacts": list_project_artifacts(project_workspace(project_id))}
+
+    @app.get("/projects/{project_id}/files/{path:path}")
+    def project_file(project_id: str, path: str):
+        target = resolve_project_file(project_workspace(project_id), path)
+        if target is None:
+            raise HTTPException(status_code=404, detail="not found")
+        media_type, _ = mimetypes.guess_type(target.name)
+        return FileResponse(target, media_type=media_type or "application/octet-stream")
+
+
 __all__ = [
     "GATE_REASON",
     "GATE_RESPONSE_SCHEMA",
@@ -491,5 +562,7 @@ __all__ = [
     "decision_of",
     "gate_payload",
     "interrupt_gate",
+    "list_project_artifacts",
+    "resolve_project_file",
     "resolve_run_file",
 ]

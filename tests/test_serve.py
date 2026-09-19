@@ -143,6 +143,50 @@ def test_a_symlink_out_of_the_workspace_is_refused(runs_dir, tmp_path):
     assert serve.resolve_run_file(runs_dir, RUN, "escape.txt") is None
 
 
+# --- project (chat-workspace) artifacts ------------------------------------
+
+
+def test_project_artifacts_are_listed_and_served(client, tmp_path):
+    """A chat writes a report into the project workspace; the UI must be able to
+    list and open it. The default project's workspace is the served `ws`."""
+    ws = tmp_path / "ws"
+    (ws / "report").mkdir(parents=True, exist_ok=True)
+    (ws / "report" / "customers.html").write_text("<h1>customers</h1>")
+    (ws / "data").mkdir(exist_ok=True)
+    (ws / "data" / "seed.csv").write_text("a,b\n1,2\n")  # a seeded dataset, not output
+    (ws / ".dsagent" / "skills").mkdir(parents=True, exist_ok=True)
+    (ws / ".dsagent" / "skills" / "s.md").write_text("secret")
+
+    paths = {a["path"] for a in client.get("/projects/default/artifacts").json()["artifacts"]}
+    assert "report/customers.html" in paths
+    assert "data/seed.csv" not in paths  # seeds are inputs, skipped
+    assert not any(".dsagent" in p for p in paths)  # harness scratch skipped
+
+    r = client.get("/projects/default/files/report/customers.html")
+    assert r.status_code == 200 and "<h1>customers</h1>" in r.text
+
+
+def test_project_file_refuses_escapes_and_harness(client, tmp_path):
+    ws = tmp_path / "ws"
+    (ws / ".dsagent").mkdir(parents=True, exist_ok=True)
+    (ws / ".dsagent" / "secret.txt").write_text("secret")
+    assert client.get("/projects/default/files/.dsagent/secret.txt").status_code == 404
+    assert client.get("/projects/default/files/report/nope.html").status_code == 404
+
+
+def test_resolve_project_file_directly(tmp_path):
+    ws = tmp_path / "ws"
+    (ws / "report").mkdir(parents=True)
+    (ws / "report" / "r.html").write_text("<h1>ok</h1>")
+    assert serve.resolve_project_file(ws, "report/r.html").read_text() == "<h1>ok</h1>"
+    assert serve.resolve_project_file(ws, "../outside.txt") is None
+    assert serve.resolve_project_file(ws, ".dsagent/x") is None
+    assert serve.resolve_project_file(ws, "report") is None  # a dir is not a file
+    (ws / "escape").symlink_to(tmp_path / "outside")
+    (tmp_path / "outside").write_text("no")
+    assert serve.resolve_project_file(ws, "escape") is None
+
+
 # --- the gate --------------------------------------------------------------
 
 
