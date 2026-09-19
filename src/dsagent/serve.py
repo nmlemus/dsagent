@@ -220,13 +220,27 @@ def build_app(
         # legacy runs dir); every other project gets its own workspace and env,
         # built on first use and cached.
         #
-        # Each chat keeps an in-memory saver, as it had in M2.2 — an `interrupt()`
-        # in the chat resumes within the process. `SqliteSaver` is not an option
-        # here: the bridge streams with `astream_events` and the sync saver raises
-        # "does not support async methods", and `AsyncSqliteSaver.__init__` calls
-        # `asyncio.get_running_loop()`, which has no loop at construction time.
-        # A run started *from the chat* therefore still loses its gate on restart;
-        # a run started from the launcher (the file-backed driver below) does not.
+        # Single source of truth for a chat's transcript: the SessionStore.
+        #
+        # The chat checkpoint is deliberately in-memory (ephemeral). It is not a
+        # second durable copy of the conversation — it is per-process execution
+        # state for the live turn (what an `interrupt()`/`ask_human` resumes
+        # against). On restart it is gone and rebuilt from the client's next
+        # `RunAgentInput.messages`, which the client loaded from the SessionStore;
+        # message ids are stable across that round-trip (SessionStore →
+        # fromAgUiMessages → runtime → toAgUiMessages → SessionStore), so
+        # LangGraph's `add_messages` dedups against them and the checkpoint always
+        # converges to the stored transcript. It can never durably diverge from it.
+        #
+        # A durable checkpointer is now technically possible — these graphs are
+        # built lazily inside the async request (a loop exists, so an
+        # `AsyncSqliteSaver` would construct) — but it is deliberately not used:
+        # it would persist the transcript a *second* time, beside the SessionStore,
+        # and two durable copies are exactly what can drift. The accepted cost of
+        # staying in-memory is narrow: a chat `ask_human` interrupt in flight when
+        # the server restarts is lost (the user just re-asks). Runs started from
+        # the launcher keep their gate across restarts via the file-backed driver
+        # below — that path has no competing transcript store.
         env_spec = cartridges[0].envs["default"]
 
         def project_workspace(project_id: str) -> Path:
