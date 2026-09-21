@@ -111,6 +111,12 @@ def workflow_shape(cartridge: Cartridge, name: str) -> dict[str, Any]:
         "name": wf.name,
         "cartridge": cartridge.name,
         "description": wf.description,
+        # Presentation, straight off workflow.yaml: what a screen calls the
+        # workflow, its steps and its inputs. `None` means "show the identifier".
+        "title": wf.title,
+        "summary": wf.summary,
+        "icon": wf.icon,
+        "badge": wf.badge,
         "env": wf.env,
         "title_input": wf.title_input,
         "data_input": wf.data_input,
@@ -121,6 +127,9 @@ def workflow_shape(cartridge: Cartridge, name: str) -> dict[str, Any]:
                 "default": spec.default,
                 "options": spec.options,
                 "guess": spec.guess,
+                "label": spec.label,
+                "placeholder": spec.placeholder,
+                "help": spec.help,
             }
             for key, spec in wf.inputs.items()
         },
@@ -128,6 +137,7 @@ def workflow_shape(cartridge: Cartridge, name: str) -> dict[str, Any]:
         "steps": [
             {
                 "id": s.id,
+                "title": s.title,
                 "persona": s.persona,
                 "env": s.env or wf.env,
                 "needs": list(s.needs),
@@ -136,6 +146,21 @@ def workflow_shape(cartridge: Cartridge, name: str) -> dict[str, Any]:
                 "gate": {"kind": s.gate.kind, "prompt": s.gate.prompt} if s.gate else None,
             }
             for s in steps
+        ],
+    }
+
+
+def cartridge_shape(cartridge: Cartridge) -> dict[str, Any]:
+    """One cartridge as the workspace needs it: identity, its `experience`
+    (every word the UI shows inside its fixed structure) and the roster."""
+    return {
+        "name": cartridge.name,
+        "version": cartridge.version,
+        "description": cartridge.description,
+        "experience": cartridge.experience.model_dump(),
+        "personas": [
+            {"name": p.name, "role": p.role, "description": p.description}
+            for p in sorted(cartridge.personas.values(), key=lambda p: p.name)
         ],
     }
 
@@ -179,10 +204,7 @@ def add_runs_routes(
     def cartridges_route() -> dict[str, Any]:
         """What this server can run — the launcher's entire source of truth."""
         return {
-            "cartridges": [
-                {"name": c.name, "version": c.version, "description": c.description}
-                for c in cartridges
-            ],
+            "cartridges": [cartridge_shape(c) for c in cartridges],
             "workflows": [workflow_shape(c, name) for name, c in by_workflow.items()],
             "replay": getattr(driver, "workflow", None) if _is_replay(driver) else None,
         }
@@ -225,8 +247,19 @@ def add_runs_routes(
             raise HTTPException(status_code=400, detail="inputs must be a JSON object")
 
         project = str(body.get("project") or "default")
-        if store is not None and store.get(project) is None:
+        proj = store.get(project) if store is not None else None
+        if store is not None and proj is None:
             raise HTTPException(status_code=400, detail=f"unknown project {project!r}")
+        # A project bound to a cartridge runs only that cartridge's workflows.
+        # An unbound project (the default, or one created before cartridges were
+        # a choice) accepts anything the server loaded.
+        bound = proj.cartridge if proj is not None else ""
+        if bound and bound != by_workflow[workflow].name:
+            raise HTTPException(
+                status_code=400,
+                detail=f"workflow {workflow!r} belongs to cartridge "
+                       f"{by_workflow[workflow].name!r}; project {project!r} uses {bound!r}",
+            )
         target = store.runs_dir(project) if store is not None else runs_dir
 
         session = str(body.get("session") or "")
@@ -483,7 +516,10 @@ def add_runs_routes(
         415: the client can still download the file, and a guess would be worse.
         """
         run_dir = run_dir_of(run_id)
-        target = resolve_run_file(runs_dir, run_id, path)
+        # `store` so a run that lives under a project resolves too: without it
+        # this looked only under the legacy runs dir and answered 404 for a
+        # table its own `/files` route was happily serving.
+        target = resolve_run_file(runs_dir, run_id, path, store)
         if target is None:
             raise HTTPException(status_code=404, detail="not found")
 

@@ -174,6 +174,30 @@ def test_project_file_refuses_escapes_and_harness(client, tmp_path):
     assert client.get("/projects/default/files/report/nope.html").status_code == 404
 
 
+def test_project_table_is_previewable_like_a_runs_one(client, tmp_path):
+    """A chat's CSV renders as a table in the app, not as a raw download.
+
+    Same contract as `/runs/{id}/preview`: the browser gets columns and rows it
+    can draw, and a format nothing here reads is a 415 rather than a guess."""
+    ws = tmp_path / "ws"
+    (ws / "artifacts").mkdir(parents=True, exist_ok=True)
+    (ws / "artifacts" / "canales.csv").write_text("canal,registros\nemail,120\nig,80\n")
+    (ws / "artifacts" / "notas.md").write_text("# notas")
+
+    body = client.get("/projects/default/preview/artifacts/canales.csv").json()
+    assert body["columns"] == ["canal", "registros"]
+    assert body["rows"][0] == ["email", "120"]
+    assert body["total_rows"] == 2
+
+    assert client.get(
+        "/projects/default/preview/artifacts/canales.csv", params={"rows": 1}
+    ).json()["rows"] == [["email", "120"]]
+    # Markdown is rendered by the browser, not previewed as a table.
+    assert client.get("/projects/default/preview/artifacts/notas.md").status_code == 415
+    assert client.get("/projects/default/preview/artifacts/nope.csv").status_code == 404
+    assert client.get("/projects/unknown/preview/artifacts/canales.csv").status_code == 404
+
+
 def test_resolve_project_file_directly(tmp_path):
     ws = tmp_path / "ws"
     (ws / "report").mkdir(parents=True)
