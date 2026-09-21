@@ -1,0 +1,9 @@
+{
+  "name": "marketing",
+  "displayName": "DSAgent — Marketing Studio",
+  "version": "0.1.0",
+  "description": "Marketing team cartridge: a brand strategist and a copywriter who turn a brief into reviewed campaign copy.",
+  "author": { "name": "Noel Moreno Lemus", "url": "https://github.com/nmlemus" },
+  "license": "MIT",
+  "keywords": ["marketing", "campaign", "copywriting", "dsagent"]
+}

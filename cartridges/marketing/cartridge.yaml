@@ -1,0 +1,64 @@
+# DSAgent extension to the Claude Code plugin in this directory.
+#
+# This cartridge exists to prove the harness and its UI are domain-agnostic: a
+# marketing team, with its own words, workflows and deliverables, on the same
+# runtime and the same screens as the data-science cartridge — without a line
+# of frontend code naming either.
+name: marketing
+version: 0.1.0
+description: Marketing studio — a brand strategist and a copywriter, from brief to reviewed campaign copy.
+
+personas:
+  lucia: { role: "Brand Strategist", workflows: [campaign-brief] }
+  tomas: { role: "Copywriter",       workflows: [] }
+
+skills:
+  briefs: { scope: all }          # traversal — how this team reads and writes a brief
+  copy:   { scope: [tomas] }
+
+workflows:
+  - workflows/campaign-brief
+
+envs:
+  # Nothing to install: the team reads and writes markdown. A kernel env still
+  # gives the personas a filesystem and a Python they can use for word counts.
+  default: { kind: kernel }
+
+experience:
+  version: 1
+  title: Marketing Studio
+  tagline: Del brief a la campaña.
+  nouns:
+    run:         { singular: campaña,  plural: campañas }
+    resource:    { singular: material, plural: materiales }
+    deliverable: { singular: pieza,    plural: piezas }
+  nav:
+    overview: Inicio
+    chat: Estudio
+    runs: Campañas
+    resources: Biblioteca de marca
+    deliverables: Piezas
+  home:
+    eyebrow: TU ESTUDIO DE MARKETING
+    headline: Una idea clara. Una campaña lista para revisar.
+    intro: Sube tu brief y tu guía de marca, define el objetivo y deja que el equipo prepare estrategia y copy con tu aprobación en cada paso.
+    stages: [Brief, Estrategia, Piezas]
+    steps:
+      - { title: Trae tu brief,         text: "El brief, la guía de marca y lo que ya funcionó." }
+      - { title: Define el objetivo,    text: "Lanzamiento, captación, fidelización: una frase basta." }
+      - { title: Aprueba la estrategia, text: "Revisa el enfoque antes de que se escriba una línea." }
+  assistant:
+    headline: Toda campaña empieza con un buen brief.
+    intro: Una estratega y un copywriter para aterrizar ideas, proponer enfoques y escribir piezas que puedes revisar antes de publicar.
+    placeholder: ¿Qué quieres comunicar?
+    suggestions:
+      - Ayúdame a convertir esta idea en un brief de campaña.
+      - Propón tres enfoques creativos para nuestro próximo lanzamiento.
+      - Revisa el tono de este texto frente a nuestra guía de marca.
+    instructions: >-
+      When you propose copy, show it as a markdown block the reader can copy as-is,
+      with a one-line rationale before it. Offer at most three alternatives, and
+      always name the audience and the channel each one is written for.
+  resources:
+    intro: Briefs, guías de marca y referencias. Sube una vez y reutiliza en cada campaña.
+    formats: [md, txt, pdf]
