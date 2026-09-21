@@ -2,6 +2,28 @@
 
 Status legend: `[ ]` todo · `[~]` in progress · `[x]` done. One task per PR.
 
+## Active work — startup readiness (2026-09-19)
+
+The [reconciled product review](reviews_2/README.md) combines the startup assessment
+and both rounds of commercial review at `8ac2758`. The executable follow-up is the
+[reconciled backlog](reviews_2/BACKLOG.md): tasks `SR-001`–`SR-057`, with priorities,
+dependencies, acceptance criteria, release gates, and an execution log. Original
+reviews and backlogs remain historical sources; update task status only in the
+reconciled backlog. Its resolutions supersede planning recommendations in those
+sources and historical entries below; commercial and license decisions remain pending.
+
+The user explicitly prioritized **UI-001: enterprise workspace redesign** before
+SR-001. That UI task is implemented and locally verified; see the
+[delivery and verification record](ui-workspace-redesign-2026-09-19.md).
+Parent SR tasks remain open for their remaining acceptance criteria. After the
+UI review, resume the reconciled backlog one technical task at a time.
+
+The completed milestones below remain historical records. They do not override
+regressions found in the current UI; the backlog maps those findings back to the
+original milestones. Per-user authorization is mandatory before sharing an
+installation, including self-host; distributed infrastructure is conditional on
+the deployment and service promised.
+
 ## M1 — Harness skeleton (kernel env only) — DONE 2026-09-16
 
 - [x] Cartridge loader + matrix validation + generated command skills
@@ -115,6 +137,40 @@ Design settled before task 1: `docs/architecture.md` §3.4, "What a Docker env h
 - [ ] chore: `dsagent --version` prints "Missing command" (eager callback vs `no_args_is_help`)
 
 ## Decisions log
+
+- 2026-09-20 — **The UI is cartridge-driven.** `cartridge.yaml` gains an `experience:` block
+  (nouns, nav labels, home, assistant suggestions/instructions, resource formats) and
+  `workflow.yaml` gains `title`/`summary`/`icon`/`badge`, step `title` and input
+  `label`/`placeholder`/`help` (`summary` is the user-facing sentence; `description`
+  stays the one the orchestrator reads); `GET /cartridges` serves all of it and `ui/src` reads it through one context
+  instead of tables keyed on `eda-to-report`, `profile` or `question`. A project is bound
+  to one cartridge: the launcher filters, `POST /runs` refuses a cross-cartridge run and
+  the project's chat is built over that cartridge alone. `cartridges/marketing` (two
+  personas, one gated workflow, no code) is the acceptance test: loaded beside `ds`, a
+  marketing project shows marketing vocabulary with no frontend change. Rejected: a
+  per-cartridge React bundle (rebuild per domain, two UIs to maintain) and free-form
+  copy keys (a typo would fall back silently; `extra="forbid"` fails the load instead).
+  The loader's generated-skill filter now uses the cartridge's name, not `ds-`. The
+  launcher no longer translates the default `question` — the workflow's default is shown
+  as declared. See `docs/architecture.md` §3.3.1 and §3.5.
+
+- 2026-09-19 — User prioritized a presentable enterprise UI as the first implementation.
+  Added project overview, data/analysis/deliverable views, global search, accessible
+  dialogs and a larger run workspace. Kept React/Vite, assistant-ui/AG-UI and the
+  backend contracts; deferred loading of chat and charts reduces the entry bundle.
+  See `docs/ui-workspace-redesign-2026-09-19.md` for browser verification and limits.
+
+- 2026-09-19 — Reconciled both product-readiness backlogs into `docs/reviews_2/`:
+  57 tasks, five pending decisions, and explicit mapping of all 117 source IDs.
+  Preserved source documents and historical milestones. This establishes the
+  planning source of truth; it does not choose a license/deployment architecture
+  or begin implementation.
+
+- 2026-09-19 — Recorded the startup assessment and created `STARTUP-BACKLOG.md`
+  at the user's request. Prioritize a reliable, supervised analytical pilot and
+  commercial validation; retain the current stack. Technical options inside the
+  backlog remain proposals until their design tasks are completed. This changes
+  work planning, not runtime architecture, and does not authorize deployment.
 
 - 2026-09-17 — **The auto-gate runs through `env.backend.execute()`, on a check copied into the
   workspace.** It used to be `subprocess.run(["python3", <path in the cartridge>],
@@ -388,3 +444,16 @@ Design settled before task 1: `docs/architecture.md` §3.4, "What a Docker env h
   slice left seven operator-facing rough edges, tracked as M2.2.1; the first is that a successful run still
   ends in a red `terminated` error, because the orchestrator graph exhausts LangGraph's default recursion limit
   after the work is finished. A2UI panels are deferred past the slice. M2.3 (Docker env) is next.
+
+- 2026-09-19 — **Product-readiness review saved; the commercial path is decided from its
+  backlog, not from this list.** Two rounds of adversarial multi-agent review (five agents
+  on the local bar, six on the commercial "deploy to the cloud and sell it" bar) live under
+  `docs/reviews/2026-09-19-product-readiness/`. Read `00-consolidated-plan.md` first; the
+  task-ready, prioritized list is `BACKLOG.md` (`DEC-*` owner decisions → `N-*` do-now →
+  `F0-*` → `F1-*` → `F2-*`), and the eleven full reports with `file:line` evidence are in
+  `round1/` and `round2/`. The unanimous verdict: not sellable as SaaS or self-host today,
+  because the execution env is a subprocess of the API server (`envs/kernel.py:87`), not a
+  sandbox — empirically verified — and nothing carries an identity or a tenant. The
+  recommended route (pending the owner's decision) is self-host first, sold as a solution
+  ("DS/MMM team in a box", BYOK), open-core license, SaaS only as a later phase. When the
+  backlog is converted into milestones here, M3/M4 below should be re-cut against it.

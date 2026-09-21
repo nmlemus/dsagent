@@ -1,5 +1,15 @@
 # UI — research and decision (2026-09-16)
 
+## Current implementation — 2026-09-19
+
+The shipped UI is **React/Vite + assistant-ui/AG-UI**, with a project workspace:
+overview, assistant, analyses, data library and deliverables. Runs open in a large
+modal workspace with files, charts and gate evidence. See the
+[redesign and verification record](ui-workspace-redesign-2026-09-19.md).
+The research and earlier decisions below are historical, including superseded
+Next.js/CopilotKit frontend proposals.
+
+
 **Requirement (Noel):** a modern chat UI (Claude / ChatGPT class) with a canvas, where the
 agent decides at runtime what gets rendered — the frontend cannot know in advance what
 is coming.
