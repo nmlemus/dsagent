@@ -2,7 +2,8 @@ import { useEffect, useRef } from "react";
 import type { Conversation } from "../lib/conversations";
 import type { Experience, Project } from "../lib/types";
 import { useExperience } from "../lib/experience";
-import { Icon, BrandMark, type IconName } from "./Icon";
+import { PRODUCT } from "../lib/brand";
+import { Icon, BrandMark, CompanySignature, type IconName } from "./Icon";
 import { ProjectSwitcher } from "./ProjectSwitcher";
 export type WorkspaceView =
   "overview" | "chat" | "runs" | "data" | "deliverables";
@@ -91,10 +92,9 @@ export function Sidebar(p: Props) {
       >
         <div className="sidebar-brand">
           <BrandMark />
-          <span className="brand-word">
-            {experience.title.toLowerCase()}
-            <span className="brand-period">.</span>
-          </span>
+          {/* The product, not the cartridge: switching experience must not
+              rename the application the user opened. */}
+          <span className="brand-word">{PRODUCT}</span>
           <button
             className="icon-btn collapse-btn"
             onClick={p.onCollapse}
@@ -175,17 +175,10 @@ export function Sidebar(p: Props) {
           )}
         </div>
         <div className="sidebar-bottom">
-          <div className="workspace-note">
-            <span className="note-symbol">
-              <Icon name="spark" size={19} />
-            </span>
-            <strong>{experience.tagline}</strong>
-            <p>Un equipo de especialistas, en tu espacio de trabajo.</p>
-            <button onClick={p.onNewRun}>
-              Crear {experience.nouns.run.singular}{" "}
-              <Icon name="arrow" size={16} />
-            </button>
-          </div>
+          <button className="btn primary sidebar-action" onClick={p.onNewRun}>
+            <Icon name="plus" size={16} />
+            Crear {experience.nouns.run.singular}
+          </button>
           <button
             className="sidebar-user"
             onClick={p.onOpenSettings}
@@ -193,10 +186,13 @@ export function Sidebar(p: Props) {
           >
             <span className="user-avatar">TU</span>
             <span className="user-name">
-              Tu espacio<span>Preferencias del workspace</span>
+              Tu espacio<span>Preferencias</span>
             </span>
             <Icon name="settings" size={19} />
           </button>
+          <p className="sidebar-signature">
+            <CompanySignature />
+          </p>
         </div>
       </aside>
     </>

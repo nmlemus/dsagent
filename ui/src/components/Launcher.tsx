@@ -20,12 +20,16 @@ export function Launcher({
   cartridge = "",
   session = "",
   initialDataset,
+  initialWorkflow,
   onLaunched,
 }: {
   project?: string;
   cartridge?: string;
   session?: string;
   initialDataset?: string;
+  // Preselects one of this cartridge's workflows (the home offers them by
+  // name). Ignored when the project's cartridge does not declare it.
+  initialWorkflow?: string;
   onLaunched: (runId: string) => void;
 }) {
   const config = useWorkspaceConfig();
@@ -49,9 +53,11 @@ export function Launcher({
     setPicked((current) =>
       workflows.some((w) => w.name === current)
         ? current
-        : (workflows[0]?.name ?? ""),
+        : workflows.some((w) => w.name === initialWorkflow)
+          ? (initialWorkflow ?? "")
+          : (workflows[0]?.name ?? ""),
     );
-  }, [workflows]);
+  }, [workflows, initialWorkflow]);
   useEffect(() => {
     let live = true;
     api

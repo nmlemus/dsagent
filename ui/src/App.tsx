@@ -36,6 +36,7 @@ import {
   cartridgeFor,
   runTitle,
 } from "./lib/experience";
+import { documentTitle, experienceLabel } from "./lib/brand";
 import type { Project } from "./lib/types";
 import {
   type Conversation,
@@ -110,6 +111,7 @@ export function App() {
   const [deleteError, setDeleteError] = useState("");
   const [deletingConversation, setDeletingConversation] = useState(false);
   const [initialDataset, setInitialDataset] = useState<string | undefined>();
+  const [initialWorkflow, setInitialWorkflow] = useState<string | undefined>();
   const [refreshKey, setRefreshKey] = useState(0),
     [collapsed, setCollapsed] = useState(
       () => storage.get("ds.sidebarCollapsed", "0") === "1",
@@ -121,6 +123,17 @@ export function App() {
   projectRef.current = activeProjectId;
   const data = useWorkspace(activeProjectId, refreshKey);
   const refresh = useCallback(() => setRefreshKey((k) => k + 1), []);
+  // One way in to the launcher. A caller may preselect the resource to work on
+  // or the workflow to run; anything it leaves out is cleared, so a previous
+  // launch never leaks into the next one.
+  const openLauncher = useCallback(
+    (options: { dataset?: string; workflow?: string } = {}) => {
+      setInitialDataset(options.dataset);
+      setInitialWorkflow(options.workflow);
+      setLauncherOpen(true);
+    },
+    [],
+  );
   const server = useCartridges(refreshKey);
   const project = projects.find((p) => p.id === activeProjectId);
   // The words this workspace speaks: the active project's cartridge, else the
@@ -140,7 +153,7 @@ export function App() {
   );
   const { experience } = config;
   useEffect(() => {
-    document.title = experience.title;
+    document.title = documentTitle(experience.title);
   }, [experience.title]);
   useEffect(() => {
     let live = true;
@@ -279,6 +292,7 @@ export function App() {
     project?.name === "Default"
       ? "Mi primer proyecto"
       : (project?.name ?? "Tu espacio de trabajo");
+  const activeExperience = experienceLabel(experience.title);
   const NAV_ITEMS = navItems(experience);
   const currentNav = NAV_ITEMS.find((v) => v.id === view)!;
   const query = search.trim().toLowerCase();
@@ -324,10 +338,7 @@ export function App() {
             storage.set("ds.sidebarCollapsed", collapsed ? "0" : "1");
           }}
           onOpenSettings={() => setSettingsOpen(true)}
-          onNewRun={() => {
-            setInitialDataset(undefined);
-            setLauncherOpen(true);
-          }}
+          onNewRun={() => openLauncher()}
           gateCount={
             data.runs.filter((r) => r.status === "awaiting_gate").length
           }
@@ -349,6 +360,12 @@ export function App() {
                 <Icon name="folder" size={15} />
                 {projectName}
               </span>
+              {/* The experience labels the project, never the product. */}
+              {activeExperience && (
+                <span className="breadcrumb-experience">
+                  {activeExperience}
+                </span>
+              )}
               <span className="breadcrumb-divider">/</span>
               <strong>{currentNav.label}</strong>
             </div>
@@ -365,7 +382,6 @@ export function App() {
                 <span>Buscar en tu espacio</span>
                 <kbd>⌘ K</kbd>
               </button>
-              <span className="workspace-edition">WORKSPACE</span>
               <button
                 className="topbar-avatar"
                 onClick={() => setSettingsOpen(true)}
@@ -404,10 +420,7 @@ export function App() {
                     {...data}
                     project={project}
                     unavailable={!!data.error}
-                    onNewRun={() => {
-                      setInitialDataset(undefined);
-                      setLauncherOpen(true);
-                    }}
+                    onNewRun={(workflow) => openLauncher({ workflow })}
                     onChat={() => navigate("chat")}
                     onRuns={() => navigate("runs")}
                     onData={() => navigate("data")}
@@ -419,10 +432,7 @@ export function App() {
                     runs={data.runs}
                     loading={data.loading}
                     onOpen={setActiveRunId}
-                    onNewRun={() => {
-                      setInitialDataset(undefined);
-                      setLauncherOpen(true);
-                    }}
+                    onNewRun={() => openLauncher()}
                   />
                 )}
                 {view === "data" && (
@@ -432,10 +442,7 @@ export function App() {
                     datasets={data.datasets}
                     loading={data.loading}
                     onRefresh={refresh}
-                    onNewRun={(dataset) => {
-                      setInitialDataset(dataset);
-                      setLauncherOpen(true);
-                    }}
+                    onNewRun={(dataset) => openLauncher({ dataset })}
                   />
                 )}
                 {view === "deliverables" && (
@@ -444,10 +451,7 @@ export function App() {
                     runs={data.runs}
                     artifacts={data.artifacts}
                     onOpen={setActiveRunId}
-                    onNewRun={() => {
-                      setInitialDataset(undefined);
-                      setLauncherOpen(true);
-                    }}
+                    onNewRun={() => openLauncher()}
                   />
                 )}
                 {view === "chat" && (
@@ -513,6 +517,7 @@ export function App() {
         {launcherOpen && (
           <LauncherModal
             initialDataset={initialDataset}
+            initialWorkflow={initialWorkflow}
             project={activeProjectId}
             cartridge={boundCartridge}
             session={view === "chat" ? (active?.threadId ?? "") : ""}

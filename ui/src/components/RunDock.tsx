@@ -16,7 +16,7 @@ import { FocusOverlay, type FocusTarget } from "./FocusOverlay";
 import { GateCard } from "./GateCard";
 import { StatusPill } from "./StatusPill";
 import { Icon } from "./Icon";
-import { runTitle, stepTitle, useExperience } from "../lib/experience";
+import { cap, runTitle, stepTitle, useExperience } from "../lib/experience";
 const ChartView = lazy(() => import("./ChartView"));
 function RunVisualization({
   chart,
@@ -233,9 +233,8 @@ export function RunDock({
               className={tab === "results" ? "active" : ""}
               onClick={() => setTab("results")}
             >
-              {nouns.deliverable.plural.charAt(0).toUpperCase() +
-                nouns.deliverable.plural.slice(1)}{" "}
-              y archivos <span>{files.length}</span>
+              {cap(nouns.deliverable.plural)} y archivos{" "}
+              <span>{files.length}</span>
             </button>
             <button
               aria-pressed={tab === "charts"}
@@ -270,49 +269,89 @@ export function RunDock({
           </div>
         ) : (
           <div className="run-results-layout">
+            {/* Reading surface: the index on the left names what came out of
+                the run and separates what was asked for from what the work
+                left behind; the right is one document at a time, on paper. */}
             <div className="run-file-list">
-              <span className="eyebrow">ARCHIVOS</span>
               {files.length === 0 ? (
                 <p className="side-empty">
                   Los archivos aparecerán a medida que avance el trabajo.
                 </p>
               ) : (
-                files.map((f) => (
-                  <button
-                    key={f.path}
-                    className={`run-file ${selected === f.path ? "selected" : ""}`}
-                    onClick={() => {
-                      setSelected(f.path);
-                      setPinned(true);
-                    }}
-                    title={f.path}
-                  >
-                    <Icon name="file" size={17} />
-                    <span>
-                      <strong>{basename(f.path)}</strong>
-                      <small>
-                        {f.kind === "deliverable"
-                          ? nouns.deliverable.singular
-                          : "Archivo de trabajo"}{" "}
-                        · {bytes(f.size)}
-                      </small>
-                    </span>
-                  </button>
-                ))
+                [
+                  {
+                    key: "deliverable",
+                    label: cap(nouns.deliverable.plural),
+                    items: files.filter((f) => f.kind === "deliverable"),
+                  },
+                  {
+                    key: "working",
+                    label: "Archivos de trabajo",
+                    items: files.filter((f) => f.kind !== "deliverable"),
+                  },
+                ]
+                  .filter((group) => group.items.length > 0)
+                  .map((group) => (
+                    <div className="run-file-group" key={group.key}>
+                      <h4>
+                        {group.label} <span>{group.items.length}</span>
+                      </h4>
+                      {group.items.map((f) => (
+                        <button
+                          key={f.path}
+                          className={`run-file ${selected === f.path ? "selected" : ""}`}
+                          aria-current={
+                            selected === f.path ? "true" : undefined
+                          }
+                          onClick={() => {
+                            setSelected(f.path);
+                            setPinned(true);
+                          }}
+                          title={f.path}
+                        >
+                          <Icon name="file" size={16} />
+                          <span>
+                            <strong>{basename(f.path)}</strong>
+                            <small>{bytes(f.size)}</small>
+                          </span>
+                        </button>
+                      ))}
+                    </div>
+                  ))
               )}
             </div>
             <div className="run-result-preview">
               {selected ? (
                 <>
                   <div className="preview-heading">
-                    <strong>{basename(selected)}</strong>
-                    <button
-                      className="icon-btn"
-                      onClick={() => setFocus({ kind: "file", path: selected })}
-                      aria-label="Ampliar"
-                    >
-                      <Icon name="external" size={16} />
-                    </button>
+                    <span className="preview-title">
+                      <strong>{basename(selected)}</strong>
+                      <small>
+                        {files.find((f) => f.path === selected)?.kind ===
+                        "deliverable"
+                          ? cap(nouns.deliverable.singular)
+                          : "Archivo de trabajo"}
+                      </small>
+                    </span>
+                    <span className="preview-actions">
+                      <a
+                        className="icon-btn"
+                        href={api.fileUrl(runId, selected)}
+                        download
+                        aria-label={`Descargar ${basename(selected)}`}
+                      >
+                        <Icon name="download" size={16} />
+                      </a>
+                      <button
+                        className="icon-btn"
+                        onClick={() =>
+                          setFocus({ kind: "file", path: selected })
+                        }
+                        aria-label="Ampliar"
+                      >
+                        <Icon name="external" size={16} />
+                      </button>
+                    </span>
                   </div>
                   <FileViewer source={runSource(runId)} path={selected} />
                 </>

@@ -1,4 +1,5 @@
 import type { CSSProperties } from "react";
+import { COMPANY } from "../lib/brand";
 
 const paths = {
   grid: "M3 3h7v7H3z M14 3h7v7h-7z M3 14h7v7H3z M14 14h7v7h-7z",
@@ -75,6 +76,20 @@ export function BrandMark() {
         />
         <path d="M4 12h13M4 20h13" stroke="currentColor" strokeWidth="3" />
       </svg>
+    </span>
+  );
+}
+
+// The company signature: present, constant and deliberately quiet. It is drawn
+// with type rather than an asset, because the UI ships no remote fonts or
+// images; the real wordmark can replace it without moving anything around.
+export function CompanySignature() {
+  return (
+    <span className="company-signature">
+      <span aria-hidden="true">
+        &lt;<b>ai</b>/&gt;labs
+      </span>
+      <span className="sr-only">{COMPANY}</span>
     </span>
   );
 }

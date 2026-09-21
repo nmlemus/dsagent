@@ -1,5 +1,4 @@
 import { type ReactNode, useEffect, useId, useRef } from "react";
-import { useExperience } from "../lib/experience";
 import { Icon } from "./Icon";
 
 // Native modal: focus containment, inert background, Escape and focus restoration.
@@ -18,7 +17,6 @@ export function Dialog({
 }) {
   const ref = useRef<HTMLDialogElement>(null);
   const titleId = useId();
-  const brand = useExperience().title;
   const closeRef = useRef(onClose);
   closeRef.current = onClose;
   useEffect(() => {
@@ -56,7 +54,9 @@ export function Dialog({
       {chrome && (
         <div className="dialog-header">
           <div>
-            <span className="eyebrow">{brand.toUpperCase()} · WORKSPACE</span>
+            {/* No eyebrow: it used to print the cartridge's title as if it were
+                the product's name, and a dialog that already has a heading does
+                not need a second label above it. */}
             <h2 id={titleId}>{title}</h2>
           </div>
           <button

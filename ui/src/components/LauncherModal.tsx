@@ -6,6 +6,7 @@ export function LauncherModal({
   cartridge,
   session,
   initialDataset,
+  initialWorkflow,
   onLaunched,
   onClose,
 }: {
@@ -13,6 +14,7 @@ export function LauncherModal({
   cartridge: string;
   session: string;
   initialDataset?: string;
+  initialWorkflow?: string;
   onLaunched: (runId: string) => void;
   onClose: () => void;
 }) {
@@ -28,6 +30,7 @@ export function LauncherModal({
         cartridge={cartridge}
         session={session}
         initialDataset={initialDataset}
+        initialWorkflow={initialWorkflow}
         onLaunched={onLaunched}
       />
     </Dialog>

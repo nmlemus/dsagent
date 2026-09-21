@@ -7,9 +7,12 @@ import type { Artifact, Dataset } from "../lib/useWorkspace";
 import {
   cap,
   runTitle,
+  stepTitle,
   useExperience,
   useWorkspaceConfig,
+  workflowSummary,
   workflowTitle,
+  workflowsFor,
 } from "../lib/experience";
 import { Icon, iconName, type IconName } from "./Icon";
 import { Dialog } from "./Dialog";
@@ -53,48 +56,6 @@ export function EmptyState({
           <Icon name="arrow" size={16} />
         </button>
       )}
-    </div>
-  );
-}
-function PipelineArt() {
-  const { title, home } = useExperience();
-  const [input, work, output] = [
-    home.stages[0] ?? "Entrada",
-    home.stages[1] ?? "Trabajo",
-    home.stages[2] ?? "Resultado",
-  ];
-  return (
-    <div
-      className="pipeline-art"
-      aria-label={`Proceso: ${input}, ${work}, revisión y ${output}`}
-      role="img"
-    >
-      <div className="pipeline-orbit orbit-one" />
-      <div className="pipeline-orbit orbit-two" />
-      <div className="pipeline-axis" />
-      <span className="pipeline-caption">{home.eyebrow}</span>
-      <div className="pipeline-node node-data">
-        <Icon name="data" />
-        <span>{input}</span>
-        <i />
-      </div>
-      <div className="pipeline-core">
-        <Icon name="spark" size={32} />
-        <span>{title.toLowerCase()}</span>
-      </div>
-      <div className="pipeline-node node-analysis">
-        <Icon name="chart" />
-        <span>{work}</span>
-        <i />
-      </div>
-      <div className="pipeline-node node-report">
-        <Icon name="file" />
-        <span>{output}</span>
-        <i />
-      </div>
-      <span className="pipeline-review">
-        <Icon name="check" size={13} /> Tu criterio, en cada decisión
-      </span>
     </div>
   );
 }
@@ -156,6 +117,12 @@ function RunRows({
     </div>
   );
 }
+// The home has two shapes. A project with nothing in it gets a compact start:
+// the goal, the resources to bring, the workflows that can be run. A project
+// with activity gets what needs attention, in that order — reviews first, then
+// work in flight, then what came out of it, then the resources behind it. No
+// number on this page is computed from anything but what the server returned,
+// and no deliverable is drawn as a preview the file itself has not produced.
 export function Overview({
   project,
   runs,
@@ -175,205 +142,297 @@ export function Overview({
   artifacts: Artifact[];
   loading: boolean;
   unavailable: boolean;
-  onNewRun: () => void;
+  onNewRun: (workflow?: string) => void;
   onChat: () => void;
   onRuns: () => void;
   onData: () => void;
   onOpenRun: (id: string) => void;
 }) {
-  const { home, nouns, nav } = useExperience();
-  const gates = runs.filter((r) => r.status === "awaiting_gate");
-  const done = runs.filter((r) => r.status === "done").length;
-  const completed = runs.filter((r) => r.finished_at).slice(0, 6);
-  const [headline, ...headlineRest] = home.headline.split(/(?<=\.)\s+/);
+  const { home, nouns, nav, tagline, resources } = useExperience();
+  const { workflows, cartridge } = useWorkspaceConfig();
+  const byName = useWorkflowMap();
+  const offered = workflowsFor(workflows, cartridge);
+  const pending = runs.filter((r) => r.status === "awaiting_gate");
+  const delivered = runs.filter((r) => r.status === "done");
+  const quiet =
+    !loading &&
+    !unavailable &&
+    runs.length === 0 &&
+    datasets.length === 0 &&
+    artifacts.length === 0;
+
+  if (loading)
+    return (
+      <div className="workspace-page overview-page">
+        <div className="page-heading">
+          <div>
+            <h1>{nav.overview}</h1>
+            <p>{project?.goal || home.intro}</p>
+          </div>
+        </div>
+        <div className="surface">
+          <div className="skeleton-list" aria-label="Cargando">
+            <i />
+            <i />
+            <i />
+          </div>
+        </div>
+      </div>
+    );
+
+  if (quiet)
+    return (
+      <div className="workspace-page overview-page">
+        <section className="start">
+          <span className="eyebrow">{home.eyebrow}</span>
+          <h1 className="start-headline">{home.headline}</h1>
+          <p className="start-intro">{project?.goal || home.intro}</p>
+          <p className="start-tagline">{tagline}</p>
+          {/* The cartridge's declared stages, written out. They used to be the
+              labels on an orbital illustration; the words were the only part of
+              it carrying information. */}
+          {home.stages.length > 0 && (
+            <p className="start-stages">{home.stages.join(" → ")}</p>
+          )}
+          <div className="start-actions">
+            <button className="btn primary" onClick={() => onNewRun()}>
+              Crear {nouns.run.singular}
+              <Icon name="arrow" size={16} />
+            </button>
+            <button className="text-button" onClick={onChat}>
+              <Icon name="spark" size={15} />
+              {nav.chat}
+            </button>
+          </div>
+        </section>
+        <div className="start-grid">
+          <section className="start-block">
+            <h2>{cap(nouns.resource.plural)}</h2>
+            <p>{resources.intro}</p>
+            {resources.formats.length > 0 && (
+              <p className="start-formats">
+                {resources.formats.map((f) => f.toUpperCase()).join(" · ")}
+              </p>
+            )}
+            <button className="text-button" onClick={onData}>
+              {nav.resources}
+              <Icon name="arrow" size={15} />
+            </button>
+          </section>
+          <section className="start-block">
+            <h2>{nav.runs}</h2>
+            {offered.length === 0 ? (
+              <p>No hay procesos configurados para este proyecto.</p>
+            ) : (
+              <ul className="start-workflows">
+                {offered.map((w) => (
+                  <li key={w.name}>
+                    <button onClick={() => onNewRun(w.name)}>
+                      <span>
+                        <strong>{workflowTitle(w)}</strong>
+                        <small>
+                          {workflowSummary(w) ||
+                            `${w.steps.length} pasos · ${w.personas.length} ${
+                              w.personas.length === 1
+                                ? "especialista"
+                                : "especialistas"
+                            }`}
+                        </small>
+                      </span>
+                      <Icon name="arrow" size={15} />
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </section>
+        </div>
+        {home.steps.length > 0 && (
+          <ol className="start-steps">
+            {home.steps.slice(0, 3).map((step, i) => (
+              <li key={step.title}>
+                <span>{String(i + 1).padStart(2, "0")}</span>
+                <strong>{step.title}</strong>
+                <small>{step.text}</small>
+              </li>
+            ))}
+          </ol>
+        )}
+      </div>
+    );
+
   return (
     <div className="workspace-page overview-page">
       <div className="page-heading">
         <div>
-          <span className="eyebrow">{home.eyebrow}</span>
           <h1>{nav.overview}</h1>
           <p>{project?.goal || home.intro}</p>
         </div>
-        <span className="today-label">
-          {new Intl.DateTimeFormat("es", {
-            day: "numeric",
-            month: "long",
-            year: "numeric",
-          }).format(new Date())}
-        </span>
+        <button className="btn primary" onClick={() => onNewRun()}>
+          <Icon name="plus" size={17} /> Crear {nouns.run.singular}
+        </button>
       </div>
-      <section className="workspace-hero">
-        <div className="hero-copy">
-          <span className="hero-kicker">
-            <span /> {nouns.run.plural.toUpperCase()} CON REVISIÓN HUMANA
-          </span>
-          <h2>
-            {headline}
-            {headlineRest.length > 0 && (
-              <>
-                <br />
-                <em>{headlineRest.join(" ")}</em>
-              </>
-            )}
-          </h2>
-          <p>{home.intro}</p>
-          <div className="hero-actions">
-            <button className="btn hero-primary" onClick={onNewRun}>
-              Crear {nouns.run.singular}
-              <Icon name="arrow" size={17} />
-            </button>
-            <button className="hero-secondary" onClick={onChat}>
-              <Icon name="spark" size={16} /> Abrir {nav.chat.toLowerCase()}
-            </button>
+
+      {pending.length > 0 && (
+        <section className="attention" aria-labelledby="pending-reviews">
+          <div className="attention-heading">
+            <h2 id="pending-reviews">
+              <Icon name="clock" size={17} />
+              Pendientes de revisión
+            </h2>
+            <small>
+              {pending.length} de {runs.length} {nouns.run.plural}
+            </small>
           </div>
-        </div>
-        <PipelineArt />
-      </section>
-      <div className="workspace-stats">
-        {[
-          {
-            icon: "chart" as const,
-            label: `${cap(nouns.run.plural)} con resultado`,
-            value: done,
-            note: `Entre ${nouns.run.plural} recientes (últimos 100)`,
-            action: onRuns,
-          },
-          {
-            icon: "data" as const,
-            label: cap(nouns.resource.plural),
-            value: datasets.length,
-            note: "Disponibles en este proyecto",
-            action: onData,
-          },
-          {
-            icon: "clock" as const,
-            label: "Pendientes de revisión",
-            value: gates.length,
-            note: gates.length
-              ? "Tu criterio marca el siguiente paso"
-              : "Sin revisiones pendientes",
-            action: () => (gates[0] ? onOpenRun(gates[0].run_id) : onRuns()),
-          },
-        ].map((s) => (
-          <button className="stat-tile" key={s.label} onClick={s.action}>
-            <span className="stat-icon">
-              <Icon name={s.icon} />
-            </span>
-            <span className="stat-content">
-              <span>{s.label}</span>
-              <strong>
-                {loading || unavailable
-                  ? "—"
-                  : s.value.toString().padStart(2, "0")}
-              </strong>
-              <small>
-                {loading
-                  ? "Cargando datos del proyecto"
-                  : unavailable
-                    ? "Datos pendientes de conexión"
-                    : s.note}
-              </small>
-            </span>
-            <Icon name="external" size={15} />
+          <ul className="review-list">
+            {pending.map((r) => {
+              const wf = byName.get(r.workflow);
+              const shape = wf?.steps.find((s) => s.id === r.awaiting?.step);
+              const produces = r.awaiting?.produces ?? [];
+              return (
+                <li key={r.run_id}>
+                  <div className="review-what">
+                    <strong>{runTitle(r, wf)}</strong>
+                    <span className="review-stage">
+                      {shape ? stepTitle(shape) : (r.awaiting?.step ?? "")}
+                      {/* The two counts the server reports, restated. Which
+                          ordinal the gated step holds is not one of them: a
+                          declared DAG can finish steps out of reading order. */}
+                      <small>
+                        {" "}
+                        · {r.steps_done} de {r.steps_total} pasos completados
+                      </small>
+                    </span>
+                    {produces.length > 0 && (
+                      <p className="review-produces">
+                        Este paso produce{" "}
+                        {produces.map((path) => (
+                          <code key={path}>{basename(path)}</code>
+                        ))}
+                      </p>
+                    )}
+                    {r.awaiting?.prompt && (
+                      <p className="review-prompt">{r.awaiting.prompt}</p>
+                    )}
+                  </div>
+                  <button
+                    className="btn primary sm"
+                    onClick={() => onOpenRun(r.run_id)}
+                  >
+                    Revisar
+                    <Icon name="arrow" size={15} />
+                  </button>
+                </li>
+              );
+            })}
+          </ul>
+        </section>
+      )}
+
+      <section className="surface">
+        <div className="section-heading">
+          <div>
+            <h2>{cap(nouns.run.plural)}</h2>
+            <p>Lo más reciente de este proyecto.</p>
+          </div>
+          <button className="text-button" onClick={onRuns}>
+            Ver {nav.runs.toLowerCase()}
+            <Icon name="arrow" size={15} />
           </button>
-        ))}
-      </div>
+        </div>
+        {runs.length ? (
+          <RunRows runs={runs.slice(0, 5)} onOpen={onOpenRun} />
+        ) : (
+          <EmptyState
+            icon="chart"
+            title={`Todavía no hay ${nouns.run.plural}`}
+            text={`Elige un proceso y sigue cada paso desde aquí.`}
+            action={`Crear ${nouns.run.singular}`}
+            onAction={() => onNewRun()}
+          />
+        )}
+      </section>
+
       <div className="overview-lower">
-        <section className="surface recent-analysis">
+        <section className="surface">
           <div className="section-heading">
             <div>
-              <h2>Tu trabajo, en movimiento</h2>
-              <p>Retoma {nouns.run.plural} en curso o revisa sus resultados.</p>
+              <h2>{cap(nouns.deliverable.plural)}</h2>
+              <p>Lo que ya puedes leer y descargar.</p>
             </div>
-            <button className="text-button" onClick={onRuns}>
-              Ver {nav.runs.toLowerCase()}
+          </div>
+          {delivered.length === 0 && artifacts.length === 0 ? (
+            <p className="section-note">
+              Aquí aparecerán {nouns.deliverable.plural} cuando un{" "}
+              {nouns.run.singular} termine.
+            </p>
+          ) : (
+            <ul className="plain-list">
+              {delivered.slice(0, 4).map((r) => {
+                const wf = byName.get(r.workflow);
+                return (
+                  <li key={r.run_id}>
+                    <button onClick={() => onOpenRun(r.run_id)}>
+                      <Icon name="file" size={17} />
+                      <span>
+                        <strong>{runTitle(r, wf)}</strong>
+                        <small>
+                          {wf ? workflowTitle(wf) : r.workflow} ·{" "}
+                          {ago(r.finished_at)}
+                        </small>
+                      </span>
+                      <Icon name="chevron" size={15} />
+                    </button>
+                  </li>
+                );
+              })}
+              {artifacts.slice(0, 3).map((f) => (
+                <li key={f.path}>
+                  <span className="plain-row">
+                    <Icon name="file" size={17} />
+                    <span>
+                      <strong>{basename(f.path)}</strong>
+                      <small>
+                        {nav.chat} · {bytes(f.bytes)} · {ago(f.mtime)}
+                      </small>
+                    </span>
+                  </span>
+                </li>
+              ))}
+            </ul>
+          )}
+        </section>
+        <section className="surface">
+          <div className="section-heading">
+            <div>
+              <h2>{cap(nouns.resource.plural)}</h2>
+              <p>{resources.intro}</p>
+            </div>
+            <button className="text-button" onClick={onData}>
+              {nav.resources}
               <Icon name="arrow" size={15} />
             </button>
           </div>
-          {loading ? (
-            <div className="skeleton-list" aria-label="Cargando">
-              <i />
-              <i />
-              <i />
-            </div>
-          ) : runs.length ? (
-            <RunRows runs={runs.slice(0, 4)} onOpen={onOpenRun} />
+          {datasets.length === 0 ? (
+            <p className="section-note">
+              Todavía no has subido {nouns.resource.plural}.
+            </p>
           ) : (
-            <EmptyState
-              icon="chart"
-              title="Aquí empieza tu próximo resultado"
-              text={`Sube ${nouns.resource.plural} y crea ${nouns.run.singular}. Sus avances y resultados aparecerán en este espacio.`}
-              action={`Preparar ${nouns.resource.plural}`}
-              onAction={onData}
-            />
+            <ul className="plain-list">
+              {datasets.slice(0, 5).map((d) => (
+                <li key={d.name}>
+                  <span className="plain-row">
+                    <Icon name="data" size={17} />
+                    <span>
+                      <strong>{d.name}</strong>
+                      <small>{bytes(d.bytes)}</small>
+                    </span>
+                  </span>
+                </li>
+              ))}
+            </ul>
           )}
         </section>
-        <section className="surface next-step">
-          <div className="section-heading">
-            <div>
-              <span className="eyebrow">EL SIGUIENTE PASO</span>
-              <h2>{gates.length ? "Tu revisión cuenta" : "Cómo funciona"}</h2>
-            </div>
-            <Icon name="spark" />
-          </div>
-          {gates.length ? (
-            <>
-              <span className="review-count">
-                {gates.length.toString().padStart(2, "0")}
-              </span>
-              <p>
-                Hay {nouns.run.plural} esperando tu revisión para continuar.
-              </p>
-              <button
-                className="btn primary"
-                onClick={() => onOpenRun(gates[0].run_id)}
-              >
-                Revisar ahora
-                <Icon name="arrow" size={16} />
-              </button>
-            </>
-          ) : (
-            <>
-              <ol className="getting-started">
-                {home.steps.slice(0, 3).map((step, i) => (
-                  <li key={step.title}>
-                    <span>{String(i + 1).padStart(2, "0")}</span>
-                    <div>
-                      <strong>{step.title}</strong>
-                      <small>{step.text}</small>
-                    </div>
-                    {i === 0 && datasets.length > 0 && (
-                      <Icon name="check" size={16} />
-                    )}
-                    {i === 2 && done > 0 && <Icon name="check" size={16} />}
-                  </li>
-                ))}
-              </ol>
-              <button className="text-button" onClick={onChat}>
-                Empezar con el {nav.chat.toLowerCase()}
-                <Icon name="arrow" size={15} />
-              </button>
-            </>
-          )}
-        </section>
-      </div>
-      <div className="workspace-footer">
-        <span>
-          <span className="footer-dot" />{" "}
-          {loading
-            ? "Conectando con tu proyecto"
-            : unavailable
-              ? "Conexión pendiente"
-              : "Datos de tu espacio de trabajo"}
-        </span>
-        <span>
-          {completed.length
-            ? `${completed.length} con actividad reciente`
-            : "Diseñado para explorar. Construido para decidir."}
-          {artifacts.length > 0
-            ? ` · ${artifacts.length} archivos del ${nav.chat.toLowerCase()}`
-            : ""}
-        </span>
       </div>
     </div>
   );
@@ -734,7 +793,7 @@ export function Deliverables({
   onOpen: (id: string) => void;
   onNewRun: () => void;
 }) {
-  const { title, nouns, nav } = useExperience();
+  const { nouns, nav } = useExperience();
   const byName = useWorkflowMap();
   // A file a chat wrote opens in the app's viewer, like a run's deliverable.
   const [open, setOpen] = useState<FocusTarget | null>(null);
@@ -762,47 +821,45 @@ export function Deliverables({
             const wf = byName.get(r.workflow);
             const name = runTitle(r, wf);
             return (
+              // No drawn preview: a card shows what the run recorded, and the
+              // file itself is read in the run's own reading surface.
               <article className="report-card" key={r.run_id}>
-                <button
-                  className="report-preview"
-                  onClick={() => onOpen(r.run_id)}
-                  aria-label={`Ver resultados de ${name}`}
-                >
-                  <span className="report-paper">
-                    <span className="report-paper-label">{label(wf)}</span>
-                    <strong>{name}</strong>
-                    <span className="paper-lines">
-                      <i />
-                      <i />
-                      <i />
-                    </span>
-                    <span className="paper-process">
-                      <Icon name="data" />
-                      <Icon name="arrow" size={15} />
-                      <Icon name={iconName(wf?.icon, "chart")} />
-                      <Icon name="arrow" size={15} />
-                      <Icon name="file" />
-                    </span>
-                    <span className="report-paper-footer">
-                      {title.toUpperCase()} · {r.steps_done} PASOS COMPLETADOS
-                    </span>
-                  </span>
-                </button>
                 <div className="report-card-body">
-                  <StatusPill status={r.status} />
+                  <div className="report-card-top">
+                    <span className="report-kind">
+                      <Icon name={iconName(wf?.icon, "file")} size={17} />
+                      {label(wf)}
+                    </span>
+                    <StatusPill status={r.status} />
+                  </div>
                   <h2>{name}</h2>
-                  <p>
-                    {ago(r.finished_at)} ·{" "}
-                    {r.cost_usd == null
-                      ? "Costo no disponible"
-                      : `${cost(r.cost_usd)} registrado`}
-                  </p>
+                  <dl className="report-facts">
+                    <div>
+                      <dt>Completado</dt>
+                      <dd>{ago(r.finished_at) || "Sin fecha registrada"}</dd>
+                    </div>
+                    <div>
+                      <dt>Pasos</dt>
+                      <dd>
+                        {r.steps_done} de {r.steps_total}
+                      </dd>
+                    </div>
+                    <div>
+                      <dt>Costo</dt>
+                      <dd>
+                        {r.cost_usd == null
+                          ? "No disponible"
+                          : cost(r.cost_usd)}
+                      </dd>
+                    </div>
+                  </dl>
                   <div className="report-actions">
                     <button
-                      className="text-button"
+                      className="btn sm"
                       onClick={() => onOpen(r.run_id)}
+                      aria-label={`Abrir ${nouns.deliverable.plural} de ${name}`}
                     >
-                      Explorar resultados
+                      Abrir {nouns.deliverable.plural}
                       <Icon name="arrow" size={15} />
                     </button>
                     <a
