@@ -4,6 +4,13 @@
 
 Decisions locked in this draft: own backend on Deep Agents (LangChain); new repo, porting selected pieces from `nmlemus/dsagent`; Docker-per-workflow execution; cartridge format is a superset of the Claude Code plugin layout.
 
+
+**UI update (2026-09-19):** the React/Vite frontend now uses a project workspace
+shell (overview, assistant, analyses, data and deliverables), with lazy-loaded
+chat/run/chart renderers over the existing REST and SSE interfaces. This changes
+presentation and client state management, not runner ownership or the agent loop.
+See [UI-001](ui-workspace-redesign-2026-09-19.md) for scope and verification.
+
 ---
 
 ## 1. Thesis
@@ -181,6 +188,66 @@ personas:
 ```
 
 Step instructions are markdown, written for the persona, and are injected as the task message when the harness calls `task(persona, …)`. `produces` is verified on disk after every step; a missing artifact fails the step before the next one starts. An entry may be a glob (`artifacts/figures/*.png`) for a step that writes a variable number of files; a pattern is satisfied by at least one match and is otherwise treated exactly like a missing file, and everything it matches counts as a deliverable. Gates come in two kinds: `human` (a Deep Agents interrupt that surfaces over CLI/WebSocket) and `auto` (a script the harness runs in the step's env).
+
+### 3.3.1 Presentation fields (`workflow.yaml`)
+
+The identifiers above (`name`, step `id`, input names) are what the runner, the CLI and `run_workflow` use. What a *screen* calls them is a separate, optional layer on the same file, so a workflow can be titled in the team's language and relabelled without renaming a directory:
+
+```yaml
+name: eda-to-report
+title: Análisis exploratorio        # shown instead of `name`
+summary: Descubre patrones, revisa la calidad de tus datos y…
+icon: file                          # from the UI's own icon set; unknown → generic
+badge: Experimental                 # optional short label beside the title
+inputs:
+  question:
+    type: string
+    label: Pregunta que quieres responder
+    placeholder: "Ej. ¿Qué explica la caída de ventas?"
+    help: El equipo trabaja en inglés; escribe en el idioma que prefieras.
+steps:
+  - id: profile
+    title: Conocer los datos          # shown instead of `id`
+```
+
+All of it is passed through by `GET /cartridges` and `workflow_shape`; none of it is read by the runner. Absent, screens show the identifier — except `summary`, which falls back to `description`. The two are different audiences and should stay different texts: `description` is what the orchestrator reads when deciding whether to call the workflow (and may say harness things like "the smoke test"), `summary` is the sentence a person reads before starting one.
+
+### 3.5 Experience (`cartridge.yaml: experience`)
+
+The workspace UI has one fixed structure — a home, an assistant, a list of runs, a library of resources, a shelf of deliverables — and **every word inside it comes from the cartridge**. That is invariant 1 applied to the screen: `ui/src` names no domain, and a cartridge for another domain (`cartridges/marketing` is the proof) changes the product's vocabulary, suggestions and starting actions with no frontend change.
+
+```yaml
+experience:
+  version: 1
+  title: DSAgent                     # product name in the sidebar and the tab
+  tagline: De datos a decisiones.
+  nouns:                             # screens build their sentences from these
+    run:         { singular: análisis,        plural: análisis }
+    resource:    { singular: fuente de datos, plural: fuentes de datos }
+    deliverable: { singular: informe,         plural: informes }
+  nav: { overview: Vista general, chat: Asistente, runs: Análisis,
+         resources: Biblioteca de datos, deliverables: Entregables }
+  home:
+    eyebrow: TU CENTRO DE ANÁLISIS
+    headline: Tus datos. Tu próxima gran decisión.
+    intro: …
+    stages: [Datos, Análisis, Resultados]     # the home illustration
+    steps: [{ title: Trae tus datos, text: … }, …]   # the three-step guide
+  assistant:
+    headline: …
+    intro: …
+    placeholder: ¿Qué te gustaría descubrir con tus datos?
+    suggestions: [ … ]               # opening prompts, editable before sending
+    instructions: >-                 # extra instructions for the chat model
+      When you present quantitative results, VISUALIZE them …
+  resources:
+    intro: …
+    formats: [csv, parquet]          # hint + file-picker filter; not a gate
+```
+
+`Experience` (`dsagent.cartridge.models`) validates the block with `extra="forbid"` at every level and carries generic defaults ("trabajo", "recurso", "entregable"), so a cartridge that declares nothing still renders, and a typo fails the load instead of silently falling back. The UI keeps the same defaults for the moment before `/cartridges` answers.
+
+**One cartridge per project.** A project records the cartridge it was created with (`project.json: cartridge`). The UI resolves its experience from that binding (first loaded cartridge when unbound), the launcher offers only that cartridge's workflows, `POST /runs` refuses a workflow from another cartridge, and the project's chat orchestrator is built over that cartridge alone — its roster and `list_workflows` are the project's domain, not the union of everything the server loaded. The `default` project stays unbound so existing deployments keep working.
 
 ### 3.4 Environments (`envs/*`)
 
