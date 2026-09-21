@@ -1,0 +1,54 @@
+name: campaign-brief
+description: From a campaign brief to reviewed copy — analyse the brief, propose a strategy (human gate), then write the copy per channel.
+title: Campaña desde un brief
+summary: >-
+  Del brief a piezas listas para revisar. El equipo analiza el brief, propone una
+  estrategia que tú apruebas y escribe el copy de cada canal.
+icon: spark
+inputs:
+  brief_path:
+    type: path
+    label: Brief de campaña
+    help: Un archivo de texto o markdown con el brief. La guía de marca, si existe, súbela a la biblioteca.
+  objective:
+    type: string
+    label: Objetivo de la campaña
+    placeholder: "Ej. Conseguir 500 registros para el lanzamiento de la app en octubre"
+  audience:
+    type: string
+    required: false
+    default: "None"
+    label: Audiencia (opcional)
+    placeholder: "Ej. Dueños de pequeños negocios que aún facturan a mano"
+title_input: objective
+data_input: brief_path
+env: default
+
+steps:
+  - id: research
+    title: Leer el brief
+    persona: lucia
+    instructions: steps/01-research.md
+    section: El brief
+    produces: [artifacts/brief-analysis.md]
+
+  - id: strategy
+    title: Proponer la estrategia
+    persona: lucia
+    instructions: steps/02-strategy.md
+    needs: [research]
+    sees: [objective, audience]
+    section: Estrategia
+    produces: [artifacts/strategy.md]
+    gate:
+      kind: human
+      prompt: "La estrategia está en artifacts/strategy.md. ¿Aprobamos el enfoque y pasamos a escribir el copy?"
+
+  - id: copy
+    title: Escribir las piezas
+    persona: tomas
+    instructions: steps/03-copy.md
+    needs: [strategy]
+    sees: []                    # works from artifacts/strategy.md, not from inputs
+    section: Piezas
+    produces: [deliverables/campaign-copy.md]

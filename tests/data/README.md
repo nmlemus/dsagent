@@ -15,6 +15,20 @@ Daily Seattle weather, 2012-01-01 → 2015-12-31.
 Vendored rather than downloaded so the integration run is deterministic and
 offline: a network failure should never look like a harness failure.
 
+## `brief-lanzamiento-ejemplo.md`
+
+A campaign brief for the `marketing` cartridge's `campaign-brief` workflow, to
+upload as that workflow's `brief_path` when trying the UI by hand.
+
+- **Source**: written for this repository. Cuadra, its numbers and its team are
+  invented; no real company, client or engagement is described.
+- **Shape**: the six things the `briefs` skill extracts, plus the three things
+  it is meant to catch — an objective nobody has a baseline for, a claim legal
+  forbids, and channels that were decided before the strategy existed.
+
+It is deliberately imperfect: a brief with no holes would let the research step
+report "nothing missing" and prove nothing about the workflow.
+
 Why this dataset for `eda-to-report`: it is the smallest public CSV that
 exercises all four gate checks in the `eda` skill at once — a `date` column
 unique at the declared grain (key uniqueness), four complete years with no
