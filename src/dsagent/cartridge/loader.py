@@ -20,10 +20,12 @@ from pathlib import Path
 from typing import Any
 
 import yaml
+from pydantic import ValidationError
 
 from dsagent.cartridge.models import (
     Cartridge,
     EnvSpec,
+    Experience,
     Persona,
     Skill,
     Workflow,
@@ -57,14 +59,18 @@ def _load_plugin_json(root: Path) -> dict[str, Any]:
     return json.loads(p.read_text(encoding="utf-8"))
 
 
-def _load_skills(root: Path, matrix: dict[str, Any]) -> dict[str, Skill]:
+def _load_skills(root: Path, matrix: dict[str, Any], cartridge: str) -> dict[str, Skill]:
+    """Every `skills/*/SKILL.md` except the command skills the harness itself
+    generates (`<cartridge>-<workflow>`), which are rebuilt on every load and
+    are not part of the persona matrix."""
+    generated = f"{cartridge}-"
     skills: dict[str, Skill] = {}
     skills_dir = root / "skills"
     if not skills_dir.is_dir():
         return skills
     for d in sorted(skills_dir.iterdir()):
         md = d / "SKILL.md"
-        if not d.is_dir() or not md.exists():
+        if not d.is_dir() or not md.exists() or d.name.startswith(generated):
             continue
         meta, _ = parse_frontmatter(md.read_text(encoding="utf-8"))
         name = meta.get("name", d.name)
@@ -76,9 +82,22 @@ def _load_skills(root: Path, matrix: dict[str, Any]) -> dict[str, Skill]:
             name=name, description=meta.get("description", ""), path=d, scope=scope
         )
     for name in matrix:
-        if name not in skills and not name.startswith("ds-"):
+        if name not in skills and not name.startswith(generated):
             raise CartridgeError(f"cartridge.yaml lists skill '{name}' but skills/{name}/SKILL.md is missing")
     return skills
+
+
+def _load_experience(root: Path, declared: Any) -> Experience:
+    """The `experience:` block, validated strictly: an unknown key is a mistake
+    the cartridge author wants to hear about now, not a silent fallback."""
+    if declared is None:
+        return Experience()
+    if not isinstance(declared, dict):
+        raise CartridgeError(f"{root}: experience must be a mapping, got {type(declared).__name__}")
+    try:
+        return Experience.model_validate(declared)
+    except ValidationError as e:
+        raise CartridgeError(f"{root}: experience is invalid:\n{e}") from e
 
 
 def _load_personas(root: Path, matrix: dict[str, Any]) -> dict[str, Persona]:
@@ -259,13 +278,12 @@ def load_cartridge(root: str | Path, *, generate_commands: bool = True) -> Cartr
         raise CartridgeError(f"{root}: cartridge.yaml is missing (a plain Claude Code plugin is not a cartridge)")
     cy = _read_yaml(cy_path)
 
-    skills = _load_skills(root, cy.get("skills", {}) or {})
-    # drop auto-generated command skills from the matrix view; they are regenerated below
     name = cy.get("name") or plugin.get("name") or root.name
-    skills = {k: v for k, v in skills.items() if not k.startswith(f"{name}-")}
+    skills = _load_skills(root, cy.get("skills", {}) or {}, cartridge=name)
     personas = _load_personas(root, cy.get("personas", {}) or {})
     workflows = _load_workflows(root, cy.get("workflows", []) or [])
     envs = _load_envs(root, cy.get("envs", {}) or {}, cartridge=name)
+    experience = _load_experience(root, cy.get("experience"))
 
     c = Cartridge(
         name=name,
@@ -276,6 +294,7 @@ def load_cartridge(root: str | Path, *, generate_commands: bool = True) -> Cartr
         skills=skills,
         workflows=workflows,
         envs=envs,
+        experience=experience,
     )
     _validate_matrix(c)
     if generate_commands:

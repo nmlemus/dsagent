@@ -1,21 +1,27 @@
 name: mmm-meridian
+title: Marketing mix modeling
+summary: Explora la contribución de tus canales de marketing con un modelo especializado y revisiones en cada etapa.
+icon: chart
+badge: Experimental
 description: End-to-end marketing mix model with Google Meridian, from raw media/sales data to a budget-optimization report.
 inputs:
-  data_source: { type: connector, options: [csv, parquet, bigquery] }
-  data_path:   { type: string }
-  kpi:         { type: string }
-  date_range:  { type: daterange, required: false }
+  data_source: { type: connector, options: [csv, parquet, bigquery], label: Origen de los datos }
+  data_path:   { type: string, label: Fuente de datos }
+  kpi:         { type: string, label: Indicador a explicar, placeholder: "Ej. ventas semanales" }
+  date_range:  { type: daterange, required: false, label: Periodo (opcional) }
 data_input: data_path
 env: meridian
 
 steps:
   - id: ingest
+    title: Preparar los datos
     persona: pablo
     env: default
     instructions: steps/01-ingest.md
     produces: [data/mmm_input.parquet, artifacts/data-profile.md]
 
   - id: data-gate
+    title: Revisar la calidad
     persona: pablo
     env: default
     instructions: steps/02-data-gate.md
@@ -27,6 +33,7 @@ steps:
       prompt: "Data gate report ready (artifacts/data-gate.md). Approve to build the model spec?"
 
   - id: model-spec
+    title: Definir el modelo
     persona: ana
     instructions: steps/03-model-spec.md
     needs: [data-gate]
@@ -36,6 +43,7 @@ steps:
       prompt: "Review priors, adstock and saturation choices in artifacts/model-spec.md. Start the fit?"
 
   - id: fit
+    title: Ajustar el modelo
     persona: ana
     instructions: steps/04-fit.md
     needs: [model-spec]
@@ -47,6 +55,7 @@ steps:
       check: scripts/check_rhat.py
 
   - id: optimize
+    title: Optimizar el presupuesto
     persona: ana
     instructions: steps/05-optimize.md
     needs: [fit]
@@ -54,6 +63,7 @@ steps:
     produces: [artifacts/budget-optimization.md]
 
   - id: report
+    title: Preparar el informe
     persona: marie
     env: default
     instructions: steps/06-report.md

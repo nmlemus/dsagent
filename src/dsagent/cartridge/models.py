@@ -53,6 +53,9 @@ class Step(BaseModel):
     persona: str
     instructions: str
     """Path to a markdown file, relative to the workflow dir."""
+    title: str | None = None
+    """What a screen calls this step. Presentation only: the runner keys on `id`.
+    Absent, screens show the id."""
     env: str | None = None
     needs: list[str] = Field(default_factory=list)
     produces: list[str] = Field(default_factory=list)
@@ -85,6 +88,11 @@ class WorkflowInput(BaseModel):
     about *keys* — that this is what a key means is the cartridge's claim, made
     here, which is why the name of the input is never inspected.
     """
+    label: str | None = None
+    """What a form calls this input. Absent, the form shows the input's name."""
+    placeholder: str | None = None
+    help: str | None = None
+    """One line under the field, if the cartridge has something to say."""
 
 
 class Workflow(BaseModel):
@@ -102,6 +110,22 @@ class Workflow(BaseModel):
     """Which input names the table this run works on, for the screens that want
     to say so. Same reason: a harness that looks for `data_path` has learned
     something about a cartridge."""
+    title: str | None = None
+    """What a screen calls this workflow. `name` stays the identifier the runner,
+    the CLI and `run_workflow` use; the title is free to be in the cartridge's
+    language and to change without renaming a directory."""
+    summary: str | None = None
+    """What a screen tells the *user* this workflow does.
+
+    `description` is written for the orchestrator deciding whether to call it,
+    and says harness things ("kernel env only — the smoke test"); this is the
+    sentence a person reads before starting one. Absent, screens show
+    `description`."""
+    icon: str | None = None
+    """A symbol name from the screen's own icon set. The harness passes it
+    through; a screen falls back to a generic one it does not recognise."""
+    badge: str | None = None
+    """A short label beside the title, e.g. "Experimental"."""
     env: str = "default"
     steps: list[Step]
     path: Path
@@ -156,6 +180,96 @@ class EnvSpec(BaseModel):
     """
 
 
+class Noun(BaseModel, extra="forbid"):
+    singular: str
+    plural: str
+
+
+class Nouns(BaseModel, extra="forbid"):
+    """The three things every screen talks about, in the cartridge's words.
+
+    A run is a "trabajo" to the harness; a cartridge may call it an análisis or
+    a campaña. Screens build their sentences from these, so the harness never
+    has to know which."""
+
+    run: Noun = Field(default_factory=lambda: Noun(singular="trabajo", plural="trabajos"))
+    resource: Noun = Field(default_factory=lambda: Noun(singular="recurso", plural="recursos"))
+    deliverable: Noun = Field(
+        default_factory=lambda: Noun(singular="entregable", plural="entregables")
+    )
+
+
+class Nav(BaseModel, extra="forbid"):
+    """Labels for the five fixed sections. The sections themselves are the
+    harness's structure; only their names belong to the cartridge."""
+
+    overview: str = "Inicio"
+    chat: str = "Asistente"
+    runs: str = "Trabajos"
+    resources: str = "Recursos"
+    deliverables: str = "Entregables"
+
+
+class HomeStep(BaseModel, extra="forbid"):
+    title: str
+    text: str = ""
+
+
+class Home(BaseModel, extra="forbid"):
+    eyebrow: str = "TU ESPACIO DE TRABAJO"
+    headline: str = "Tu próximo resultado empieza aquí."
+    intro: str = "Reúne recursos, ejecuta trabajos y revisa entregables en un solo lugar."
+    stages: list[str] = Field(default_factory=lambda: ["Recursos", "Trabajo", "Entregables"])
+    """Three words for the home illustration: what goes in, what happens, what
+    comes out."""
+    steps: list[HomeStep] = Field(
+        default_factory=lambda: [
+            HomeStep(title="Trae tus recursos", text="Los archivos con los que trabajará el equipo."),
+            HomeStep(title="Define el objetivo", text="Elige un trabajo o conversa con el asistente."),
+            HomeStep(title="Revisa los entregables", text="Aprueba cada revisión y explora el resultado."),
+        ]
+    )
+
+
+class Assistant(BaseModel, extra="forbid"):
+    headline: str = "¿En qué trabajamos hoy?"
+    intro: str = "Un equipo de especialistas listo para ayudarte en este proyecto."
+    placeholder: str = "Escribe tu mensaje…"
+    suggestions: list[str] = Field(default_factory=list)
+    """Opening prompts a screen offers; editable before sending."""
+    instructions: str = ""
+    """Extra instructions the chat client adds for the model — how to present
+    results in this domain. Empty means the client adds nothing."""
+
+
+class Resources(BaseModel, extra="forbid"):
+    intro: str = "Sube una vez. Reutiliza en cada trabajo de este proyecto."
+    formats: list[str] = Field(default_factory=list)
+    """File extensions the screen suggests (and offers in its file picker).
+    A hint, not a gate: the harness stores whatever is uploaded."""
+
+
+class Experience(BaseModel, extra="forbid"):
+    """How a cartridge presents itself in the workspace UI.
+
+    The UI's *structure* is fixed by the harness — a home, an assistant, a list
+    of runs, a library of resources, a shelf of deliverables. Everything a user
+    reads inside that structure comes from here, so a cartridge for another
+    domain changes the product's vocabulary without a line of frontend code.
+    Unknown keys are rejected: a typo here would otherwise silently fall back
+    to the generic copy and nobody would notice until a demo.
+    """
+
+    version: int = 1
+    title: str = "DSAgent"
+    tagline: str = "Tu equipo, en tu espacio de trabajo."
+    nouns: Nouns = Field(default_factory=Nouns)
+    nav: Nav = Field(default_factory=Nav)
+    home: Home = Field(default_factory=Home)
+    assistant: Assistant = Field(default_factory=Assistant)
+    resources: Resources = Field(default_factory=Resources)
+
+
 class Cartridge(BaseModel):
     name: str
     version: str = "0.0.0"
@@ -165,6 +279,7 @@ class Cartridge(BaseModel):
     skills: dict[str, Skill]
     workflows: dict[str, Workflow]
     envs: dict[str, EnvSpec]
+    experience: Experience = Field(default_factory=Experience)
 
     def skills_for(self, persona: str) -> list[Skill]:
         return [self.skills[s] for s in self.personas[persona].skills]

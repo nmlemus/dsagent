@@ -26,3 +26,51 @@ envs:
   # which has no `[ui]` — still validates a spec before it is recorded.
   default:  { kind: kernel, requirements: [pandas>=2, matplotlib, markdown, "altair>=5.5,<6", "vl-convert-python>=1.7"] }
   meridian: { kind: docker, build: envs/meridian, gpu: optional }
+
+# How this cartridge reads in the workspace UI. The UI's structure (home,
+# assistant, runs, resources, deliverables) is the harness's; every word inside
+# it is ours. Workflow, step and input titles live next to each workflow in
+# workflows/*/workflow.yaml.
+experience:
+  version: 1
+  title: DSAgent
+  tagline: De datos a decisiones.
+  nouns:
+    run:         { singular: análisis,        plural: análisis }
+    resource:    { singular: fuente de datos, plural: fuentes de datos }
+    deliverable: { singular: informe,         plural: informes }
+  nav:
+    overview: Vista general
+    chat: Asistente
+    runs: Análisis
+    resources: Biblioteca de datos
+    deliverables: Entregables
+  home:
+    eyebrow: TU CENTRO DE ANÁLISIS
+    headline: Tus datos. Tu próxima gran decisión.
+    intro: Explora, analiza y construye una historia con tus datos. Un solo espacio, de la pregunta al entregable.
+    stages: [Datos, Análisis, Resultados]
+    steps:
+      - { title: Trae tus datos,        text: "Un CSV, una pregunta, un punto de partida." }
+      - { title: Define el objetivo,    text: "Elige un análisis o conversa con el asistente." }
+      - { title: Explora la evidencia,  text: "Revisa informes, gráficos y conclusiones." }
+  assistant:
+    headline: Las buenas decisiones empiezan con una buena pregunta.
+    intro: Un equipo de especialistas para explorar tus datos, contrastar ideas y convertir tus preguntas en análisis con contexto.
+    placeholder: ¿Qué te gustaría descubrir con tus datos?
+    suggestions:
+      - Ayúdame a definir las preguntas que podemos responder con mis datos.
+      - Revisa la calidad de los datos del proyecto antes de comenzar un análisis.
+      - ¿Qué tipo de análisis es más útil para el objetivo de este proyecto?
+    # Sent to the model with every chat turn. This is where the DS team asks for
+    # charts instead of prose — a marketing cartridge would ask for something else.
+    instructions: >-
+      When you present quantitative results in this chat, VISUALIZE them rather than
+      only describing them. For a chart, output a fenced code block with language
+      `vega-lite` containing a complete Vega-Lite v5 spec WITH THE DATA INLINE
+      (data.values = [...]); aggregate first so the spec stays small, give every
+      encoded field a tooltip, and put one short sentence before it. For tabular
+      results use a GitHub-flavoured markdown table.
+  resources:
+    intro: Carga una vez. Explora desde cualquier análisis de este proyecto.
+    formats: [csv, parquet]

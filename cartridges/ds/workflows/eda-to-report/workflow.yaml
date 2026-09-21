@@ -1,12 +1,30 @@
 name: eda-to-report
+# `description` is for the orchestrator and the CLI; `title`/`badge`/`icon` and
+# the per-input labels are what the workspace UI shows, in the team's language.
 description: Profile a dataset, run the data quality gate, and deliver a findings report. Two personas, kernel env only — the harness smoke test.
+title: Análisis exploratorio
+summary: Descubre patrones, revisa la calidad de tus datos y construye un informe con evidencia que puedes explorar.
+icon: file
 inputs:
-  data_path:  { type: path }
-  question:   { type: string, default: "What are the main patterns and quality issues in this dataset?" }
+  data_path:
+    type: path
+    label: Fuente de datos
+  question:
+    type: string
+    default: "What are the main patterns and quality issues in this dataset?"
+    label: Pregunta que quieres responder
+    placeholder: "Ej. ¿Qué explica la caída de ventas del último trimestre?"
+    help: El equipo trabaja en inglés; puedes escribir en el idioma que prefieras.
   # `guess: unique_column` is this workflow telling the harness what a key is:
   # a column with no repeats and nothing missing. The harness offers it; it does
   # not know the word "key" and never reads the name of an input to decide.
-  key_column: { type: string, required: false, default: "None", guess: unique_column }
+  key_column:
+    type: string
+    required: false
+    default: "None"
+    guess: unique_column
+    label: Columna identificadora (opcional)
+    help: Una columna sin repetidos ni vacíos, si la hay.
 # Which input a screen may show as the run's title, and which one names the
 # table it works on. Without these the harness would have to recognise
 # "question" and "data_path", which is a cartridge's vocabulary in the harness.
@@ -16,12 +34,14 @@ env: default
 
 steps:
   - id: profile
+    title: Conocer los datos
     persona: marie
     instructions: steps/01-profile.md
     section: The data
     produces: [artifacts/data-profile.md, artifacts/data-profile.json]
 
   - id: data-gate
+    title: Revisar la calidad
     persona: marie
     instructions: steps/02-data-gate.md
     needs: [profile]
@@ -33,6 +53,7 @@ steps:
       prompt: "Data gate report is in artifacts/data-gate.md. Proceed to analysis?"
 
   - id: analyze
+    title: Explorar patrones
     persona: noel
     instructions: steps/03-analyze.md
     needs: [data-gate]
@@ -43,6 +64,7 @@ steps:
     produces: [artifacts/findings.md]
 
   - id: report
+    title: Preparar el informe
     persona: marie
     instructions: steps/04-report.md
     needs: [analyze]
