@@ -24,6 +24,7 @@ from pathlib import Path
 from typing import Any
 
 from dsagent.models import default_model
+from dsagent.projects import DEFAULT_ID as DEFAULT_PROJECT
 from dsagent.runner.charts import CHART_EVENT
 from dsagent.runner.runner import EVENT_LOG, GateDecision, GateRecord, RunState, StepRecord
 
@@ -69,16 +70,30 @@ class Replay:
     def workflow(self) -> str:
         return self.source.get("workflow", "")
 
-    def create(self, run_id: str, inputs: dict[str, Any], workflow: str = "") -> Path:
+    def create(
+        self, run_id: str, inputs: dict[str, Any], workflow: str = "", project: str = "default"
+    ) -> Path:
         """A run directory in `pending`, with the recorded inputs filled in.
 
         Whatever the launcher uploaded stays where it put it; the replay only
         adds the files the recording says the run wrote, and the recorded
         `data/` file is one of them.
+
+        `project` is accepted to match the live driver's signature and refused
+        unless it is the default: a recording is one run of one workflow, so
+        replaying it inside another project's directory would show that
+        project's operator a run of a workflow they did not start. The live
+        driver is what runs another cartridge's workflow; this says so instead
+        of failing on an unexpected argument.
         """
         if workflow and workflow != self.workflow:
             raise ReplayError(
                 f"this fixture replays '{self.workflow}'; nothing else can be started in replay mode"
+            )
+        if project and project != DEFAULT_PROJECT:
+            raise ReplayError(
+                f"replay mode only replays '{self.workflow}' in the default project; "
+                f"start the server without --replay (and with a model) to run in '{project}'"
             )
         run_dir = self.runs_dir / run_id
         (run_dir / "workspace").mkdir(parents=True, exist_ok=True)

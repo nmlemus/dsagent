@@ -207,17 +207,27 @@ def build_app(
         from dsagent.envs.base import make_env
         from dsagent.host import build_orchestrator
 
-        tools = workflow_tools(
-            cartridges, runs_dir,
-            ask_human=interrupt_gate, on_event=dispatch_runner_event, seed=seed,
-            prices=prices, store=store, session_project=sessions.project_of,
-        )
-
-        def orchestrator(chat_env: Env, ws: Path, checkpointer: Any):
+        def orchestrator(
+            chat_env: Env, ws: Path, checkpointer: Any, carts: list[Cartridge] = cartridges
+        ):
+            tools = workflow_tools(
+                carts, runs_dir,
+                ask_human=interrupt_gate, on_event=dispatch_runner_event, seed=seed,
+                prices=prices, store=store, session_project=sessions.project_of,
+            )
             return build_orchestrator(
-                cartridges, chat_env, ws, model=model, workflow_tools=tools,
+                carts, chat_env, ws, model=model, workflow_tools=tools,
                 middleware=[CopilotKitMiddleware()], checkpointer=checkpointer,
             )
+
+        # A project bound to one cartridge gets that cartridge's team and
+        # workflows in its chat — the roster the orchestrator introduces and the
+        # workflows `list_workflows` offers are the project's domain, not the
+        # union of everything the server loaded. Unbound projects see it all.
+        def cartridges_for(project_id: str) -> list[Cartridge]:
+            proj = store.get(project_id)
+            bound = proj.cartridge if proj is not None else ""
+            return [c for c in cartridges if c.name == bound] or cartridges
 
         # One chat orchestrator per project, so a chat's filesystem — its
         # datasets and the files a persona writes — is the project's, not a
@@ -249,8 +259,6 @@ def build_app(
         # the server restarts is lost (the user just re-asks). Runs started from
         # the launcher keep their gate across restarts via the file-backed driver
         # below — that path has no competing transcript store.
-        env_spec = cartridges[0].envs["default"]
-
         chat_agents: dict[str, Any] = {}
         chat_envs: dict[str, Env] = {}
 
@@ -258,11 +266,13 @@ def build_app(
             if project_id not in chat_agents:
                 ws = project_workspace(project_id)
                 ws.mkdir(parents=True, exist_ok=True)
+                carts = cartridges_for(project_id)
+                env_spec = carts[0].envs["default"]
                 chat_env = env if project_id == DEFAULT_ID else make_env(env_spec, ws)
                 chat_envs[project_id] = chat_env
                 chat_agents[project_id] = LangGraphAGUIAgent(
                     name="dsagent",
-                    graph=orchestrator(chat_env, ws, checkpointer_for(ws, memory=True)),
+                    graph=orchestrator(chat_env, ws, checkpointer_for(ws, memory=True), carts),
                     description="DSAgent orchestrator",
                     config={"recursion_limit": recursion_limit},
                 )
@@ -317,7 +327,7 @@ def build_app(
     add_runs_routes(app, cartridges, runs_dir, driver, store)
     add_projects_routes(app, store, sessions)
     _add_files_route(app, runs_dir, store)
-    _add_project_files_route(app, project_workspace)
+    _add_project_files_route(app, project_workspace, store)
     _mount_ui(app)
     return app
 
@@ -533,12 +543,25 @@ def list_project_artifacts(project_workspace: Path, *, limit: int = 200) -> list
     return out[:limit]
 
 
-def _add_project_files_route(app, project_workspace) -> None:
-    """Serve and list a project's chat-workspace artifacts, so files a persona
-    writes in a chat (a report, its charts) are reachable — the runs files route
-    only ever covered files produced by a *run*."""
+def _add_project_files_route(app, project_workspace, store: Any = None) -> None:
+    """Serve, list and preview a project's chat-workspace artifacts, so files a
+    persona writes in a chat (a report, its charts, a table) are reachable — the
+    runs files route only ever covered files produced by a *run*.
+
+    `/preview` mirrors the runs one deliberately: a chat's artifact is read in
+    the same viewer as a run's, so a CSV a persona wrote in a conversation draws
+    as a table instead of downloading as raw text.
+    """
     from fastapi import HTTPException
     from fastapi.responses import FileResponse
+
+    from dsagent.api import PREVIEW_MAX_ROWS, PREVIEW_ROWS
+    from dsagent.tabular import READERS, TableUnreadable, read_table
+
+    def _project_or_404(project_id: str) -> Path:
+        if store is not None and store.get(project_id) is None:
+            raise HTTPException(status_code=404, detail="unknown project")
+        return project_workspace(project_id)
 
     @app.get("/projects/{project_id}/artifacts")
     def project_artifacts(project_id: str):
@@ -551,6 +574,31 @@ def _add_project_files_route(app, project_workspace) -> None:
             raise HTTPException(status_code=404, detail="not found")
         media_type, _ = mimetypes.guess_type(target.name)
         return FileResponse(target, media_type=media_type or "application/octet-stream")
+
+    @app.get("/projects/{project_id}/preview/{path:path}")
+    def project_preview(project_id: str, path: str, rows: int = PREVIEW_ROWS) -> dict[str, Any]:
+        """The first rows of a tabular artifact, as JSON. 415 for anything no
+        reader here understands — the client can still open the file."""
+        target = resolve_project_file(_project_or_404(project_id), path)
+        if target is None:
+            raise HTTPException(status_code=404, detail="not found")
+        if target.suffix.lower() not in READERS:
+            raise HTTPException(
+                status_code=415,
+                detail=f"no preview for {target.suffix or 'a file with no extension'}",
+            )
+        try:
+            columns, table, total = read_table(target, max(1, min(rows, PREVIEW_MAX_ROWS)))
+        except TableUnreadable as e:
+            raise HTTPException(status_code=415, detail=str(e)) from e
+        return {
+            "path": path,
+            "project": project_id,
+            "columns": columns,
+            "rows": table,
+            "total_rows": total,
+            "truncated": total > len(table),
+        }
 
 
 __all__ = [

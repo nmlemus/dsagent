@@ -88,6 +88,7 @@ def test_cartridges_describes_every_workflow_the_launcher_can_offer(client):
 
     assert eda["inputs"]["data_path"] == {
         "type": "path", "required": True, "default": None, "options": None, "guess": None,
+        "label": "Fuente de datos", "placeholder": None, "help": None,
     }
     # The workflow says which input is the title and which is the table, so no
     # screen has to recognise the words "question" or "data_path" (invariant 1).
@@ -108,6 +109,70 @@ def test_cartridges_describes_every_workflow_the_launcher_can_offer(client):
     assert [s["section"] for s in eda["steps"]] == [
         "The data", "Data quality", "Findings", "Report",
     ]
+
+
+def test_cartridges_carries_the_experience_and_the_roster(client):
+    """The UI reads its vocabulary from here, never from a table in React."""
+    body = client.get("/cartridges").json()
+    ds = body["cartridges"][0]
+    assert ds["experience"]["nouns"]["run"]["singular"] == "análisis"
+    assert ds["experience"]["nav"]["resources"] == "Biblioteca de datos"
+    assert ds["experience"]["assistant"]["suggestions"]
+    assert [p["name"] for p in ds["personas"]] == ["ana", "marie", "noel", "pablo"]
+    assert ds["personas"][1]["role"] == "Data Analyst"
+
+    eda = next(w for w in body["workflows"] if w["name"] == "eda-to-report")
+    assert (eda["title"], eda["icon"], eda["badge"]) == ("Análisis exploratorio", "file", None)
+    # `description` is for the orchestrator ("the harness smoke test"); `summary`
+    # is the sentence a person reads before starting a run.
+    assert eda["summary"].startswith("Descubre patrones")
+    assert "smoke test" in eda["description"]
+    assert eda["steps"][0]["title"] == "Conocer los datos"
+    assert eda["inputs"]["question"]["label"] == "Pregunta que quieres responder"
+    assert eda["inputs"]["question"]["placeholder"].startswith("Ej.")
+    assert eda["inputs"]["data_path"]["help"] is None
+
+
+def test_preview_finds_a_run_that_lives_in_a_project(client, tmp_path, app):
+    """`/preview` resolved the run under the legacy runs dir only, so a table
+    produced by a run inside a project answered 404 while its own file route
+    served the same file."""
+    store = app.state.projects
+    pid = client.post("/projects", json={"name": "Con tablas"}).json()["id"]
+    ws = store.runs_dir(pid) / "run-in-project" / "workspace" / "artifacts"
+    ws.mkdir(parents=True)
+    (ws / "canales.csv").write_text("canal,registros\nemail,120\n")
+    (ws.parent.parent / "run.json").write_text('{"workflow": "eda-to-report", "steps": {}}')
+
+    assert client.get("/runs/run-in-project/files/artifacts/canales.csv").status_code == 200
+    body = client.get("/runs/run-in-project/preview/artifacts/canales.csv").json()
+    assert body["columns"] == ["canal", "registros"]
+
+
+def test_replay_says_why_it_cannot_run_in_another_project(client):
+    """A recording is one run of one workflow. Refusing is right; refusing with
+    `Replay.create() got an unexpected keyword argument 'project'` is not — that
+    is what the launcher shows the operator."""
+    pid = client.post("/projects", json={"name": "Otro"}).json()["id"]
+    r = client.post("/runs", json={"workflow": "eda-to-report", "inputs": {}, "project": pid})
+    assert r.status_code == 400
+    detail = r.json()["detail"]
+    assert "replay mode only replays" in detail
+    assert "--replay" in detail
+    assert "unexpected keyword" not in detail
+
+
+def test_a_run_must_belong_to_the_projects_cartridge(client):
+    """A project bound to one cartridge does not run another cartridge's
+    workflow: that is what makes "one domain per project" true on the server,
+    not only in the launcher's filter."""
+    pid = client.post("/projects", json={"name": "Other", "cartridge": "marketing"}).json()["id"]
+    r = client.post("/runs", json={"workflow": "eda-to-report", "inputs": {}, "project": pid})
+    assert r.status_code == 400
+    assert "cartridge" in r.text
+    # A project without a cartridge (the default, and anything created before
+    # cartridges were a choice) keeps accepting every loaded workflow.
+    assert client.post("/runs", json={"workflow": "eda-to-report", "inputs": {}}).status_code == 200
 
 
 def test_an_unknown_workflow_is_refused_rather_than_started(client):
