@@ -10,6 +10,7 @@ from fastapi import HTTPException, Request
 from dsagent.datasets import delete_dataset, list_datasets, store_dataset
 from dsagent.projects import ProjectStore
 from dsagent.runs import list_runs, run_dirs
+from dsagent.sessions import SessionConflict
 
 
 def add_projects_routes(app, store: ProjectStore, sessions: Any = None) -> None:
@@ -106,13 +107,25 @@ def add_projects_routes(app, store: ProjectStore, sessions: Any = None) -> None:
         if store.get(project) is None:
             raise HTTPException(status_code=400, detail=f"unknown project {project!r}")
         if sessions is not None:
-            sessions.save(
-                session_id,
-                project=project,
-                title=str(body.get("title") or ""),
-                messages=body.get("messages") or [],
-                updated_at=float(body.get("updated_at") or _time.time()),
-            )
+            try:
+                sessions.save(
+                    session_id,
+                    project=project,
+                    title=str(body.get("title") or ""),
+                    messages=body.get("messages") or [],
+                    updated_at=float(body.get("updated_at") or _time.time()),
+                )
+            except SessionConflict as e:
+                # 409, not 200: the client holds a version the server will not
+                # accept, and it has to reload rather than keep saving over a
+                # newer transcript.
+                raise HTTPException(status_code=409, detail=str(e)) from e
+            except OSError as e:
+                # A save that could not be written is not a save. This used to
+                # be swallowed and answered 200.
+                raise HTTPException(
+                    status_code=500, detail=f"could not store session {session_id}: {e}"
+                ) from e
         return {"id": session_id, "project": project}
 
     @app.delete("/sessions/{session_id}")

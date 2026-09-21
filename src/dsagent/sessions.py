@@ -10,12 +10,34 @@ browser. The per-run link marker (`<run_dir>/session`) stays as it was.
 from __future__ import annotations
 
 import json
+import os
 import re
 from pathlib import Path
 from typing import Any
 
 MARKER = "session"
 _UNSAFE = re.compile(r"[^A-Za-z0-9._-]")
+
+
+class SessionConflict(RuntimeError):
+    """A save the store refuses because accepting it would lose or move work."""
+
+
+class StaleSession(SessionConflict):
+    """The stored session is newer than the one being saved.
+
+    Two tabs, or a request that arrived late. The old code wrote `updated_at`
+    and never compared it, so the late save won: it emptied the messages of a
+    newer one. Reproduced (BH-04). The client is told, rather than the history
+    being replaced quietly.
+    """
+
+
+class WrongProject(SessionConflict):
+    """The save names a different project than the stored session.
+
+    A chat belongs to one project — its runs, its files and its workspace are
+    that project's — so this is a client mistake, not a move."""
 
 
 def _safe(session_id: str) -> str:
@@ -66,9 +88,32 @@ class SessionStore:
         return str(rec.get("project")) if rec and rec.get("project") else "default"
 
     def save(self, session_id: str, *, project: str, title: str, messages: list, updated_at: float) -> None:
+        """Write a session, or refuse and say why.
+
+        Three changes from the version that silently accepted everything
+        (BH-04): an older save is a `StaleSession` instead of an overwrite, a
+        different project is a `WrongProject` instead of a move, and a failed
+        write raises instead of being swallowed — the endpoint used to answer
+        200 for a save that never happened, and the next read answered 404.
+
+        Equal timestamps are allowed: that is the same client saving again as
+        its turn grows, which is the normal path.
+        """
         sid = _safe(session_id)
         if not sid:
-            return
+            raise ValueError("a session needs an id")
+        stored = self.get(session_id)
+        if stored is not None:
+            if float(stored.get("updated_at") or 0) > float(updated_at):
+                raise StaleSession(
+                    f"session {session_id} on disk is newer "
+                    f"({stored.get('updated_at')} > {updated_at})"
+                )
+            if stored.get("project") and stored["project"] != (project or "default"):
+                raise WrongProject(
+                    f"session {session_id} belongs to project {stored['project']!r}, "
+                    f"not {project!r}"
+                )
         rec = {
             "id": session_id,
             "project": project or "default",
@@ -76,11 +121,12 @@ class SessionStore:
             "updated_at": updated_at,
             "messages": messages,
         }
-        try:
-            self.root.mkdir(parents=True, exist_ok=True)
-            self._path(session_id).write_text(json.dumps(rec), encoding="utf-8")
-        except OSError:
-            pass
+        self.root.mkdir(parents=True, exist_ok=True)
+        # Replace atomically, so a reader never sees half a transcript — the
+        # same rule `RunState.save` follows.
+        tmp = self._path(session_id).with_suffix(f".{os.getpid()}.tmp")
+        tmp.write_text(json.dumps(rec), encoding="utf-8")
+        tmp.replace(self._path(session_id))
 
     def list_for(self, project: str) -> list[dict[str, Any]]:
         """Session headers (no messages) for a project, newest first."""

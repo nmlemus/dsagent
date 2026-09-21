@@ -13,6 +13,8 @@ from dsagent.runs import summarize
 from dsagent.sessions import mark_session, session_of
 
 FIXTURE_RUN = Path(__file__).resolve().parent / "fixtures" / "replay" / "run-eda-003"
+FIXTURE = FIXTURE_RUN
+DS = Path(__file__).resolve().parents[1] / "cartridges" / "ds"
 
 
 def test_marker_roundtrip(tmp_path):
@@ -84,6 +86,80 @@ def test_session_store_roundtrip(tmp_path):
     assert reg.list_for("other") == []
     assert reg.delete("s1") is True
     assert reg.get("s1") is None
+
+
+def test_a_save_that_cannot_be_written_is_not_reported_as_saved(tmp_path, monkeypatch):
+    """`save` swallowed OSError and the endpoint answered 200, so a disk fault
+    looked like a successful save and the next read returned 404 (BH-04)."""
+    from dsagent.sessions import SessionStore
+
+    store = SessionStore(tmp_path / "sessions")
+
+    def explode(*args, **kwargs):
+        raise OSError("no space left on device")
+
+    monkeypatch.setattr(Path, "write_text", explode)
+    with pytest.raises(OSError):
+        store.save("s", project="default", title="t", messages=["hola"], updated_at=1.0)
+
+
+def test_an_older_save_does_not_overwrite_a_newer_one(tmp_path):
+    """Two tabs, or a retried request arriving late. The stored `updated_at` was
+    written but never compared, so the late save won and took the history with
+    it: messages were emptied and the project changed underneath the chat."""
+    from dsagent.sessions import SessionStore, StaleSession
+
+    store = SessionStore(tmp_path / "sessions")
+    store.save("s", project="a", title="Nuevo", messages=["nuevo"], updated_at=20)
+    with pytest.raises(StaleSession):
+        store.save("s", project="a", title="Viejo", messages=[], updated_at=10)
+
+    kept = store.get("s")
+    assert kept["messages"] == ["nuevo"]
+    assert kept["updated_at"] == 20
+    # The same timestamp is the same client saving again, which is allowed.
+    store.save("s", project="a", title="Nuevo", messages=["nuevo", "otro"], updated_at=20)
+    assert store.get("s")["messages"] == ["nuevo", "otro"]
+
+
+def test_a_session_does_not_change_project_underneath_itself(tmp_path):
+    """A chat belongs to one project: its runs, its files and its workspace are
+    that project's. A save naming another project is a mistake, not a move."""
+    from dsagent.sessions import SessionStore, WrongProject
+
+    store = SessionStore(tmp_path / "sessions")
+    store.save("s", project="a", title="t", messages=["x"], updated_at=1)
+    with pytest.raises(WrongProject):
+        store.save("s", project="b", title="t", messages=["x"], updated_at=2)
+    assert store.get("s")["project"] == "a"
+
+
+@pytest.mark.usefixtures()
+def test_the_http_surface_reports_both_conflicts(tmp_path):
+    pytest.importorskip("fastapi", reason="needs the 'ui' extra")
+    from fastapi.testclient import TestClient
+
+    from dsagent import serve
+    from dsagent.cartridge import load_cartridge
+
+    """What the browser sees: a stale save and a project change are refused with
+    a status the client can act on, and the stored chat is untouched."""
+    app = serve.build_app(
+        [load_cartridge(DS)], None, tmp_path / "ws", tmp_path / "runs",
+        replay=FIXTURE, replay_speed=2000.0,
+    )
+    client = TestClient(app)
+    body = {"project": "default", "title": "t", "messages": ["uno"], "updated_at": 20}
+    assert client.put("/sessions/s", json=body).status_code == 200
+
+    stale = client.put("/sessions/s", json={**body, "messages": [], "updated_at": 10})
+    assert stale.status_code == 409
+    assert client.get("/sessions/s").json()["messages"] == ["uno"]
+
+    pid = client.post("/projects", json={"name": "Otro"}).json()["id"]
+    moved = client.put("/sessions/s", json={**body, "project": pid, "updated_at": 30})
+    assert moved.status_code == 409
+    assert client.get("/sessions/s").json()["project"] == "default"
 
 
 def test_resolve_run_dir_chat_goes_to_the_sessions_project(tmp_path):
