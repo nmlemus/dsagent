@@ -1,12 +1,12 @@
 import type { RunStatus } from "../lib/types";
 
 const LABEL: Record<string, string> = {
-  pending: "pending",
-  running: "running",
-  awaiting_gate: "at gate",
-  done: "done",
-  failed: "failed",
-  stopped: "stopped",
+  pending: "Por iniciar",
+  running: "En curso",
+  awaiting_gate: "Por revisar",
+  done: "Completado",
+  failed: "Con errores",
+  stopped: "Detenido",
 };
 
 export function StatusPill({ status }: { status: RunStatus | string }) {

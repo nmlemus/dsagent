@@ -21,12 +21,17 @@ export function ChartView({ spec }: { spec: Record<string, unknown> }) {
     let view: { finalize: () => void } | null = null;
     chartTheme().then((config) => {
       if (disposed || !ref.current) return;
-      embed(ref.current, spec as never, { config: config as never, actions: false })
+      embed(ref.current, spec as never, {
+        config: config as never,
+        actions: false,
+      })
         .then((res) => {
-          view = res.view;
+          if (disposed) res.view.finalize();
+          else view = res.view;
         })
         .catch(() => {
-          if (ref.current) ref.current.textContent = "Could not render this Vega-Lite spec.";
+          if (ref.current)
+            ref.current.textContent = "No se pudo mostrar este gráfico.";
         });
     });
     return () => {

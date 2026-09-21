@@ -5,5 +5,11 @@ export function isVegaLite(value: unknown): value is Record<string, unknown> {
   const v = value as Record<string, unknown>;
   const schema = typeof v.$schema === "string" ? v.$schema : "";
   if (schema.includes("vega-lite")) return true;
-  return "mark" in v || "encoding" in v || "layer" in v || "vconcat" in v || "hconcat" in v;
+  return (
+    "mark" in v ||
+    "encoding" in v ||
+    "layer" in v ||
+    "vconcat" in v ||
+    "hconcat" in v
+  );
 }

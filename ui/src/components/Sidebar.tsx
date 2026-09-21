@@ -1,147 +1,204 @@
-import { useEffect, useState } from "react";
-import { api } from "../lib/api";
-import { ago, cost } from "../lib/format";
+import { useEffect, useRef } from "react";
 import type { Conversation } from "../lib/conversations";
-import type { Project, RunSummary } from "../lib/types";
-import { DatasetsSection } from "./DatasetsSection";
+import type { Experience, Project } from "../lib/types";
+import { useExperience } from "../lib/experience";
+import { Icon, BrandMark, type IconName } from "./Icon";
 import { ProjectSwitcher } from "./ProjectSwitcher";
-import { StatusPill } from "./StatusPill";
-
+export type WorkspaceView =
+  "overview" | "chat" | "runs" | "data" | "deliverables";
+// The five sections are the harness's structure; their names are the
+// cartridge's (`experience.nav`).
+export const NAV_IDS: {
+  id: WorkspaceView;
+  key: keyof Experience["nav"];
+  icon: IconName;
+}[] = [
+  { id: "overview", key: "overview", icon: "grid" },
+  { id: "chat", key: "chat", icon: "spark" },
+  { id: "runs", key: "runs", icon: "chart" },
+  { id: "data", key: "resources", icon: "data" },
+  { id: "deliverables", key: "deliverables", icon: "file" },
+];
+export const navItems = (experience: Experience) =>
+  NAV_IDS.map((n) => ({ ...n, label: experience.nav[n.key] }));
 interface Props {
   projects: Project[];
   activeProjectId: string;
   onSelectProject: (id: string) => void;
   onCreatedProject: (p: Project) => void;
-
   conversations: Conversation[];
   activeConvId: string | null;
   onSelectConv: (id: string) => void;
+  onDeleteConv: (conversation: Conversation) => void;
   onNewChat: () => void;
-  onDeleteConv: (id: string) => void;
-
-  activeRunId: string | null;
-  onSelectRun: (id: string) => void;
-  onNewRun: () => void;
-  runsRefreshKey: number;
-
+  view: WorkspaceView;
+  onNavigate: (view: WorkspaceView) => void;
+  collapsed: boolean;
   onCollapse: () => void;
   onOpenSettings: () => void;
+  onNewRun: () => void;
+  gateCount: number;
+  mobileOpen: boolean;
+  onCloseMobile: () => void;
 }
-
-export function Sidebar({
-  projects,
-  activeProjectId,
-  onSelectProject,
-  onCreatedProject,
-  conversations,
-  activeConvId,
-  onSelectConv,
-  onNewChat,
-  onDeleteConv,
-  activeRunId,
-  onSelectRun,
-  onNewRun,
-  runsRefreshKey,
-  onCollapse,
-  onOpenSettings,
-}: Props) {
-  const [runs, setRuns] = useState<RunSummary[]>([]);
-
+export function Sidebar(p: Props) {
+  const experience = useExperience();
+  const aside = useRef<HTMLElement>(null);
   useEffect(() => {
-    let live = true;
-    const load = () =>
-      api.projectRuns(activeProjectId, { limit: 30 }).then((r) => live && setRuns(r)).catch(() => {});
-    load();
-    const t = setInterval(load, 4000);
+    if (!p.mobileOpen) return;
+    const previous = document.activeElement as HTMLElement | null;
+    const main = document.querySelector<HTMLElement>(".studio-main");
+    if (main) main.inert = true;
+    aside.current?.querySelector<HTMLButtonElement>(".mobile-close")?.focus();
     return () => {
-      live = false;
-      clearInterval(t);
+      if (main) main.inert = false;
+      previous?.focus();
     };
-  }, [runsRefreshKey, activeProjectId]);
-
+  }, [p.mobileOpen]);
   return (
-    <div className="sidebar">
-      <div className="sidebar-head">
-        <ProjectSwitcher
-          projects={projects}
-          activeId={activeProjectId}
-          onSelect={onSelectProject}
-          onCreated={onCreatedProject}
+    <>
+      {p.mobileOpen && (
+        <button
+          className="sidebar-backdrop"
+          aria-label="Cerrar navegación"
+          onClick={p.onCloseMobile}
         />
-        <button className="icon-btn" onClick={onCollapse} title="Collapse" aria-label="Collapse sidebar">
-          «
-        </button>
-      </div>
-
-      <div className="sidebar-scroll">
-        <button className="side-action" onClick={onNewChat}>
-          <span>＋</span> New chat
-        </button>
-
-        <div className="side-label">Chats</div>
-        {conversations.length === 0 && <div className="side-empty">No chats yet.</div>}
-        {conversations.map((c) => (
-          <div
-            key={c.id}
-            className={`side-item ${activeConvId === c.id ? "active" : ""}`}
-            onClick={() => onSelectConv(c.id)}
+      )}
+      <aside
+        ref={aside}
+        role={p.mobileOpen ? "dialog" : undefined}
+        aria-modal={p.mobileOpen || undefined}
+        onKeyDown={(event) => {
+          if (!p.mobileOpen || event.key !== "Tab") return;
+          const controls = Array.from(
+            aside.current?.querySelectorAll<HTMLElement>(
+              "button:not(:disabled), input, select, textarea, a[href]",
+            ) ?? [],
+          ).filter((el) => el.getClientRects().length > 0);
+          const first = controls[0],
+            last = controls[controls.length - 1];
+          if (event.shiftKey && document.activeElement === first) {
+            event.preventDefault();
+            last?.focus();
+          }
+          if (!event.shiftKey && document.activeElement === last) {
+            event.preventDefault();
+            first?.focus();
+          }
+        }}
+        className={`studio-sidebar ${p.collapsed ? "is-collapsed" : ""} ${p.mobileOpen ? "mobile-open" : ""}`}
+        aria-label="Navegación principal"
+      >
+        <div className="sidebar-brand">
+          <BrandMark />
+          <span className="brand-word">
+            {experience.title.toLowerCase()}
+            <span className="brand-period">.</span>
+          </span>
+          <button
+            className="icon-btn collapse-btn"
+            onClick={p.onCollapse}
+            aria-label={
+              p.collapsed ? "Expandir navegación" : "Contraer navegación"
+            }
           >
-            <span className="side-item-icon">💬</span>
-            <span className="side-item-title">{c.title || "New chat"}</span>
+            <Icon name="panel" size={17} />
+          </button>
+          <button
+            className="icon-btn mobile-close"
+            onClick={p.onCloseMobile}
+            aria-label="Cerrar navegación"
+          >
+            <Icon name="close" />
+          </button>
+        </div>
+        <div className="sidebar-project">
+          <ProjectSwitcher
+            projects={p.projects}
+            activeId={p.activeProjectId}
+            onSelect={p.onSelectProject}
+            onCreated={p.onCreatedProject}
+          />
+        </div>
+        <div className="sidebar-section-label">ESPACIO DE TRABAJO</div>
+        <nav className="workspace-nav">
+          {navItems(experience).map((item) => (
             <button
-              className="side-item-x"
-              title="Delete chat"
-              onClick={(e) => {
-                e.stopPropagation();
-                onDeleteConv(c.id);
-              }}
+              key={item.id}
+              title={item.label}
+              className={`nav-item ${p.view === item.id ? "selected" : ""}`}
+              aria-current={p.view === item.id ? "page" : undefined}
+              onClick={() => p.onNavigate(item.id)}
             >
-              ✕
+              <Icon name={item.icon} />
+              <span>{item.label}</span>
+              {item.id === "runs" && p.gateCount > 0 && (
+                <b className="nav-count">{p.gateCount}</b>
+              )}
+              {item.id === "chat" && <span className="nav-ai">IA</span>}
+            </button>
+          ))}
+        </nav>
+        <div className="sidebar-conversations">
+          <div className="sidebar-section-label">
+            CONVERSACIONES
+            <button
+              className="icon-btn"
+              onClick={p.onNewChat}
+              aria-label="Nueva conversación"
+            >
+              <Icon name="plus" size={16} />
             </button>
           </div>
-        ))}
-
-        <button className="side-action" style={{ marginTop: 14 }} onClick={onNewRun}>
-          <span>＋</span> New run
-        </button>
-
-        <div className="side-label">Runs</div>
-        {runs.length === 0 && <div className="side-empty">No runs yet.</div>}
-        {runs.map((r) => (
-          <div
-            key={r.run_id}
-            className={`side-item run ${activeRunId === r.run_id ? "active" : ""}`}
-            onClick={() => onSelectRun(r.run_id)}
-            title={r.run_id}
-          >
-            <span className="side-item-title mono" style={{ fontSize: 12 }}>
-              {r.run_id.replace(/^eda-to-report-/, "eda·").replace(/^eda-charts-?/, "charts·")}
-            </span>
-            <div className="side-run-meta">
-              <StatusPill status={r.status} />
-              <span className="faint mono" style={{ fontSize: 10 }}>
-                {r.steps_done}/{r.steps_total}
-              </span>
-              {r.cost_usd != null && (
-                <span className="faint mono" style={{ fontSize: 10 }}>
-                  {cost(r.cost_usd)}
-                </span>
-              )}
-              <span className="faint" style={{ marginLeft: "auto", fontSize: 10 }}>
-                {ago(r.finished_at ?? r.started_at)}
-              </span>
+          {p.conversations.map((c) => (
+            <div className="conversation-row" key={c.id}>
+              <button
+                className={`conversation-link ${p.view === "chat" && p.activeConvId === c.id ? "selected" : ""}`}
+                onClick={() => p.onSelectConv(c.id)}
+              >
+                <Icon name="chat" size={15} />
+                <span>{c.title || "Nueva conversación"}</span>
+              </button>
+              <button
+                className="icon-btn conversation-delete"
+                aria-label={`Eliminar conversación: ${c.title}`}
+                onClick={() => p.onDeleteConv(c)}
+              >
+                <Icon name="trash" size={14} />
+              </button>
             </div>
+          ))}
+          {p.conversations.length === 0 && (
+            <p className="sidebar-empty">
+              Tus ideas empiezan con una buena pregunta.
+            </p>
+          )}
+        </div>
+        <div className="sidebar-bottom">
+          <div className="workspace-note">
+            <span className="note-symbol">
+              <Icon name="spark" size={19} />
+            </span>
+            <strong>{experience.tagline}</strong>
+            <p>Un equipo de especialistas, en tu espacio de trabajo.</p>
+            <button onClick={p.onNewRun}>
+              Crear {experience.nouns.run.singular}{" "}
+              <Icon name="arrow" size={16} />
+            </button>
           </div>
-        ))}
-
-        <DatasetsSection project={activeProjectId} />
-      </div>
-
-      <button className="sidebar-user" onClick={onOpenSettings} title="Settings">
-        <span className="user-avatar">N</span>
-        <span className="user-name">You</span>
-        <span className="user-gear">⚙</span>
-      </button>
-    </div>
+          <button
+            className="sidebar-user"
+            onClick={p.onOpenSettings}
+            title="Preferencias"
+          >
+            <span className="user-avatar">TU</span>
+            <span className="user-name">
+              Tu espacio<span>Preferencias del workspace</span>
+            </span>
+            <Icon name="settings" size={19} />
+          </button>
+        </div>
+      </aside>
+    </>
   );
 }

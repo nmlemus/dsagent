@@ -5,6 +5,7 @@ import type { Message } from "@ag-ui/client";
 
 export interface Conversation {
   id: string;
+  draft?: boolean;
   threadId: string; // same as id — the AG-UI thread + the session id
   title: string;
   projectId: string;
@@ -13,7 +14,14 @@ export interface Conversation {
 
 export function newConversation(projectId = "default"): Conversation {
   const id = crypto.randomUUID();
-  return { id, threadId: id, title: "New chat", projectId, updatedAt: Date.now() };
+  return {
+    id,
+    draft: true,
+    threadId: id,
+    title: "New chat",
+    projectId,
+    updatedAt: Date.now(),
+  };
 }
 
 export function fromHeader(h: {
@@ -22,7 +30,13 @@ export function fromHeader(h: {
   project: string;
   updated_at: number;
 }): Conversation {
-  return { id: h.id, threadId: h.id, title: h.title, projectId: h.project, updatedAt: h.updated_at };
+  return {
+    id: h.id,
+    threadId: h.id,
+    title: h.title,
+    projectId: h.project,
+    updatedAt: h.updated_at,
+  };
 }
 
 // A readable title from the first user message.

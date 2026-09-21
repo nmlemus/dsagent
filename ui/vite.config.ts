@@ -6,7 +6,7 @@ import react from "@vitejs/plugin-react";
 // so there is no CORS story and the SPA talks to the real backend.
 const API = process.env.DSAGENT_API ?? "http://localhost:8000";
 const proxy = Object.fromEntries(
-  ["/agent", "/runs", "/cartridges", "/chart-theme", "/a2ui"].map((p) => [
+  ["/agent", "/projects", "/sessions", "/runs", "/cartridges", "/chart-theme", "/a2ui"].map((p) => [
     p,
     { target: API, changeOrigin: true },
   ]),

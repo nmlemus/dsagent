@@ -1,32 +1,35 @@
-import { useEffect } from "react";
 import { Launcher } from "./Launcher";
-
+import { Dialog } from "./Dialog";
+import { useExperience } from "../lib/experience";
 export function LauncherModal({
   project,
+  cartridge,
   session,
+  initialDataset,
   onLaunched,
   onClose,
 }: {
   project: string;
+  cartridge: string;
   session: string;
+  initialDataset?: string;
   onLaunched: (runId: string) => void;
   onClose: () => void;
 }) {
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => e.key === "Escape" && onClose();
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [onClose]);
-
+  const { nouns } = useExperience();
   return (
-    <div className="modal-scrim" onClick={onClose}>
-      <div className="modal" onClick={(e) => e.stopPropagation()}>
-        <div className="col-head">
-          <span>New run</span>
-          <button className="icon-btn" onClick={onClose} aria-label="Close">✕</button>
-        </div>
-        <Launcher project={project} session={session} onLaunched={onLaunched} />
-      </div>
-    </div>
+    <Dialog
+      title={`Preparar ${nouns.run.singular}`}
+      className="launcher-dialog"
+      onClose={onClose}
+    >
+      <Launcher
+        project={project}
+        cartridge={cartridge}
+        session={session}
+        initialDataset={initialDataset}
+        onLaunched={onLaunched}
+      />
+    </Dialog>
   );
 }

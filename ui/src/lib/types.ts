@@ -2,12 +2,7 @@
 // fields the UI reads are typed; the server may send more.
 
 export type RunStatus =
-  | "pending"
-  | "running"
-  | "awaiting_gate"
-  | "done"
-  | "failed"
-  | "stopped";
+  "pending" | "running" | "awaiting_gate" | "done" | "failed" | "stopped";
 
 export interface InputSpec {
   type: string;
@@ -15,6 +10,10 @@ export interface InputSpec {
   default: unknown;
   options: string[] | null;
   guess: unknown;
+  // Presentation, from workflow.yaml. `null` means "show the input's name".
+  label: string | null;
+  placeholder: string | null;
+  help: string | null;
 }
 
 export interface GateSpec {
@@ -24,6 +23,7 @@ export interface GateSpec {
 
 export interface StepShape {
   id: string;
+  title: string | null;
   persona: string;
   env: string;
   needs: string[];
@@ -36,6 +36,11 @@ export interface WorkflowShape {
   name: string;
   cartridge: string;
   description: string;
+  title: string | null;
+  // What the user is told the workflow does; `description` is for the model.
+  summary: string | null;
+  icon: string | null;
+  badge: string | null;
   env: string;
   title_input: string | null;
   data_input: string | null;
@@ -44,10 +49,56 @@ export interface WorkflowShape {
   steps: StepShape[];
 }
 
+// --- The experience: every word the UI shows inside its fixed structure,
+// declared by the cartridge (`cartridge.yaml: experience`). Mirrors
+// `dsagent.cartridge.models.Experience`; the server always sends it complete.
+
+export interface Noun {
+  singular: string;
+  plural: string;
+}
+
+export interface Experience {
+  version: number;
+  title: string;
+  tagline: string;
+  nouns: { run: Noun; resource: Noun; deliverable: Noun };
+  nav: {
+    overview: string;
+    chat: string;
+    runs: string;
+    resources: string;
+    deliverables: string;
+  };
+  home: {
+    eyebrow: string;
+    headline: string;
+    intro: string;
+    stages: string[];
+    steps: { title: string; text: string }[];
+  };
+  assistant: {
+    headline: string;
+    intro: string;
+    placeholder: string;
+    suggestions: string[];
+    instructions: string;
+  };
+  resources: { intro: string; formats: string[] };
+}
+
+export interface PersonaInfo {
+  name: string;
+  role: string;
+  description: string;
+}
+
 export interface CartridgeInfo {
   name: string;
   version: string;
   description: string;
+  experience: Experience;
+  personas: PersonaInfo[];
 }
 
 export interface Project {

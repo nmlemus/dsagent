@@ -1,9 +1,14 @@
 import { lazy, Suspense, useEffect, useState } from "react";
 import DOMPurify from "dompurify";
 import { marked } from "marked";
-import { api } from "../lib/api";
+import type { FileSource } from "../lib/api";
 import { ext } from "../lib/format";
 import { isVegaLite } from "../lib/vega-detect";
+
+// One viewer for every file the product shows, wherever it lives: a run's
+// workspace or a project's chat workspace. It is given a `source` (how to build
+// a URL and how to ask for a table preview) rather than a run id, so a report a
+// persona wrote in a conversation reads exactly like one a run produced.
 
 // The vega runtime is heavy; load it only when a chart is actually shown.
 const ChartView = lazy(() => import("./ChartView"));
@@ -13,11 +18,11 @@ const TABLE = new Set(["csv", "tsv", "parquet"]);
 const TEXT = new Set(["txt", "log", "py", "yaml", "yml", "toml", "sh"]);
 
 export function FileViewer({
-  runId,
+  source,
   path,
   full = false,
 }: {
-  runId: string;
+  source: FileSource;
   path: string;
   full?: boolean;
 }) {
@@ -27,7 +32,7 @@ export function FileViewer({
   if (IMG.has(kind)) {
     return (
       <div className={vc}>
-        <img src={api.fileUrl(runId, path)} alt={path} />
+        <img src={source.url(path)} alt={path} />
       </div>
     );
   }
@@ -36,58 +41,86 @@ export function FileViewer({
     // in-app iframe can't paint it reliably (a Chrome bug where an iframe under a
     // composited page loads but never paints — see the decisions log), and a
     // report deserves the whole window anyway. So we open it as its own page.
-    const url = api.fileUrl(runId, path);
     return (
       <div className="viewer" style={{ padding: 24, textAlign: "center" }}>
         <p className="muted" style={{ marginTop: 0 }}>
-          This is a full HTML report with interactive charts.
+          Documento completo con contenido interactivo.
         </p>
-        <a className="btn primary" href={url} target="_blank" rel="noreferrer">
-          Open report in a new tab ↗
+        <a
+          className="btn primary"
+          href={source.url(path)}
+          target="_blank"
+          rel="noreferrer"
+        >
+          Abrir documento completo ↗
         </a>
       </div>
     );
   }
-  if (TABLE.has(kind)) return <TablePreview runId={runId} path={path} full={full} />;
-  if (kind === "md") return <Markdown runId={runId} path={path} full={full} />;
-  if (kind === "json") return <JsonFile runId={runId} path={path} />;
-  if (TEXT.has(kind) || kind === "") return <TextFile runId={runId} path={path} />;
+  if (TABLE.has(kind))
+    return <TablePreview source={source} path={path} full={full} />;
+  if (kind === "md")
+    return <Markdown source={source} path={path} full={full} />;
+  if (kind === "json") return <JsonFile source={source} path={path} />;
+  if (TEXT.has(kind) || kind === "")
+    return <TextFile source={source} path={path} />;
 
   return (
     <div className="viewer">
       <div className="empty">
-        No inline viewer for “.{kind}”.{" "}
-        <a href={api.fileUrl(runId, path)} target="_blank" rel="noreferrer">
-          Open raw
+        Vista previa no disponible para “.{kind}”.{" "}
+        <a href={source.url(path)} target="_blank" rel="noreferrer">
+          Abrir archivo
         </a>
       </div>
     </div>
   );
 }
 
-function useText(runId: string, path: string) {
+function useText(source: FileSource, path: string) {
   const [text, setText] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const url = source.url(path);
   useEffect(() => {
     let live = true;
     setText(null);
     setError(null);
-    fetch(api.fileUrl(runId, path))
+    fetch(url)
       .then((r) => (r.ok ? r.text() : Promise.reject(new Error(`${r.status}`))))
       .then((t) => live && setText(t))
       .catch((e) => live && setError(String(e)));
     return () => {
       live = false;
     };
-  }, [runId, path]);
+  }, [url]);
   return { text, error };
 }
 
-function Markdown({ runId, path, full }: { runId: string; path: string; full?: boolean }) {
-  const { text, error } = useText(runId, path);
-  if (error) return <div className="viewer"><div className="empty">{error}</div></div>;
-  if (text === null) return <div className="viewer"><div className="empty">Loading…</div></div>;
-  const html = DOMPurify.sanitize(marked.parse(text, { async: false }) as string);
+function Markdown({
+  source,
+  path,
+  full,
+}: {
+  source: FileSource;
+  path: string;
+  full?: boolean;
+}) {
+  const { text, error } = useText(source, path);
+  if (error)
+    return (
+      <div className="viewer">
+        <div className="empty">{error}</div>
+      </div>
+    );
+  if (text === null)
+    return (
+      <div className="viewer">
+        <div className="empty">Cargando…</div>
+      </div>
+    );
+  const html = DOMPurify.sanitize(
+    marked.parse(text, { async: false }) as string,
+  );
   return (
     <div className={full ? "viewer full" : "viewer"}>
       <div className="md" dangerouslySetInnerHTML={{ __html: html }} />
@@ -95,21 +128,41 @@ function Markdown({ runId, path, full }: { runId: string; path: string; full?: b
   );
 }
 
-function JsonFile({ runId, path }: { runId: string; path: string }) {
-  const { text, error } = useText(runId, path);
-  if (error) return <div className="viewer"><div className="empty">{error}</div></div>;
-  if (text === null) return <div className="viewer"><div className="empty">Loading…</div></div>;
+function JsonFile({ source, path }: { source: FileSource; path: string }) {
+  const { text, error } = useText(source, path);
+  if (error)
+    return (
+      <div className="viewer">
+        <div className="empty">{error}</div>
+      </div>
+    );
+  if (text === null)
+    return (
+      <div className="viewer">
+        <div className="empty">Cargando…</div>
+      </div>
+    );
   let parsed: unknown;
   try {
     parsed = JSON.parse(text);
   } catch {
-    return <div className="viewer"><pre>{text}</pre></div>;
+    return (
+      <div className="viewer">
+        <pre>{text}</pre>
+      </div>
+    );
   }
   // A Vega-Lite spec renders as an interactive chart (vega-lite v5, matching the
   // server's validation grammar); any other JSON is shown pretty-printed.
   if (isVegaLite(parsed))
     return (
-      <Suspense fallback={<div className="viewer"><div className="empty">Loading chart…</div></div>}>
+      <Suspense
+        fallback={
+          <div className="viewer">
+            <div className="empty">Preparando gráfico…</div>
+          </div>
+        }
+      >
         <ChartView spec={parsed} />
       </Suspense>
     );
@@ -120,38 +173,69 @@ function JsonFile({ runId, path }: { runId: string; path: string }) {
   );
 }
 
-function TextFile({ runId, path }: { runId: string; path: string }) {
-  const { text, error } = useText(runId, path);
-  if (error) return <div className="viewer"><div className="empty">{error}</div></div>;
+function TextFile({ source, path }: { source: FileSource; path: string }) {
+  const { text, error } = useText(source, path);
+  if (error)
+    return (
+      <div className="viewer">
+        <div className="empty">{error}</div>
+      </div>
+    );
   return (
     <div className="viewer">
-      <pre>{text ?? "Loading…"}</pre>
+      <pre>{text ?? "Cargando…"}</pre>
     </div>
   );
 }
 
-function TablePreview({ runId, path, full }: { runId: string; path: string; full?: boolean }) {
-  const [data, setData] = useState<{ columns: string[]; rows: unknown[][]; truncated?: boolean } | null>(
-    null,
-  );
+function TablePreview({
+  source,
+  path,
+  full,
+}: {
+  source: FileSource;
+  path: string;
+  full?: boolean;
+}) {
+  const [data, setData] = useState<{
+    columns: string[];
+    rows: unknown[][];
+    truncated?: boolean;
+  } | null>(null);
   const [error, setError] = useState<string | null>(null);
   useEffect(() => {
     let live = true;
     setData(null);
     setError(null);
-    api
-      .preview(runId, path)
+    source
+      .preview(path)
       .then((d) => live && setData(d))
       .catch((e) => live && setError(String(e)));
     return () => {
       live = false;
     };
-  }, [runId, path]);
+    // `source` is rebuilt on each render by its owner; the pair that identifies
+    // the request is the URL and the path.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [source.url(path), path]);
 
-  if (error) return <div className="viewer"><div className="empty">{error}</div></div>;
-  if (!data) return <div className="viewer"><div className="empty">Loading preview…</div></div>;
+  if (error)
+    return (
+      <div className="viewer">
+        <div className="empty">{error}</div>
+      </div>
+    );
+  if (!data)
+    return (
+      <div className="viewer">
+        <div className="empty">Preparando vista previa…</div>
+      </div>
+    );
   return (
-    <div className="viewer" style={{ overflowX: "auto", maxHeight: full ? "none" : "60vh" }}>
+    <div
+      className="viewer"
+      style={{ overflowX: "auto", maxHeight: full ? "none" : "60vh" }}
+    >
       <table className="preview">
         <thead>
           <tr>
@@ -170,7 +254,11 @@ function TablePreview({ runId, path, full }: { runId: string; path: string; full
           ))}
         </tbody>
       </table>
-      {data.truncated && <div className="faint" style={{ padding: 8 }}>Preview truncated.</div>}
+      {data.truncated && (
+        <div className="faint" style={{ padding: 8 }}>
+          Vista previa parcial.
+        </div>
+      )}
     </div>
   );
 }
