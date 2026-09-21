@@ -135,7 +135,12 @@ def _load_workflows(root: Path, declared: list[str]) -> dict[str, Workflow]:
             raise CartridgeError(f"workflow '{rel}' declared but {wf_yaml} is missing")
         data = _read_yaml(wf_yaml)
         data["path"] = wdir
-        wf = Workflow(**data)
+        try:
+            wf = Workflow(**data)
+        except ValidationError as e:
+            # Pydantic's report is for a developer; a cartridge author needs the
+            # file and the rule. The message is preserved, not swallowed.
+            raise CartridgeError(f"{wf_yaml}: {e}") from e
         for s in wf.steps:
             if not (wdir / s.instructions).exists():
                 raise CartridgeError(f"workflow {wf.name}: step {s.id} instructions not found: {s.instructions}")
@@ -303,14 +308,27 @@ def load_cartridge(root: str | Path, *, generate_commands: bool = True) -> Cartr
 
 
 def load_cartridges(roots: list[str | Path]) -> list[Cartridge]:
-    """Load several cartridges; a persona defined twice is an error (no silent override)."""
+    """Load several cartridges; a name defined twice is an error (no silent override).
+
+    Both personas and workflows: the API, the driver and the workflow tools each
+    build a dict keyed by workflow name over every loaded cartridge, so a
+    duplicate meant the last one loaded quietly won and a run went to the other
+    team's steps.
+    """
     loaded: list[Cartridge] = []
-    seen: dict[str, str] = {}
+    personas: dict[str, str] = {}
+    workflows: dict[str, str] = {}
     for r in roots:
         c = load_cartridge(r)
         for p in c.personas:
-            if p in seen:
-                raise CartridgeError(f"persona '{p}' defined in both '{seen[p]}' and '{c.name}'")
-            seen[p] = c.name
+            if p in personas:
+                raise CartridgeError(f"persona '{p}' defined in both '{personas[p]}' and '{c.name}'")
+            personas[p] = c.name
+        for w in c.workflows:
+            if w in workflows:
+                raise CartridgeError(
+                    f"workflow '{w}' defined in both '{workflows[w]}' and '{c.name}'"
+                )
+            workflows[w] = c.name
         loaded.append(c)
     return loaded

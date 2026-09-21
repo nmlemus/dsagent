@@ -5,9 +5,11 @@ developed — no model, no kernel, and the same routes a live server serves. The
 live driver's own wiring is asserted in `tests/test_driver.py`.
 """
 
+import io
 import json
 import threading
 import time
+import zipfile
 from pathlib import Path
 
 import pytest
@@ -411,6 +413,25 @@ def test_a_run_downloads_as_one_zip_of_its_deliverables(client):
     everything = client.get(f"/runs/{run_id}/download", params={"everything": True})
     with zipfile.ZipFile(io.BytesIO(everything.content)) as archive:
         assert any("data/seattle-weather.csv" in n for n in archive.namelist())
+
+
+def test_the_zip_does_not_follow_a_link_out_of_the_workspace(client, tmp_path):
+    """`_archive_members` accepted any `is_file()` and `archive.write` follows a
+    symlink, so a link a persona wrote into its workspace put the bytes of a
+    file outside the run into the download. The sentinel here is synthetic."""
+    run_id = start_a_run(client)
+    wait_for(lambda: client.get(f"/runs/{run_id}/files/artifacts/data-gate.md").status_code == 200)
+    workspace = Path(client.app.state.runs_dir) / run_id / "workspace"
+    outside = tmp_path / "outside.txt"
+    outside.write_text("SENTINEL-OUTSIDE-THE-WORKSPACE")
+    (workspace / "artifacts" / "linked.txt").symlink_to(outside)
+
+    body = client.get(f"/runs/{run_id}/download", params={"everything": True}).content
+    with zipfile.ZipFile(io.BytesIO(body)) as archive:
+        names = archive.namelist()
+        assert not any(n.endswith("linked.txt") for n in names), names
+        for name in names:
+            assert b"SENTINEL-OUTSIDE-THE-WORKSPACE" not in archive.read(name)
 
 
 def test_downloading_a_run_that_has_produced_nothing_is_a_404(client):

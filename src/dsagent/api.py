@@ -756,15 +756,35 @@ def _estimate(runs_dir: Path, workflow: str) -> dict[str, Any]:
     }
 
 
+def _inside(workspace: Path, rel: str) -> bool:
+    """Does `rel` name a regular file that really lives under the workspace?
+
+    A download used to accept any `is_file()`, and `ZipFile.write` follows a
+    symlink, so a link a persona wrote into its own workspace put the bytes of a
+    file outside the run into the archive — reproduced with a synthetic
+    sentinel. Resolving before deciding is the same rule the file routes apply;
+    `deliverables` is read from the run's events, which a model influences too,
+    so the declared list is checked as well as the walked one.
+    """
+    try:
+        target = (workspace / rel).resolve()
+        base = workspace.resolve()
+    except OSError:
+        return False
+    return target.is_relative_to(base) and target.is_file() and not target.is_symlink()
+
+
 def _archive_members(run_dir: Path, workspace: Path, *, everything: bool) -> list[str]:
     """What goes into a run's zip, workspace-relative and in a stable order."""
     if everything:
         return sorted(
             f.relative_to(workspace).as_posix()
             for f in workspace.rglob("*")
-            if f.is_file() and ".dsagent" not in f.relative_to(workspace).parts
+            if f.is_file()
+            and ".dsagent" not in f.relative_to(workspace).parts
+            and _inside(workspace, f.relative_to(workspace).as_posix())
         )
-    return [rel for rel in deliverables(run_dir) if (workspace / rel).is_file()]
+    return [rel for rel in deliverables(run_dir) if _inside(workspace, rel)]
 
 
 def _is_replay(driver: Any) -> bool:

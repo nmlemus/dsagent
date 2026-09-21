@@ -80,6 +80,21 @@ def _backend(env: Env, skills_root: Path) -> CompositeBackend:
     )
 
 
+def _contained(root: Path, name: str) -> Path | None:
+    """`root/name`, resolved, or None if it does not stay under `root`.
+
+    One helper because every "a model chose this path" site needs the same
+    answer: resolve first (so `..`, an absolute path and a symlink all collapse
+    to where the file really is), then ask whether that is still inside.
+    """
+    try:
+        target = (root / name).resolve()
+        base = root.resolve()
+    except OSError:
+        return None
+    return target if target.is_relative_to(base) else None
+
+
 def _skill_script_tool(cartridge: Cartridge, persona: str, env: Env, workspace: Path):
     """A persona's only way to run the scripts that ship with its skills.
 
@@ -88,6 +103,14 @@ def _skill_script_tool(cartridge: Cartridge, persona: str, env: Env, workspace: 
     detail of skill materialization. Resolving it here also enforces the matrix:
     asking for a skill the persona was not granted is an error, not a path that
     happens not to exist.
+
+    Scope is a boundary on execution, not only on discovery. The skill's name is
+    checked *and* the resolved script has to sit inside that skill's `scripts/`
+    directory: the name check alone let `../../../<other persona>/<other
+    skill>/scripts/x.py` run a script from a skill this persona was never
+    granted — reproduced, exit code 0. Containment is decided after resolving
+    the path, so a symlink pointing out of the skill is refused too: what
+    matters is where the file is, not how it was spelled.
     """
     granted = sorted(s.name for s in cartridge.skills_for(persona))
 
@@ -112,14 +135,19 @@ def _skill_script_tool(cartridge: Cartridge, persona: str, env: Env, workspace: 
                 f"You have: {', '.join(granted) or 'none'}."
             )
         scripts = workspace / SKILLS_DIR / persona / skill / "scripts"
-        target = scripts / script
+        target = _contained(scripts, script)
+        if target is None:
+            return (
+                f"error: '{script}' is outside skill '{skill}'. A script is named by its "
+                f"file name inside the skill's scripts/ directory."
+            )
         if not target.is_file():
             available = sorted(f.name for f in scripts.glob("*")) if scripts.is_dir() else []
             return (
                 f"error: skill '{skill}' has no script '{script}'. "
                 f"Available: {', '.join(available) or 'none'}."
             )
-        command = [env.python, str(target.relative_to(workspace)), *(argv or [])]
+        command = [env.python, str(target.relative_to(workspace.resolve())), *(argv or [])]
         result = env.backend.execute(" ".join(shlex.quote(a) for a in command))
         return f"exit code: {result.exit_code}\n{result.output}"
 

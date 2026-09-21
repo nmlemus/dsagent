@@ -53,6 +53,61 @@ def test_missing_traversal_skill_is_rejected(tmp_path):
         load_cartridge(root)
 
 
+def test_two_steps_with_the_same_id_are_rejected(tmp_path):
+    """`ordered_steps` resolves an id through `step()`, which returns the first
+    match, so a duplicate silently ran the first step twice and never ran the
+    second — its instructions, its persona and its produces were all ignored."""
+    from dsagent.cartridge.models import Step, Workflow
+
+    with pytest.raises(ValueError, match="duplicate step id"):
+        Workflow(
+            name="probe",
+            path=Path("."),
+            steps=[
+                Step(id="same", persona="a", instructions="first.md"),
+                Step(id="same", persona="b", instructions="second.md"),
+            ],
+        )
+
+
+def test_a_duplicate_step_id_in_a_cartridge_fails_to_load(tmp_path):
+    root = tmp_path / "dup"
+    shutil.copytree(DS, root)
+    wf = root / "workflows" / "eda-to-report" / "workflow.yaml"
+    wf.write_text(wf.read_text().replace("  - id: analyze\n", "  - id: profile\n", 1))
+    with pytest.raises(CartridgeError, match="duplicate step id"):
+        load_cartridge(root)
+
+
+def test_two_cartridges_may_not_declare_the_same_workflow(tmp_path):
+    """Personas were checked; workflows were not, and every lookup the API, the
+    driver and the tools build is a dict keyed by workflow name — so the last
+    cartridge loaded silently won and runs went to the wrong team."""
+    from dsagent.cartridge import load_cartridges
+
+    # A minimal cartridge whose only collision with `ds` is the workflow name:
+    # different cartridge, different persona, different skill.
+    twin = tmp_path / "twin"
+    (twin / "agents").mkdir(parents=True)
+    (twin / "skills" / "notes").mkdir(parents=True)
+    (twin / "workflows" / "eda-to-report" / "steps").mkdir(parents=True)
+    (twin / "agents" / "sam.md").write_text("---\nname: sam\nskills: [notes]\n---\nYou are Sam.\n")
+    (twin / "skills" / "notes" / "SKILL.md").write_text(
+        "---\nname: notes\ndescription: n\n---\nnotes\n"
+    )
+    (twin / "workflows" / "eda-to-report" / "steps" / "a.md").write_text("Do the thing.")
+    (twin / "workflows" / "eda-to-report" / "workflow.yaml").write_text(
+        "name: eda-to-report\nsteps:\n"
+        "  - {id: a, persona: sam, instructions: steps/a.md, produces: [out.md]}\n"
+    )
+    (twin / "cartridge.yaml").write_text(
+        "name: twin\npersonas:\n  sam: {role: Writer, workflows: [eda-to-report]}\n"
+        "skills:\n  notes: {scope: all}\nworkflows: [workflows/eda-to-report]\n"
+    )
+    with pytest.raises(CartridgeError, match="workflow 'eda-to-report'"):
+        load_cartridges([DS, twin])
+
+
 def test_plain_plugin_without_cartridge_yaml_is_rejected(tmp_path):
     root = tmp_path / "plugin"
     (root / "skills").mkdir(parents=True)

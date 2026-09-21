@@ -119,6 +119,48 @@ def test_a_failing_script_reports_its_exit_code_and_stderr(env_and_workspace):
     assert "bad key column" in out
 
 
+def test_a_script_path_may_not_climb_out_of_the_granted_skill(env_and_workspace):
+    """Scope has to be a boundary on *execution*, not only on discovery.
+
+    The skill name was checked and then joined to whatever `script` said, so a
+    persona holding `reports` could run `../../../noel/ml/scripts/x.py` — a
+    script belonging to a skill it was never granted, and to another persona.
+    Reproduced before the fix: `exit code: 0` and the script's own output.
+    """
+    env, workspace = env_and_workspace
+    tool = tool_for("marie", env, workspace)
+    write_script(workspace, "noel", "ml", "probe.py", 'print("OUTSIDE")')
+
+    out = tool.invoke({"skill": "reports", "script": "../../../noel/ml/scripts/probe.py"})
+    assert "OUTSIDE" not in out
+    assert "outside" in out.lower() or "no script" in out.lower()
+
+    # The same climb expressed with an absolute path, and one that stays inside
+    # the persona but leaves the skill.
+    assert "OUTSIDE" not in tool.invoke(
+        {"skill": "reports", "script": str(workspace / SKILLS_DIR / "noel/ml/scripts/probe.py")}
+    )
+    write_script(workspace, "marie", "eda", "peek.py", 'print("OTHER_SKILL")')
+    assert "OTHER_SKILL" not in tool.invoke(
+        {"skill": "reports", "script": "../../eda/scripts/peek.py"}
+    )
+
+
+def test_a_symlinked_script_that_leaves_the_skill_is_refused(env_and_workspace, tmp_path):
+    """A link is a path that resolves elsewhere; containment is about where the
+    file *is*, not about how it was spelled."""
+    env, workspace = env_and_workspace
+    tool = tool_for("marie", env, workspace)
+    outside = tmp_path / "outside.py"
+    outside.write_text('print("OUTSIDE_VIA_LINK")')
+    scripts = workspace / SKILLS_DIR / "marie" / "reports" / "scripts"
+    scripts.mkdir(parents=True, exist_ok=True)
+    (scripts / "linked.py").symlink_to(outside)
+
+    out = tool.invoke({"skill": "reports", "script": "linked.py"})
+    assert "OUTSIDE_VIA_LINK" not in out
+
+
 def test_a_skill_the_persona_was_not_granted_is_an_error(env_and_workspace):
     """Scope is enforced here, not left to a path that happens not to exist."""
     env, workspace = env_and_workspace

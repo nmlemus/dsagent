@@ -131,6 +131,19 @@ class Workflow(BaseModel):
     path: Path
     """Workflow directory (contains workflow.yaml, steps/, templates/)."""
 
+    @model_validator(mode="after")
+    def _unique_step_ids(self) -> Workflow:
+        """A step id is the key everything else uses — `needs`, the event
+        stream, `run.json`, a resumed run. `step()` returns the first match, so
+        a duplicate ran the first step twice and never ran the second, silently.
+        """
+        seen: set[str] = set()
+        for s in self.steps:
+            if s.id in seen:
+                raise ValueError(f"workflow {self.name}: duplicate step id '{s.id}'")
+            seen.add(s.id)
+        return self
+
     def step(self, step_id: str) -> Step:
         for s in self.steps:
             if s.id == step_id:
