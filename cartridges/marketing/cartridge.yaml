@@ -26,7 +26,7 @@ envs:
 
 experience:
   version: 1
-  title: Marketing Studio
+  title: Marketing
   tagline: Del brief a la campaña.
   nouns:
     run:         { singular: campaña,  plural: campañas }

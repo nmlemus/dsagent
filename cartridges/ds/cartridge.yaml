@@ -33,7 +33,10 @@ envs:
 # workflows/*/workflow.yaml.
 experience:
   version: 1
-  title: DSAgent
+  # The name of this *experience*, not of the product. The workspace shows it
+  # beside the project; the product's own name is fixed in the UI, so a person
+  # switching cartridge still recognises the application they are in.
+  title: Data Science
   tagline: De datos a decisiones.
   nouns:
     run:         { singular: análisis,        plural: análisis }
