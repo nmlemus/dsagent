@@ -34,6 +34,7 @@ import asyncio
 import io
 import json
 import re
+import secrets
 import shutil
 import time
 import zipfile
@@ -165,21 +166,36 @@ def cartridge_shape(cartridge: Cartridge) -> dict[str, Any]:
     }
 
 
-def new_run_id(runs_dir: Path, workflow: str) -> str:
-    """A readable, unique directory name for a run the launcher is creating.
+def new_run_id(runs_dir: Path, workflow: str, *, store: Any = None) -> str:
+    """A readable, globally unique directory name, reserved as it is handed out.
 
-    Readable because it is in the URL of every screen and in every screenshot;
-    unique by second, with a counter for the operator who starts two runs inside
-    one. (A run started from the chat is still named after its tool call — there
-    is no directory to name before the model calls the tool.)
+    Readable because it is in the URL of every screen and in every screenshot.
+    **Globally** unique because a run is located by id across every project
+    (`ProjectStore.locate_run`): the old name was unique only inside one
+    project's directory, so two projects starting the same workflow in the same
+    second received the same id and one of the two runs became unreachable —
+    `GET /runs/{id}` answered with the other project's inputs. Reproduced.
+
+    A short random suffix, not a counter: a counter has to look before it
+    leaps, and what it looks at is one directory. The suffix makes the name
+    unique without coordinating, and the `mkdir` below is the reservation that
+    closes the gap between choosing a name and writing to it — two callers
+    cannot both be given the same one, whatever the clock says.
+
+    (A run started from the chat is still named after its tool call; there is no
+    directory to name before the model calls the tool.)
     """
-    base = f"{workflow}-{time.strftime('%Y%m%d-%H%M%S')}"
-    if not (runs_dir / base).exists():
-        return base
-    n = 2
-    while (runs_dir / f"{base}-{n}").exists():
-        n += 1
-    return f"{base}-{n}"
+    stamp = time.strftime("%Y%m%d-%H%M%S")
+    for _ in range(50):
+        candidate = f"{workflow}-{stamp}-{secrets.token_hex(2)}"
+        if store is not None and store.locate_run(candidate) is not None:
+            continue
+        try:
+            (runs_dir / candidate).mkdir(parents=True)
+        except FileExistsError:
+            continue
+        return candidate
+    raise HTTPException(status_code=503, detail="could not reserve a run id; try again")
 
 
 def add_runs_routes(
@@ -263,7 +279,7 @@ def add_runs_routes(
         target = store.runs_dir(project) if store is not None else runs_dir
 
         session = str(body.get("session") or "")
-        run_id = new_run_id(target, workflow)
+        run_id = new_run_id(target, workflow, store=store)
         try:
             if project == "default":
                 run_dir = driver.create(run_id, inputs, workflow)

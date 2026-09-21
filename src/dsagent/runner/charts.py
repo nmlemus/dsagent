@@ -408,7 +408,7 @@ def chart_tools(
     return [show_chart, show_table]
 
 
-def amend_tools(runs_dir: Path) -> list[Any]:
+def amend_tools(runs_dir: Path, store: Any = None) -> list[Any]:
     """`show_chart` / `show_table`, for a run that has already finished.
 
     The reader asks the persona who made a chart to change it, from the
@@ -427,13 +427,20 @@ def amend_tools(runs_dir: Path) -> list[Any]:
     `data_ref` must name a readable file inside *that run's* workspace.
     """
     from dsagent.runner.runner import EVENT_LOG, RunState
+    from dsagent.runs import locate_run_dir
 
     # Rebuilt per call, so the repair budget has to live out here or an amend
     # could be retried for ever, three at a time, and never hit the cap.
     attempts: dict[tuple[str, str], int] = {}
 
+    def located(run_id: str) -> Path | None:
+        """Where this run lives — the same resolver the HTTP routes and the
+        file-reading tools use, so a chart in a project's run is reachable from
+        the conversation beside it (BH-03)."""
+        return locate_run_dir(runs_dir, run_id, store)
+
     def emit(run_id: str) -> Any:
-        run_dir = runs_dir / run_id
+        run_dir = located(run_id) or (runs_dir / run_id)
 
         def on_chart(rec: ChartRecord) -> None:
             state = RunState.load(run_dir)
@@ -450,8 +457,11 @@ def amend_tools(runs_dir: Path) -> list[Any]:
 
     def known(run_id: str) -> Any:
         def look(chart_id: str) -> ChartRecord | None:
+            run_dir = located(run_id)
+            if run_dir is None:
+                return None
             try:
-                stored = RunState.load(runs_dir / run_id).charts.get(chart_id)
+                stored = RunState.load(run_dir).charts.get(chart_id)
             except (OSError, ValueError, TypeError):
                 return None
             return ChartRecord(**stored) if stored else None
@@ -460,10 +470,8 @@ def amend_tools(runs_dir: Path) -> list[Any]:
 
     def bound(run_id: str) -> list[Any] | None:
         """The pair of tools, pointed at one run — or None if there is no such run."""
-        if not run_id or "/" in run_id or "\\" in run_id or run_id in (".", ".."):
-            return None
-        run_dir = runs_dir / run_id
-        if not (run_dir / "run.json").is_file():
+        run_dir = located(run_id)
+        if run_dir is None or not (run_dir / "run.json").is_file():
             return None
         return chart_tools(
             run_dir / "workspace", run_id,
@@ -483,10 +491,16 @@ def amend_tools(runs_dir: Path) -> list[Any]:
         """
         from dsagent.runner.runner import RunState
 
-        try:
-            charts = RunState.load(runs_dir / run_id).charts
-        except (OSError, ValueError, TypeError):
+        run_dir = located(run_id)
+        if run_dir is None:
             return f"unknown run {run_id}"
+        try:
+            charts = RunState.load(run_dir).charts
+        except (OSError, ValueError, TypeError) as e:
+            # Not the same thing as an unknown run, and saying so sent the
+            # orchestrator looking for a typo in the id instead of reporting
+            # that the run's state could not be read.
+            return f"run {run_id} exists but its state could not be read: {e}"
         if not charts:
             return f"run {run_id} has emitted no charts"
         if not chart_id:

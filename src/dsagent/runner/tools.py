@@ -177,10 +177,10 @@ def workflow_tools(
     @tool
     def list_run_files(run_id: str) -> str:
         """List the files a run produced, deliverables first. `run_id` names a run directory."""
-        workspace = _run_workspace(runs_dir, run_id)
+        workspace = _run_workspace(runs_dir, run_id, store)
         if workspace is None:
             return f"unknown run {run_id}"
-        declared = set(_deliverables(runs_dir / run_id))
+        declared = set(_deliverables(workspace.parent))
         files = sorted(
             f.relative_to(workspace).as_posix()
             for f in workspace.rglob("*")
@@ -195,7 +195,7 @@ def workflow_tools(
     @tool
     def read_run_file(run_id: str, path: str, max_chars: int = 20000) -> str:
         """Read a text file from a run's workspace. Use `list_run_files` first to see what there is."""
-        target = _resolve_in_workspace(runs_dir, run_id, path)
+        target = _resolve_in_workspace(runs_dir, run_id, path, store)
         if target is None:
             return f"no such file in run {run_id}: {path}"
         try:
@@ -207,7 +207,7 @@ def workflow_tools(
         return text
 
     return [list_workflows, run_workflow, list_run_files, read_run_file,
-            *amend_tools(runs_dir)]
+            *amend_tools(runs_dir, store=store)]
 
 
 def _deliverables(run_dir: Path) -> list[str]:
@@ -216,30 +216,35 @@ def _deliverables(run_dir: Path) -> list[str]:
     return deliverables(run_dir)
 
 
-def _run_workspace(runs_dir: Path, run_id: str) -> Path | None:
+def _run_workspace(runs_dir: Path, run_id: str, store: Any = None) -> Path | None:
     """One run's workspace, if `run_id` names a run and nothing else.
 
     A run id arrives from outside — from a URL at the files endpoint, from a
     model here — and one that is a path rather than a name walks out of the runs
-    directory entirely. Both tools ask this the same question, because a rule
-    enforced in one of two places is not enforced.
+    directory entirely. `locate_run_dir` is where that rule lives now, shared
+    with the HTTP routes so a run in a project reads the same from both.
     """
-    if not run_id or "/" in run_id or "\\" in run_id or run_id in (".", ".."):
+    from dsagent.runs import locate_run_dir
+
+    run_dir = locate_run_dir(runs_dir, run_id, store)
+    if run_dir is None:
         return None
-    workspace = (runs_dir / run_id / "workspace").resolve()
+    workspace = (run_dir / "workspace").resolve()
     return workspace if workspace.is_dir() else None
 
 
-def _resolve_in_workspace(runs_dir: Path, run_id: str, rel: str) -> Path | None:
+def _resolve_in_workspace(
+    runs_dir: Path, run_id: str, rel: str, store: Any = None
+) -> Path | None:
     """A run-workspace path that is really inside that workspace, or None.
 
     The same rule the files endpoint applies, for the same reason: a run id and a
     path both arrive from outside — there, from a URL; here, from a model — and
     neither may be allowed to walk out of the run it names.
     """
-    if _run_workspace(runs_dir, run_id) is None:
+    workspace = _run_workspace(runs_dir, run_id, store)
+    if workspace is None:
         return None
-    workspace = (runs_dir / run_id / "workspace").resolve()
     try:
         target = (workspace / rel).resolve()
     except OSError:

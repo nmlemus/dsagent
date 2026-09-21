@@ -71,6 +71,31 @@ class RunSummary:
         return asdict(self)
 
 
+def locate_run_dir(runs_dir: Path, run_id: str, store: Any = None) -> Path | None:
+    """The directory a run id names, wherever that run lives, or None.
+
+    The one resolver. Every surface that takes a run id from outside — an HTTP
+    path, a model calling a tool, the CLI — has to answer this question the same
+    way, and for a while they did not: the HTTP routes learned to look across
+    projects while the conversation's own reading tools kept looking only in the
+    legacy directory, so the orchestrator called a run unknown that the API was
+    serving in the same second (BH-03).
+
+    Two rules, in order. A run id is a name and never a path, so anything with a
+    separator is refused before it can walk out of the runs directory. Then the
+    store decides where the run lives; without a store this is the single-dir
+    behaviour it always had.
+    """
+    if not run_id or "/" in run_id or "\\" in run_id or run_id in (".", ".."):
+        return None
+    if store is not None:
+        found = store.locate_run(run_id)
+        if found is not None:
+            return found
+    candidate = runs_dir / run_id
+    return candidate if candidate.is_dir() else None
+
+
 def run_dirs(runs_dir: Path) -> list[Path]:
     """Every directory under `runs_dir` that looks like a run."""
     if not runs_dir.is_dir():
