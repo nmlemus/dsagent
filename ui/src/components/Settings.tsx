@@ -1,82 +1,86 @@
-import { useEffect, useState } from "react";
-
+import { useState } from "react";
+import { Dialog } from "./Dialog";
+import { Icon, type IconName } from "./Icon";
 type Theme = "system" | "light" | "dark";
 const KEY = "ds.theme";
-
-function applyTheme(t: Theme) {
-  const root = document.documentElement;
-  if (t === "system") root.removeAttribute("data-theme");
-  else root.setAttribute("data-theme", t);
+function applyTheme(theme: Theme) {
+  document.documentElement.dataset.theme =
+    theme === "system"
+      ? matchMedia("(prefers-color-scheme: dark)").matches
+        ? "dark"
+        : "light"
+      : theme;
 }
-
 export function loadTheme(): Theme {
   try {
-    return (localStorage.getItem(KEY) as Theme) || "system";
+    const t = localStorage.getItem(KEY);
+    return t === "dark" || t === "system" ? t : "light";
   } catch {
-    return "system";
+    return "light";
   }
 }
-
-// Apply the saved theme at startup (called from main).
 export function initTheme() {
   applyTheme(loadTheme());
+  matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => {
+    if (loadTheme() === "system") applyTheme("system");
+  });
 }
-
 export function Settings({ onClose }: { onClose: () => void }) {
   const [theme, setTheme] = useState<Theme>(loadTheme);
-
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => e.key === "Escape" && onClose();
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [onClose]);
-
-  function pick(t: Theme) {
-    setTheme(t);
-    applyTheme(t);
-    try {
-      localStorage.setItem(KEY, t);
-    } catch {
-      /* ignore */
-    }
-  }
-
+  const options: { id: Theme; label: string; icon: IconName }[] = [
+    { id: "light", label: "Claro", icon: "sun" },
+    { id: "dark", label: "Oscuro", icon: "moon" },
+    { id: "system", label: "Sistema", icon: "monitor" },
+  ];
   return (
-    <div className="modal-scrim" onClick={onClose}>
-      <div className="modal" onClick={(e) => e.stopPropagation()}>
-        <div className="col-head">
-          <span>Settings</span>
-          <button className="icon-btn" onClick={onClose} aria-label="Close">✕</button>
+    <Dialog title="Tu espacio, a tu manera" onClose={onClose}>
+      <div className="dialog-body stack">
+        <p className="muted">
+          Una experiencia que se adapta a tu forma de trabajar.
+        </p>
+        <div className="field">
+          <span className="field-label">Apariencia</span>
+          <div className="theme-options">
+            {options.map((t) => (
+              <button
+                key={t.id}
+                aria-pressed={theme === t.id}
+                className={`theme-option ${theme === t.id ? "active" : ""}`}
+                onClick={() => {
+                  setTheme(t.id);
+                  applyTheme(t.id);
+                  try {
+                    localStorage.setItem(KEY, t.id);
+                  } catch {
+                    /* optional preference */
+                  }
+                }}
+              >
+                <Icon name={t.icon} size={24} />
+                <strong>{t.label}</strong>
+                {theme === t.id && <Icon name="check" size={15} />}
+              </button>
+            ))}
+          </div>
         </div>
-        <div className="col-body stack">
-          <div className="field">
-            <label>Theme</label>
-            <div className="seg">
-              {(["system", "light", "dark"] as Theme[]).map((t) => (
-                <button key={t} className={`seg-btn ${theme === t ? "active" : ""}`} onClick={() => pick(t)}>
-                  {t}
-                </button>
-              ))}
-            </div>
+        <div className="settings-info">
+          <Icon name="folder" />
+          <div>
+            <strong>Acerca de este espacio</strong>
+            <p>
+              Los proyectos, conversaciones y trabajos se guardan en el servidor
+              de esta instancia. La apariencia y el proyecto seleccionado se
+              recuerdan en este navegador.
+            </p>
           </div>
-
-          <div className="field">
-            <label>Account</label>
-            <div className="row" style={{ gap: 10 }}>
-              <span className="user-avatar">N</span>
-              <div>
-                <div>You</div>
-                <div className="faint" style={{ fontSize: 12 }}>Single-user · local instance (no login)</div>
-              </div>
-            </div>
-          </div>
-
-          <div className="muted" style={{ fontSize: 12 }}>
-            Chat history is stored in this browser only (not synced). Runs live on the server and
-            are shared across tabs, reloads and the CLI.
-          </div>
+        </div>
+        <div className="dialog-actions">
+          <button className="btn primary" onClick={onClose}>
+            Listo
+            <Icon name="check" size={16} />
+          </button>
         </div>
       </div>
-    </div>
+    </Dialog>
   );
 }

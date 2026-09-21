@@ -10,7 +10,17 @@ import type {
 
 // Folded live state of a run, rebuilt from the event log and then followed.
 // Keyed views so the DAG, narration and canvas each read what they need.
+export interface RunChart {
+  chart_id: string;
+  kind: "chart" | "table";
+  title: string;
+  data_ref: string;
+  spec: Record<string, unknown> | null;
+  version: number;
+}
+
 export interface RunStream {
+  charts: Record<string, RunChart>;
   steps: Record<string, StepEvent>; // latest step event per step id
   stepOrder: string[]; // first-seen order (index carries the true order)
   files: FileEvent[]; // append-only, deduped by path (latest change wins)
@@ -21,6 +31,7 @@ export interface RunStream {
 }
 
 const empty: RunStream = {
+  charts: {},
   steps: {},
   stepOrder: [],
   files: [],
@@ -30,16 +41,27 @@ const empty: RunStream = {
   ended: false,
 };
 
-type Action = { type: "event"; e: EventEnvelope } | { type: "end" } | { type: "reset" };
+type Action =
+  { type: "event"; e: EventEnvelope } | { type: "end" } | { type: "reset" };
 
 function reduce(state: RunStream, action: Action): RunStream {
   if (action.type === "reset") return empty;
   if (action.type === "end") return { ...state, ended: true };
 
   const { index, name, value } = action.e;
-  const next: RunStream = { ...state, lastIndex: Math.max(state.lastIndex, index) };
+  const next: RunStream = {
+    ...state,
+    lastIndex: Math.max(state.lastIndex, index),
+  };
 
   switch (name) {
+    case "dsagent.chart": {
+      const chart = value as unknown as RunChart;
+      const previous = state.charts[chart.chart_id];
+      if (!previous || chart.version >= previous.version)
+        next.charts = { ...state.charts, [chart.chart_id]: chart };
+      return next;
+    }
     case "dsagent.step": {
       const step = value as unknown as StepEvent;
       next.steps = { ...state.steps, [step.step]: step };
@@ -70,7 +92,9 @@ function reduce(state: RunStream, action: Action): RunStream {
 
 // The last deliverable of the most recently completed step — what the canvas
 // auto-focuses on (focus follows output, on step-done not on every file event).
-export function focusDeliverable(steps: Record<string, StepEvent>): string | null {
+export function focusDeliverable(
+  steps: Record<string, StepEvent>,
+): string | null {
   const done = Object.values(steps)
     .filter((s) => s.status === "done")
     .sort((a, b) => a.ts - b.ts);
