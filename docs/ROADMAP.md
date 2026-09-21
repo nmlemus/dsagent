@@ -24,6 +24,36 @@ original milestones. Per-user authorization is mandatory before sharing an
 installation, including self-host; distributed infrastructure is conditional on
 the deployment and service promised.
 
+### Backend hardening — order of execution (2026-09-21)
+
+The [independent backend review](reviews_2/backend-harness-review-2026-09-21.md)
+proposes `BH-T01`–`BH-T12`. They are **not** a second backlog: each one is a
+slice of the SR tasks it names, and status is still owned by
+[BACKLOG.md](reviews_2/BACKLOG.md). This is only the order we execute them in and
+what has landed, so the next session does not have to re-derive it.
+
+Every finding was reproduced here before being fixed; a fix ships with the test
+that reproduces it.
+
+| # | Slice | State | Landed |
+|---|---|---|---|
+| 1 | Containment: script paths, downloads, cartridge names (BH-T01/T02/T08 in part) | done | skill scope is an execution boundary; ZIP refuses links out of the workspace; duplicate step ids and duplicate workflow names fail at load |
+| 2 | Run identity and one resolver (BH-T03) | done | ids unique across projects and reserved when handed out; chat tools and chart tools resolve like the HTTP routes |
+| 3 | Sessions without false successes (BH-T04) | done | a failed write is a 500, a stale save a 409, a project change a 409 |
+| 4 | Active content off the app origin (rest of BH-T01) | next | needs the viewer to open reports through the sandboxed route; paired UI + server change |
+| 5 | Tool allowlist per persona (rest of BH-T02) | next | `Persona.tools` is declared and not applied; either apply it or stop presenting it as a permission |
+| 6 | Transactional run state (BH-T05) | after 4–5 | two writers currently lose updates; evaluate SQLite before new infrastructure |
+| 7 | Deterministic launch (BH-T06) | after 6 | the launcher already chose; it should not pay a model to choose again |
+| 8 | Deadlines, cancellation, isolation (BH-T07) | blocked on a decision | `Step.timeout` is accepted and ignored; the kernel runs with the server's privileges. Needs the execution-boundary decision first, not more code |
+| 9 | Cartridge versioning and input validation (rest of BH-T08) | after 7 | a run keeps a cartridge name, not a digest, so an update can change what history means |
+| 10 | Usage per attempt (BH-T09) | after 9 | a stream that fails loses the tokens it already spent |
+| 11 | Environment serialization and lifetime (BH-T10) | after 10 | one kernel per project, shared by every chat, with no queue |
+| 12 | Resource limits and CI (BH-T11/T12) | after 11 | `pytest` as documented does not collect the suite; no lock file, no pipeline |
+
+Item 8 is deliberately not "write code next". The review's own verdict is that
+the execution boundary has to be *defined* before it is implemented, and the
+rest of the list is worth more per hour until then.
+
 ## M1 — Harness skeleton (kernel env only) — DONE 2026-09-16
 
 - [x] Cartridge loader + matrix validation + generated command skills
