@@ -1,0 +1,21 @@
+# Revisión reconciliada de preparación de producto
+
+2026-09-19 · Base de las revisiones: `8ac2758` · Estado: revisión reconciliada; UI-001 implementada.
+
+**DSAgent tiene una base aprovechable para presentar una startup en fase alfa; la evidencia disponible no permite ofrecerlo hoy como producto comercial seguro y fiable.** El siguiente paso es cerrar defectos, acotar una oferta y validar un piloto supervisado. La ruta comercial y la licencia siguen pendientes.
+
+| Documento | Uso |
+|---|---|
+| [00-RECONCILIACION.md](00-RECONCILIACION.md) | Veredicto, acuerdos, diferencias resueltas y criterios por etapa |
+| [BACKLOG.md](BACKLOG.md) | Única lista vigente de estado: 57 tareas, dependencias, aceptación y puertas de salida |
+| [DECISIONES.md](DECISIONES.md) | Cinco decisiones pendientes, evidencia necesaria y qué bloquea cada una |
+| [TRAZABILIDAD.md](TRAZABILIDAD.md) | Destino de los 117 identificadores de ambos backlogs, sin perder las referencias originales |
+| [FUENTES.md](FUENTES.md) | 17 documentos originales, hashes y límites de la evidencia |
+
+Se preservaron íntegros `docs/STARTUP-BACKLOG.md`, el informe inicial y `docs/reviews/2026-09-19-product-readiness/`. A partir de esta reconciliación, sus recomendaciones y estados son históricos; el estado de preparación de producto se actualiza solo en este folder. El [roadmap](../ROADMAP.md) enlaza aquí y conserva los hitos anteriores.
+
+**Actualización:** el usuario priorizó UI-001; el [rediseño empresarial está implementado y verificado localmente](../ui-workspace-redesign-2026-09-19.md). Las 57 tareas SR conservan sus criterios pendientes. **Después de revisar la UI, próxima recomendada: SR-001.** Después seguir el orden por dependencias del backlog, una tarea técnica a la vez. Las decisiones comerciales no impiden reparar pérdidas de datos, confusión entre proyectos o exposición de archivos. Las tareas amplias deben desglosarse antes de implementarlas.
+
+Esta entrega crea documentación: no inicia las tareas, no cambia la licencia ni decide self-host/SaaS. Las comprobaciones técnicas previas están atribuidas a sus fuentes; reconciliarlas no equivale a ejecutar de nuevo una auditoría completa.
+
+Validación documental de la reconciliación original: 57 IDs únicos con especificación; 117 IDs de origen con destino; dependencias sin ciclos; 240 enlaces relativos/anclas comprobados; hashes de los 17 documentos originales sin cambios. No se ejecutaron tests de aplicación para este cambio documental.
