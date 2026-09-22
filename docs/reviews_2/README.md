@@ -19,6 +19,7 @@ Revisiones posteriores (cada una identifica el commit evaluado):
 | [Identidad de AiudaLabs](aiudalabs-brand-and-dsagent-ui-review-2026-09-21.md) | Crítica de marca y dirección propuesta antes de la implementación |
 | [Backend y harness](backend-harness-review-2026-09-21.md) | Diagnóstico anterior a las reparaciones `65e33e4`, `8897804` y `463b1e3` |
 | [Implementación visual](ui-implementation-review-2026-09-21.md) | Evaluación en navegador de `ed7e6f6`, ajustes propuestos y alcance de las reparaciones posteriores al diagnóstico |
+| [Plan de MVP](MVP-PLAN.md) | Alcance propuesto, incrementos verificables, condiciones del piloto y medición de valor; dominio/primer usuario por confirmar |
 
 Estas revisiones añaden evidencia y propuestas; no cambian automáticamente los estados del backlog reconciliado.
 
