@@ -12,6 +12,16 @@
 | [TRAZABILIDAD.md](TRAZABILIDAD.md) | Destino de los 117 identificadores de ambos backlogs, sin perder las referencias originales |
 | [FUENTES.md](FUENTES.md) | 17 documentos originales, hashes y límites de la evidencia |
 
+Revisiones posteriores (cada una identifica el commit evaluado):
+
+| Documento | Uso |
+|---|---|
+| [Identidad de AiudaLabs](aiudalabs-brand-and-dsagent-ui-review-2026-09-21.md) | Crítica de marca y dirección propuesta antes de la implementación |
+| [Backend y harness](backend-harness-review-2026-09-21.md) | Diagnóstico anterior a las reparaciones `65e33e4`, `8897804` y `463b1e3` |
+| [Implementación visual](ui-implementation-review-2026-09-21.md) | Evaluación en navegador de `ed7e6f6`, ajustes propuestos y alcance de las reparaciones posteriores al diagnóstico |
+
+Estas revisiones añaden evidencia y propuestas; no cambian automáticamente los estados del backlog reconciliado.
+
 Se preservaron íntegros `docs/STARTUP-BACKLOG.md`, el informe inicial y `docs/reviews/2026-09-19-product-readiness/`. A partir de esta reconciliación, sus recomendaciones y estados son históricos; el estado de preparación de producto se actualiza solo en este folder. El [roadmap](../ROADMAP.md) enlaza aquí y conserva los hitos anteriores.
 
 **Actualización:** el usuario priorizó UI-001; el [rediseño empresarial está implementado y verificado localmente](../ui-workspace-redesign-2026-09-19.md). Las 57 tareas SR conservan sus criterios pendientes. **Después de revisar la UI, próxima recomendada: SR-001.** Después seguir el orden por dependencias del backlog, una tarea técnica a la vez. Las decisiones comerciales no impiden reparar pérdidas de datos, confusión entre proyectos o exposición de archivos. Las tareas amplias deben desglosarse antes de implementarlas.
