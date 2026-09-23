@@ -24,6 +24,7 @@ Revisiones posteriores (cada una identifica el commit evaluado):
 | [Flexibilidad del harness](harness-extensibility-assessment-2026-09-22.md) | Contraste con código y fuentes oficiales, límites del contrato de extensión y prueba SDLC propuesta sobre un repositorio existente |
 | [Agentes persistentes y tres dominios](persistent-agents-and-three-domain-direction-2026-09-22.md) | Pausa solicitada por el usuario; comparación de Hermes, OpenClaw y NemoClaw, y alternativas para DS, agencias de marketing y SDLC |
 | [Requisitos contra Deep Agents](deep-agents-requirements-fit-2026-09-22.md) | 48 requisitos, responsabilidad por capa, evidencia del SDK instalado y desafíos de rediseño; sustituye la prioridad de comparar motores mediante prototipos |
+| [Filosofía de DeepSeek Harness](deepseek-harness-plugin-philosophy-2026-09-23.md) | Composición por plugins contrastada con código versionado; qué adoptar sobre Deep Agents y qué garantías siguen siendo responsabilidad de DSAgent |
 
 Estas revisiones añaden evidencia y propuestas; no cambian automáticamente los estados del backlog reconciliado.
 
