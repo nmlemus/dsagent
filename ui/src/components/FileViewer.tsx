@@ -1,9 +1,8 @@
 import { lazy, Suspense, useEffect, useState } from "react";
-import DOMPurify from "dompurify";
-import { marked } from "marked";
 import type { FileSource } from "../lib/api";
 import { ext } from "../lib/format";
 import { isVegaLite } from "../lib/vega-detect";
+import { markdownHtml } from "../lib/markdown";
 
 // One viewer for every file the product shows, wherever it lives: a run's
 // workspace or a project's chat workspace. It is given a `source` (how to build
@@ -118,9 +117,7 @@ function Markdown({
         <div className="empty">Cargando…</div>
       </div>
     );
-  const html = DOMPurify.sanitize(
-    marked.parse(text, { async: false }) as string,
-  );
+  const html = markdownHtml(text, source, path);
   return (
     <div className={full ? "viewer full" : "viewer"}>
       <div className="md" dangerouslySetInnerHTML={{ __html: html }} />

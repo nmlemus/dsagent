@@ -24,6 +24,14 @@ original milestones. Per-user authorization is mandatory before sharing an
 installation, including self-host; distributed infrastructure is conditional on
 the deployment and service promised.
 
+### Chart rendering repair (2026-09-22)
+
+Fixed zero-width Vega containers and workspace-relative Markdown figures in the
+Assistant and run viewers. Verified existing charts and report images in the
+browser, desktop-to-mobile resizing, five image-path regression tests, and the UI
+build. See [evidence and scope](ui-chart-rendering-fix-2026-09-22.md). This is a
+partial fix under SR-024/SR-029, not closure of the full parent tasks.
+
 ### Backend hardening — order of execution (2026-09-21)
 
 The [independent backend review](reviews_2/backend-harness-review-2026-09-21.md)

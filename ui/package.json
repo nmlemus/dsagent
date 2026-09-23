@@ -5,6 +5,7 @@
   "type": "module",
   "description": "DSAgent harness UI — a Vite + React SPA served by `dsagent serve`.",
   "scripts": {
+    "test": "node --test tests/*.test.mjs",
     "dev": "vite",
     "build": "tsc -b && vite build",
     "preview": "vite preview",

@@ -2,6 +2,8 @@ import {
   type ReactNode,
   Suspense,
   lazy,
+  createContext,
+  useContext,
   useEffect,
   useMemo,
   useRef,
@@ -24,8 +26,6 @@ import {
   toAgUiMessages,
   useAgUiRuntime,
 } from "@assistant-ui/react-ag-ui";
-import DOMPurify from "dompurify";
-import { marked } from "marked";
 import { api, ApiError, projectSource } from "../lib/api";
 import { FocusOverlay, type FocusTarget } from "./FocusOverlay";
 import { Icon } from "./Icon";
@@ -35,12 +35,11 @@ import type { RunSummary } from "../lib/types";
 import { type Conversation, titleFrom } from "../lib/conversations";
 import { useExperience } from "../lib/experience";
 import { StatusPill } from "./StatusPill";
+import { markdownHtml } from "../lib/markdown";
 
 const ChartView = lazy(() => import("./ChartView"));
 
-function mdHtml(src: string): string {
-  return DOMPurify.sanitize(marked.parse(src, { async: false }) as string);
-}
+const MarkdownProject = createContext<string | null>(null);
 
 // A fenced ```vega-lite block becomes a live chart; markdown tables render as
 // tables; the rest is normal markdown. This is what lets the chat show charts
@@ -48,6 +47,8 @@ function mdHtml(src: string): string {
 const CHART_FENCE = /```(?:vega-?lite|vega|chart)\s*\r?\n([\s\S]*?)```/gi;
 
 function MarkdownText({ text }: TextMessagePartProps) {
+  const project = useContext(MarkdownProject);
+  const source = project === null ? undefined : projectSource(project);
   const src = text || "";
   const out: ReactNode[] = [];
   let last = 0;
@@ -61,7 +62,7 @@ function MarkdownText({ text }: TextMessagePartProps) {
         <div
           key={key++}
           className="md"
-          dangerouslySetInnerHTML={{ __html: mdHtml(before) }}
+          dangerouslySetInnerHTML={{ __html: markdownHtml(before, source) }}
         />,
       );
     let spec: unknown = null;
@@ -94,7 +95,7 @@ function MarkdownText({ text }: TextMessagePartProps) {
       <div
         key={key++}
         className="md"
-        dangerouslySetInnerHTML={{ __html: mdHtml(rest) }}
+        dangerouslySetInnerHTML={{ __html: markdownHtml(rest, source) }}
       />,
     );
   return <>{out}</>;
@@ -500,9 +501,11 @@ function ChatThread({
             </ThreadPrimitive.Empty>
 
             <div className="thread-column">
-              <ThreadPrimitive.Messages
-                components={{ UserMessage, AssistantMessage }}
-              />
+              <MarkdownProject.Provider value={project}>
+                <ThreadPrimitive.Messages
+                  components={{ UserMessage, AssistantMessage }}
+                />
+              </MarkdownProject.Provider>
               <ThreadPrimitive.If running>
                 <div className="thread-running">
                   <span className="cavatar" aria-hidden>
