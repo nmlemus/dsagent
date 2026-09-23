@@ -22,8 +22,11 @@ Revisiones posteriores (cada una identifica el commit evaluado):
 | [Plan de MVP](MVP-PLAN.md) | Alcance propuesto, incrementos verificables, condiciones del piloto y medición de valor; dominio/primer usuario por confirmar |
 | [Cartridge de SDLC](sdlc-cartridge-feasibility-2026-09-21.md) | Evaluación inicial; sus conclusiones sobre compatibilidad y métodos se matizan en la revisión de flexibilidad |
 | [Flexibilidad del harness](harness-extensibility-assessment-2026-09-22.md) | Contraste con código y fuentes oficiales, límites del contrato de extensión y prueba SDLC propuesta sobre un repositorio existente |
+| [Agentes persistentes y tres dominios](persistent-agents-and-three-domain-direction-2026-09-22.md) | Pausa solicitada por el usuario; comparación de Hermes, OpenClaw y NemoClaw, y alternativas para DS, agencias de marketing y SDLC |
 
 Estas revisiones añaden evidencia y propuestas; no cambian automáticamente los estados del backlog reconciliado.
+
+**Dirección vigente (2026-09-22):** el usuario acota el producto a ciencia de datos, agencias de marketing y SDLC, y pide pausar la implementación para evaluar la arquitectura. Las recomendaciones de ejecución anteriores quedan sujetas a esta evaluación. No se ha decidido reemplazar el runtime.
 
 Se preservaron íntegros `docs/STARTUP-BACKLOG.md`, el informe inicial y `docs/reviews/2026-09-19-product-readiness/`. A partir de esta reconciliación, sus recomendaciones y estados son históricos; el estado de preparación de producto se actualiza solo en este folder. El [roadmap](../ROADMAP.md) enlaza aquí y conserva los hitos anteriores.
 
