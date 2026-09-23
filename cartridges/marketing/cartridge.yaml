@@ -8,6 +8,10 @@ name: marketing
 version: 0.1.0
 description: Marketing studio — a brand strategist and a copywriter, from brief to reviewed campaign copy.
 
+# This cartridge currently needs no executable extension beyond its declared
+# environment. Add host capabilities here as connectors and media tools land.
+capabilities: []
+
 personas:
   lucia: { role: "Brand Strategist", workflows: [campaign-brief] }
   tomas: { role: "Copywriter",       workflows: [] }

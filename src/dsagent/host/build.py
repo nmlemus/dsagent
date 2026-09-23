@@ -16,7 +16,6 @@ visible to the persona.
 
 from __future__ import annotations
 
-import shlex
 import shutil
 from collections.abc import Callable, Sequence
 from pathlib import Path
@@ -26,6 +25,7 @@ from deepagents import create_deep_agent
 from deepagents.backends import CompositeBackend, FilesystemBackend
 from langchain_core.tools import tool
 
+from dsagent.capabilities import CapabilityError, compose_cartridges
 from dsagent.cartridge.models import Cartridge, Persona
 from dsagent.envs.base import SKILLS_DIR, Env
 from dsagent.models import default_model
@@ -147,8 +147,15 @@ def _skill_script_tool(cartridge: Cartridge, persona: str, env: Env, workspace: 
                 f"error: skill '{skill}' has no script '{script}'. "
                 f"Available: {', '.join(available) or 'none'}."
             )
-        command = [env.python, str(target.relative_to(workspace.resolve())), *(argv or [])]
-        result = env.backend.execute(" ".join(shlex.quote(a) for a in command))
+        composition = env.capabilities or compose_cartridges([cartridge])
+        try:
+            provider = composition.select(
+                kind="script-runner", metadata=("extension", target.suffix.lower())
+            )
+            relative = target.relative_to(workspace.resolve())
+            result = provider.factory(env, relative, list(argv or []))
+        except (CapabilityError, ValueError) as error:
+            return f"error: cannot run '{script}': {error}"
         return f"exit code: {result.exit_code}\n{result.output}"
 
     return run_skill_script

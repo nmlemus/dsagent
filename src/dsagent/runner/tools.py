@@ -19,6 +19,8 @@ from typing import Annotated, Any
 from langchain_core.runnables.config import ensure_config
 from langchain_core.tools import InjectedToolCallId, tool
 
+from dsagent.capabilities import CapabilitySet
+from dsagent.capabilities.builtin import requirements_for_cartridges
 from dsagent.cartridge.models import Cartridge
 from dsagent.datasets import seed_run
 from dsagent.runner.charts import amend_tools
@@ -102,6 +104,7 @@ def workflow_tools(
     prices: Any = None,
     store: Any = None,
     session_project: Callable[[str], str] | None = None,
+    capabilities: CapabilitySet | None = None,
 ) -> list[Any]:
     """The workflow and run-reading tools, bound to one front end's gate and events.
 
@@ -146,9 +149,13 @@ def workflow_tools(
             given, thread_id, name, tool_call_id, runs_dir, store, session_project
         )
         resume = (run_dir / "run.json").exists()
+        run_capabilities = (
+            capabilities.restrict(requirements_for_cartridges([by_wf[name]]))
+            if capabilities is not None else None
+        )
         runner = WorkflowRunner(
             by_wf[name], run_dir, ask_human=ask_human, log=log, on_event=on_event,
-            prices=prices,
+            prices=prices, capabilities=run_capabilities,
         )
         if seed is not None and not resume:
             if not seed.is_dir():

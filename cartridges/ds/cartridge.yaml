@@ -4,6 +4,11 @@ name: ds
 version: 0.1.0
 description: Data science team — analysts, scientists and MMM specialists.
 
+# Executable host features are explicit and versionable. Skills remain
+# instructions; this capability is what lets their Python scripts run.
+capabilities:
+  - { id: script.python, version: "1" }
+
 personas:
   marie: { role: "Data Analyst",      workflows: [eda-to-report] }
   noel:  { role: "Data Scientist",    workflows: [eda-to-report] }

@@ -45,23 +45,30 @@ class Env:
     resolves to on PATH — those differ whenever DSAgent runs from a virtualenv,
     and the cartridge's requirements are installed in the former.
     """
+    capabilities: Any = None
+    """Frozen host composition that created or adopted this environment."""
 
     def close(self) -> None:  # pragma: no cover - trivial
-        for c in self.closers:
+        # Resources unwind in the opposite order from acquisition.
+        for c in reversed(self.closers):
             c()
         closer = getattr(self.backend, "close", None)
         if closer:
             closer()
 
 
-def make_env(spec: EnvSpec, workspace: Path) -> Env:
+def make_env(spec: EnvSpec, workspace: Path, capabilities: Any = None) -> Env:
+    """Provision an environment through its selected capability provider.
+
+    ``capabilities`` is optional for API compatibility.  Direct callers receive
+    a minimal built-in composition containing only this environment provider;
+    runners and servers pass the broader, already-frozen product composition.
+    """
+    from dsagent.capabilities import builtin_registry
+
     workspace.mkdir(parents=True, exist_ok=True)
-    if spec.kind == "kernel":
-        from dsagent.envs.kernel import make_kernel_env
-
-        return make_kernel_env(spec, workspace)
-    if spec.kind == "docker":
-        from dsagent.envs.docker import make_docker_env
-
-        return make_docker_env(spec, workspace)
-    raise ValueError(f"unknown env kind: {spec.kind}")
+    composition = capabilities or builtin_registry().compose([spec.capability_id])
+    provider = composition.provider(spec.capability_id, kind="environment")
+    env = provider.factory(spec, workspace)
+    env.capabilities = composition
+    return env

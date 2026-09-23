@@ -18,6 +18,7 @@ from rich.console import Console
 from rich.table import Table
 
 from dsagent import __version__, requirements
+from dsagent.capabilities import CapabilityError, compose_cartridges
 from dsagent.cartridge import CartridgeError, load_cartridge, load_cartridges
 from dsagent.cartridge.models import Cartridge, EnvSpec
 from dsagent.pricing import Prices, find_prices
@@ -70,11 +71,16 @@ def cartridge_validate(path: Path = typer.Argument(DEFAULT_CARTRIDGE)):
     """Load a cartridge, check the persona/skill matrix, regenerate command skills."""
     try:
         c = load_cartridge(path)
-    except CartridgeError as e:
+        capabilities = compose_cartridges([c])
+    except (CartridgeError, CapabilityError) as e:
         console.print(f"[red]✗[/red] {e}")
         raise typer.Exit(1)
     console.print(f"[green]✓[/green] cartridge [bold]{c.name}[/bold] v{c.version} is consistent")
     console.print(f"  personas: {len(c.personas)} · skills: {len(c.skills)} · workflows: {len(c.workflows)} · envs: {len(c.envs)}")
+    console.print(
+        "  capabilities: "
+        + ", ".join(f"{item['id']}@{item['version']}" for item in capabilities.manifest())
+    )
     console.print(f"  command skills regenerated: {', '.join(f'/{c.name}-{w}' for w in c.workflows)}")
     for wf_name, blind in _blind_steps(c).items():
         console.print(
@@ -251,7 +257,8 @@ def chat(
     from dsagent.host import build_orchestrator
 
     carts = load_cartridges(cartridge)
-    env = make_env(carts[0].envs["default"], workspace)
+    capabilities = compose_cartridges(carts)
+    env = make_env(carts[0].envs["default"], workspace, capabilities)
 
     def on_event(e: RunnerEvent) -> None:
         # Two consumers: the terminal running `dsagent chat`, and whatever is
@@ -262,6 +269,7 @@ def chat(
     tools = workflow_tools(
         carts, RUNS_DIR, ask_human=_ask, on_event=on_event,
         log=lambda m: console.print(m, style="dim", markup=False),
+        capabilities=capabilities,
     )
     agent = build_orchestrator(carts, env, workspace, model=model, workflow_tools=tools)
     console.print(f"[bold]dsagent[/bold] {__version__} · cartridges: {', '.join(c.name for c in carts)} · Ctrl-C to quit")
@@ -318,15 +326,17 @@ def serve(
     from dsagent.envs import make_env
 
     carts = load_cartridges(cartridge)
+    capabilities = compose_cartridges(carts)
     # A replay serves a recording: no model, and so no env to run anything in.
-    env = None if replay else make_env(carts[0].envs["default"], workspace)
+    env = None if replay else make_env(carts[0].envs["default"], workspace, capabilities)
     from dsagent.serve import RECURSION_LIMIT
 
     rates = Prices.load(prices or find_prices())
     application = build_app(carts, env, workspace, RUNS_DIR, model=model, seed=seed,
                             recursion_limit=recursion_limit or RECURSION_LIMIT,
                             replay=replay, replay_speed=replay_speed,
-                            memory_checkpointer=memory, prices=rates)
+                            memory_checkpointer=memory, prices=rates,
+                            capabilities=capabilities)
     mode = f"[yellow]replay[/yellow] {replay} at {replay_speed:g}×" if replay else "live"
     priced = f"{len(rates.rates)} model rate(s)" if rates.rates else "[yellow]no prices[/yellow]"
     console.print(

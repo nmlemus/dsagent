@@ -113,6 +113,9 @@ workflows:
 envs:
   default:  { kind: kernel, requirements: [pandas>=2, matplotlib, markdown] }
   meridian: { kind: docker, build: envs/meridian, gpu: optional }
+
+capabilities:
+  - { id: script.python, version: "1" }
 ```
 
 `scope: all` is what makes `reports` traversal. The harness resolves the matrix at load time and refuses to start if a persona claims a skill the matrix denies it.
@@ -249,13 +252,24 @@ experience:
 
 **One cartridge per project.** A project records the cartridge it was created with (`project.json: cartridge`). The UI resolves its experience from that binding (first loaded cartridge when unbound), the launcher offers only that cartridge's workflows, `POST /runs` refuses a workflow from another cartridge, and the project's chat orchestrator is built over that cartridge alone — its roster and `list_workflows` are the project's domain, not the union of everything the server loaded. The `default` project stays unbound so existing deployments keep working.
 
-### 3.4 Environments (`envs/*`)
+### 3.4 Environments and executable capabilities (`envs/*`)
 
-An environment is where a step's `execute` calls land. Two kinds in v2.0:
+An environment is where a step's `execute` calls land. `kind` resolves through
+a versioned capability provider (`environment.<kind>`), so the model no longer
+has a closed enum that must change for every compute backend. Two providers ship
+in v2.0:
 
 `kernel` is the persistent Jupyter kernel ported from v1 (`kernel/local.py`, `kernel/introspector.py`). Variables survive across steps and across chat turns; it is the right home for EDA and reporting.
 
 `docker` builds (or pulls) an image and runs the step inside it, mounting the run's workspace at `/workspace`. A built image is tagged `dsagent/<cartridge>-<env>:latest`, which is why `EnvSpec` carries the cartridge that declared it: two cartridges may both declare an env called `meridian`, and without the namespace the second build silently replaces the first. Every `docker` invocation is a list of strings built by a function that runs nothing, and the thing that runs them is injected — so the mounts, the flags and the cleanup are ordinary unit tests, and only the test that genuinely needs a daemon needs one (`DSAGENT_DOCKER=1`). It implements Deep Agents' `SandboxBackendProtocol`, which only requires `execute()` (plus upload/download for file transfer); the base class derives read/write/ls/glob/grep from that. Meridian is the canonical case: `google-meridian` on Python 3.11/3.12 with the JAX backend, GPU strongly recommended for fits (`[and-cuda]` extra on Linux), CPU acceptable for small models and for the optimizer/report stages.
+
+Executable features outside an environment are declared in `capabilities:`.
+Skill scripts are the first example: `.py` and `.sh` are dispatched through
+enabled `script-runner` providers instead of treating every file as Python.
+The host resolves dependencies and exact versions at startup and records the
+frozen manifest in every run. A resume under a different manifest is refused.
+The contract and extension example are in
+[`capability-composition.md`](capability-composition.md).
 
 ```dockerfile
 # envs/meridian/Dockerfile

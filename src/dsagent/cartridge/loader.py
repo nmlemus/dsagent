@@ -299,6 +299,7 @@ def load_cartridge(root: str | Path, *, generate_commands: bool = True) -> Cartr
         skills=skills,
         workflows=workflows,
         envs=envs,
+        capabilities=cy.get("capabilities", []) or [],
         experience=experience,
     )
     _validate_matrix(c)

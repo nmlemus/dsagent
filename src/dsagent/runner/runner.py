@@ -30,7 +30,6 @@ from __future__ import annotations
 import json
 import os
 import re
-import shlex
 import shutil
 import threading
 import time
@@ -40,6 +39,7 @@ from enum import Enum
 from pathlib import Path
 from typing import Any
 
+from dsagent.capabilities import CapabilityError, CapabilitySet, compose_cartridges
 from dsagent.cartridge.models import Cartridge, Step, Workflow
 from dsagent.envs.base import Env, make_env
 from dsagent.models import default_model
@@ -230,6 +230,10 @@ class RunState:
     inputs: dict[str, Any]
     status: str = "pending"  # pending | running | done | failed | awaiting_gate
     steps: dict[str, StepRecord] = field(default_factory=dict)
+    capability_fingerprint: str = ""
+    """Hash of the provider ids, versions and dependencies frozen for this run."""
+    capabilities: list[dict[str, Any]] = field(default_factory=list)
+    """Human-readable provider manifest paired with ``capability_fingerprint``."""
     gate_wait: float = 0.0
     """Seconds this run has spent waiting for a person, accumulated.
 
@@ -321,6 +325,7 @@ class WorkflowRunner:
         log: Callable[[str], None] = print,
         on_event: Callable[[RunnerEvent], None] | None = None,
         prices: Any = None,
+        capabilities: CapabilitySet | None = None,
     ) -> None:
         self.cartridge = cartridge
         self.run_dir = run_dir
@@ -334,6 +339,8 @@ class WorkflowRunner:
         self.event_log = run_dir / EVENT_LOG
         self.run_log = run_dir / RUN_LOG
         self.prices = prices
+        self._capabilities_supplied = capabilities is not None
+        self.capabilities = capabilities or compose_cartridges([cartridge])
         self._envs: dict[str, Env] = {}
         self._reported: dict[str, float] = {}
         """Workspace mtimes already announced via `dsagent.file` for the running step."""
@@ -509,8 +516,17 @@ class WorkflowRunner:
     def env_for(self, name: str) -> Env:
         if name not in self._envs:
             spec = self.cartridge.envs[name]
-            self.log(f"[env] provisioning '{name}' ({spec.kind})")
-            self._envs[name] = make_env(spec, self.workspace)
+            self.log(f"[env] provisioning '{name}' ({spec.capability_id})")
+            # Keep two-argument ``make_env`` calls for existing embedders and
+            # tests that inject an environment factory. A caller supplying a
+            # custom composition opts into the provider-aware third argument.
+            env = (
+                make_env(spec, self.workspace, self.capabilities)
+                if self._capabilities_supplied
+                else make_env(spec, self.workspace)
+            )
+            env.capabilities = self.capabilities
+            self._envs[name] = env
         return self._envs[name]
 
     def close(self) -> None:
@@ -533,6 +549,14 @@ class WorkflowRunner:
             if resume and (self.run_dir / "run.json").exists()
             else None
         )
+        if state is not None and state.capability_fingerprint not in (
+            "", self.capabilities.fingerprint
+        ):
+            raise CapabilityError(
+                "cannot resume run with a different capability composition: "
+                f"recorded {state.capability_fingerprint[:12]}, current "
+                f"{self.capabilities.fingerprint[:12]}"
+            )
         # A run keeps the inputs it started with, and they are resolved *after*
         # the recorded ones are merged in — a re-entering caller is the
         # accident-prone half. `--resume` without the original `-i`, or a
@@ -543,9 +567,15 @@ class WorkflowRunner:
         inputs = self._resolve_inputs(wf, {**(inputs or {}), **(state.inputs if state else {})})
         if state is not None:
             state.inputs = inputs
+            # Runs written before capability manifests existed are adopted once
+            # on their first resume; subsequent resumes are pinned.
+            state.capability_fingerprint = self.capabilities.fingerprint
+            state.capabilities = self.capabilities.manifest()
         else:
             state = RunState(workflow=wf.name, cartridge=self.cartridge.name, inputs=inputs,
-                             steps={s.id: StepRecord(id=s.id) for s in wf.steps})
+                             steps={s.id: StepRecord(id=s.id) for s in wf.steps},
+                             capability_fingerprint=self.capabilities.fingerprint,
+                             capabilities=self.capabilities.manifest())
         state.status = "running"
         self._state = state
         state.save(self.run_dir)
@@ -963,7 +993,8 @@ class WorkflowRunner:
         env = self.env_for(step.env or wf.env)
         script = self._materialize_check(wf, gate.check)
         asked_at = time.time()
-        r = env.backend.execute(f"{shlex.quote(env.python)} {shlex.quote(script)}")
+        provider = self.capabilities.provider(gate.runner, kind="script-runner")
+        r = provider.factory(env, Path(script), [])
         output = r.output.strip()
         prompt = f"auto check {gate.check}"
         if r.exit_code != 0:

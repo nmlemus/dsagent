@@ -14,6 +14,7 @@ and the `mmm-meridian` workflow are wired but need a Docker daemon (M2).
 
 ```
 src/dsagent/
+  capabilities/ versioned host providers + immutable per-run composition
   cartridge/   models + loader (+ matrix validation, /ds-<workflow> command generation)
   host/        cartridge → Deep Agents (persona agents, orchestrator with subagents)
   runner/      declared-DAG workflow runner: envs per step, produces checks, gates, resume
@@ -98,11 +99,15 @@ frontend plan are in [`docs/ui-slice.md`](docs/ui-slice.md).
 ## Cartridge contract
 
 A cartridge is a Claude Code plugin (`.claude-plugin/plugin.json`, `agents/`,
-`skills/`) plus `cartridge.yaml` (persona ↔ skill matrix, workflows, envs),
+`skills/`) plus `cartridge.yaml` (persona ↔ skill matrix, workflows, envs and
+required executable capabilities),
 `workflows/<name>/workflow.yaml` and `envs/<name>/Dockerfile`. The loader refuses to
 start when an agent's frontmatter `skills:` disagrees with the matrix, so the
 cartridge behaves the same inside Claude Code and inside DSAgent. Command skills
 `skills/<cartridge>-<workflow>/SKILL.md` are regenerated on every load.
+Capabilities are resolved and version-checked before execution; every run pins
+the resolved manifest in `run.json`. See
+[`docs/capability-composition.md`](docs/capability-composition.md).
 
 ## Tests
 

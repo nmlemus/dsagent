@@ -143,6 +143,7 @@ def build_app(
     replay_speed: float = 10.0,
     memory_checkpointer: bool = False,
     prices: Any = None,
+    capabilities: Any = None,
 ):
     """The FastAPI app: the orchestrator at `path`, the runs API under `/runs`.
 
@@ -155,6 +156,13 @@ def build_app(
 
     from fastapi import FastAPI
 
+    from dsagent.capabilities import compose_cartridges
+    from dsagent.capabilities.builtin import requirements_for_cartridges
+
+    capabilities = capabilities or compose_cartridges(cartridges)
+    if env is not None:
+        env.capabilities = capabilities
+
     @asynccontextmanager
     async def lifespan(app: Any):
         yield
@@ -165,7 +173,7 @@ def build_app(
                 continue
             try:
                 chat_env.close()
-            except Exception:
+            except Exception:  # noqa: BLE001, S110 — shutdown is best-effort
                 pass
 
     app = FastAPI(title="DSAgent", lifespan=lifespan)
@@ -214,6 +222,7 @@ def build_app(
                 carts, runs_dir,
                 ask_human=interrupt_gate, on_event=dispatch_runner_event, seed=seed,
                 prices=prices, store=store, session_project=sessions.project_of,
+                capabilities=chat_env.capabilities or capabilities,
             )
             return build_orchestrator(
                 carts, chat_env, ws, model=model, workflow_tools=tools,
@@ -268,7 +277,13 @@ def build_app(
                 ws.mkdir(parents=True, exist_ok=True)
                 carts = cartridges_for(project_id)
                 env_spec = carts[0].envs["default"]
-                chat_env = env if project_id == DEFAULT_ID else make_env(env_spec, ws)
+                chat_capabilities = capabilities.restrict(
+                    requirements_for_cartridges(carts)
+                )
+                chat_env = (
+                    env if project_id == DEFAULT_ID
+                    else make_env(env_spec, ws, chat_capabilities)
+                )
                 chat_envs[project_id] = chat_env
                 chat_agents[project_id] = LangGraphAGUIAgent(
                     name="dsagent",

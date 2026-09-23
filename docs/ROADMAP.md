@@ -176,6 +176,17 @@ Design settled before task 1: `docs/architecture.md` §3.4, "What a Docker env h
 
 ## Decisions log
 
+- 2026-09-23 — **Bounded capability composition is the extension boundary.**
+  Deep Agents/LangGraph remain the runtime. Trusted providers register stable ids,
+  contract kinds, versions and dependencies at boot; cartridges declare what they
+  consume; each run records and pins its resolved manifest. Environment provisioning,
+  skill scripts and automatic gate checks now use that boundary. Missing providers,
+  cycles, duplicate ids, incompatible versions and resume under another composition
+  fail before work continues. This is the first layer, not a marketplace: arbitrary
+  plugin installation and hot replacement remain out of scope. Next contracts are
+  resources, permissioned tools, domain processes and artifact renderers. See
+  `docs/capability-composition.md`.
+
 - 2026-09-20 — **The UI is cartridge-driven.** `cartridge.yaml` gains an `experience:` block
   (nouns, nav labels, home, assistant suggestions/instructions, resource formats) and
   `workflow.yaml` gains `title`/`summary`/`icon`/`badge`, step `title` and input

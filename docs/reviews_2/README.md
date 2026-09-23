@@ -25,17 +25,29 @@ Revisiones posteriores (cada una identifica el commit evaluado):
 | [Agentes persistentes y tres dominios](persistent-agents-and-three-domain-direction-2026-09-22.md) | Pausa solicitada por el usuario; comparación de Hermes, OpenClaw y NemoClaw, y alternativas para DS, agencias de marketing y SDLC |
 | [Requisitos contra Deep Agents](deep-agents-requirements-fit-2026-09-22.md) | 48 requisitos, responsabilidad por capa, evidencia del SDK instalado y desafíos de rediseño; sustituye la prioridad de comparar motores mediante prototipos |
 | [Filosofía de DeepSeek Harness](deepseek-harness-plugin-philosophy-2026-09-23.md) | Composición por plugins contrastada con código versionado; qué adoptar sobre Deep Agents y qué garantías siguen siendo responsabilidad de DSAgent |
+| [Composición implementada](../capability-composition.md) | Primera capa ejecutable: proveedores versionados, dependencias, entornos y scripts, manifiesto inmutable por run |
 
-Estas revisiones añaden evidencia y propuestas; no cambian automáticamente los estados del backlog reconciliado.
+Las revisiones añaden evidencia y propuestas. La primera capa de composición
+recomendada el 23 de septiembre ya está implementada; no cierra por sí sola los
+requisitos de autorización, persistencia, aislamiento ni procesos durables.
 
-**Dirección vigente (2026-09-22):** el usuario acota el producto a ciencia de datos, agencias de marketing y SDLC, y pide pausar la implementación para evaluar la arquitectura. Las recomendaciones de ejecución anteriores quedan sujetas a esta evaluación. No se ha decidido reemplazar el runtime.
+**Dirección vigente (2026-09-23):** el producto queda acotado a ciencia de
+datos, agencias de marketing y SDLC. Se conserva Deep Agents/LangGraph y se
+implementa composición acotada de capacidades; no se reemplaza el runtime ni se
+habilita instalación arbitraria de plugins.
 
-**Evaluación vigente:** completar primero el diseño sobre Deep Agents. La matriz de requisitos no identifica un bloqueo del SDK para esos dominios; recomienda conservarlo y rediseñar el control de ejecución de DSAgent. Una comparación implementada de runtimes deja de ser el siguiente paso recomendado.
+**Evaluación vigente:** la matriz de requisitos no identifica un bloqueo del SDK
+para esos dominios. La primera capa de contratos ya cubre entornos, scripts y
+manifiestos por run. El rediseño de autoridad de estado, permisos y procesos
+durables sigue pendiente; una comparación implementada de runtimes no es el
+siguiente paso recomendado.
 
 Se preservaron íntegros `docs/STARTUP-BACKLOG.md`, el informe inicial y `docs/reviews/2026-09-19-product-readiness/`. A partir de esta reconciliación, sus recomendaciones y estados son históricos; el estado de preparación de producto se actualiza solo en este folder. El [roadmap](../ROADMAP.md) enlaza aquí y conserva los hitos anteriores.
 
 **Actualización:** el usuario priorizó UI-001; el [rediseño empresarial está implementado y verificado localmente](../ui-workspace-redesign-2026-09-19.md). Las 57 tareas SR conservan sus criterios pendientes. **Después de revisar la UI, próxima recomendada: SR-001.** Después seguir el orden por dependencias del backlog, una tarea técnica a la vez. Las decisiones comerciales no impiden reparar pérdidas de datos, confusión entre proyectos o exposición de archivos. Las tareas amplias deben desglosarse antes de implementarlas.
 
-Esta entrega crea documentación: no inicia las tareas, no cambia la licencia ni decide self-host/SaaS. Las comprobaciones técnicas previas están atribuidas a sus fuentes; reconciliarlas no equivale a ejecutar de nuevo una auditoría completa.
+La reconciliación original fue documental y no cambió licencia ni decidió
+self-host/SaaS. Los cambios posteriores se registran como implementaciones
+separadas y no equivalen a completar el backlog de preparación comercial.
 
 Validación documental de la reconciliación original: 57 IDs únicos con especificación; 117 IDs de origen con destino; dependencias sin ciclos; 240 enlaces relativos/anclas comprobados; hashes de los 17 documentos originales sin cambios. No se ejecutaron tests de aplicación para este cambio documental.

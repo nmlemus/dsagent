@@ -35,11 +35,29 @@ class Persona(BaseModel):
     path: Path
 
 
+class CapabilitySpec(BaseModel, extra="forbid"):
+    """A host capability the cartridge consumes.
+
+    The short YAML form is a string (``script.python``); the mapping form pins
+    the provider contract (``{id: script.python, version: "1"}``).
+    """
+
+    id: str
+    version: str | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def _short_form(cls, value):
+        return {"id": value} if isinstance(value, str) else value
+
+
 class Gate(BaseModel):
     kind: Literal["human", "auto"]
     prompt: str | None = None
     check: str | None = None
     """For auto gates: script path relative to the workflow dir. Exit 0 = pass."""
+    runner: str = "script.python"
+    """Capability used to execute an auto gate check."""
 
     @model_validator(mode="after")
     def _check_fields(self) -> Gate:
@@ -178,7 +196,14 @@ class EnvSpec(BaseModel):
     provenance also makes `dsagent/ds-meridian` possible at all: without it two
     cartridges declaring `meridian` would build over each other's image.
     """
-    kind: Literal["kernel", "docker"] = "kernel"
+    kind: str = "kernel"
+    """Provider shorthand. ``kernel`` resolves to ``environment.kernel``.
+
+    This stays for backward-compatible cartridge YAML and for readable logs;
+    new providers can use any stable kind rather than changing this model.
+    """
+    provider: str | None = None
+    """Full capability id when it does not follow ``environment.<kind>``."""
     build: Path | None = None
     """Docker: directory with a Dockerfile, relative to cartridge root."""
     image: str | None = None
@@ -191,6 +216,10 @@ class EnvSpec(BaseModel):
     Dockerfile and the harness only validates the field. The harness never
     interprets the strings — see `dsagent.requirements`.
     """
+
+    @property
+    def capability_id(self) -> str:
+        return self.provider or f"environment.{self.kind}"
 
 
 class Noun(BaseModel, extra="forbid"):
@@ -292,6 +321,7 @@ class Cartridge(BaseModel):
     skills: dict[str, Skill]
     workflows: dict[str, Workflow]
     envs: dict[str, EnvSpec]
+    capabilities: list[CapabilitySpec] = Field(default_factory=list)
     experience: Experience = Field(default_factory=Experience)
 
     def skills_for(self, persona: str) -> list[Skill]:
