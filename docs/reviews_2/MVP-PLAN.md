@@ -4,6 +4,8 @@
 
 **Actualización del 2026-09-22:** el usuario fija tres dominios de producto —ciencia de datos, agencias de marketing y SDLC— y solicita una pausa para evaluar la arquitectura y la posible sustitución de partes del harness. Ver [agentes persistentes y dirección de producto](persistent-agents-and-three-domain-direction-2026-09-22.md). La recomendación de conservar el harness que sigue es histórica y queda sujeta a esa comparación; el primer recorrido comercial sigue por decidir. No se inicia la implementación de los tres dominios completos como un único MVP.
 
+**Evaluación posterior:** la [matriz de requisitos sobre Deep Agents](deep-agents-requirements-fit-2026-09-22.md) recomienda mantener el SDK y rediseñar el control de trabajos/procesos de DSAgent. La siguiente actividad propuesta es cerrar el diseño y sus responsabilidades, antes de implementar o comparar motores.
+
 ## Resultado que buscamos
 
 Un usuario definido completa un trabajo real de forma repetida, revisa el resultado, lo utiliza fuera de DSAgent y obtiene un beneficio que justifica su costo y el soporte de AiudaLabs. La prueba del MVP es ese uso, junto con la capacidad de operarlo y recuperar fallos; una ejecución exitosa o una UI presentable no bastan.

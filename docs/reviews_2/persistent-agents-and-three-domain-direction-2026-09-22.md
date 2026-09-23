@@ -2,6 +2,8 @@
 
 2026-09-22 · Base local: `c7949fb` (runtime sin cambios respecto a `7a6b805`).
 
+**Revisión posterior del mismo día:** el usuario pide evaluar requisitos y encaje sobre Deep Agents antes de proponer implementaciones comparativas. La [matriz de 48 requisitos](deep-agents-requirements-fit-2026-09-22.md) sustituye la prioridad de comparar motores propuesta aquí: recomienda conservar Deep Agents y rediseñar responsabilidades de DSAgent. Este documento conserva la investigación externa y sus alternativas como antecedentes.
+
 **Instrucción vigente del usuario:** concentrar el producto en ciencia de datos, agencias de marketing y SDLC; pausar la implementación para evaluar el modelo de agentes persistentes y aceptar retroceder si la base exige demasiadas correcciones. No se ha autorizado ni ejecutado una migración de runtime.
 
 ## Valoración
