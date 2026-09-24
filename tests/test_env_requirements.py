@@ -114,8 +114,12 @@ def test_kernel_env_fails_fast_with_the_install_command(tmp_path):
 
 
 def test_kernel_env_provisions_when_requirements_are_satisfied(tmp_path):
+    from importlib.metadata import version
+
     env = make_kernel_env(EnvSpec(name="default", kind="kernel", requirements=[INSTALLED]), tmp_path)
     assert [t.name for t in env.tools] == ["run_python"]
+    assert env.runtime_identity[f"package:{INSTALLED}"] == version(INSTALLED)
+    assert env.runtime_identity["python"]
     env.close()  # no kernel was started: run_python was never called
 
 

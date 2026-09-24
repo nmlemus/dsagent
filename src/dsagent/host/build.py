@@ -113,6 +113,7 @@ def _skill_script_tool(cartridge: Cartridge, persona: str, env: Env, workspace: 
     matters is where the file is, not how it was spelled.
     """
     granted = sorted(s.name for s in cartridge.skills_for(persona))
+    composition = compose_cartridges([cartridge], env.capabilities)
 
     @tool
     def run_skill_script(skill: str, script: str, argv: list[str] | None = None) -> str:
@@ -120,7 +121,7 @@ def _skill_script_tool(cartridge: Cartridge, persona: str, env: Env, workspace: 
 
         `skill` is the skill's name, `script` the file name inside its `scripts/`
         directory (for example "profile.py"), and `argv` the command-line
-        arguments to pass it. The script runs with this environment's Python,
+        arguments to pass it. The cartridge's enabled executor runs the script
         from the workspace root, so paths you pass in `argv` are
         workspace-relative.
 
@@ -147,7 +148,6 @@ def _skill_script_tool(cartridge: Cartridge, persona: str, env: Env, workspace: 
                 f"error: skill '{skill}' has no script '{script}'. "
                 f"Available: {', '.join(available) or 'none'}."
             )
-        composition = env.capabilities or compose_cartridges([cartridge])
         try:
             provider = composition.select(
                 kind="script-runner", metadata=("extension", target.suffix.lower())
@@ -182,6 +182,7 @@ def build_persona_agent(
     model: str | None = None,
     extra_tools: list[Callable[..., Any]] | None = None,
 ):
+    compose_cartridges([cartridge], env.capabilities)
     p = cartridge.personas[persona]
     skills_root = workspace / SKILLS_DIR
     if not (skills_root / persona).exists():
@@ -253,6 +254,7 @@ def build_orchestrator(
     `interrupt()` resumes from. Both default to off, so `dsagent chat` is
     unchanged and nothing here imports either package.
     """
+    compose_cartridges(cartridges, env.capabilities)
     skills_root = materialize_skills(cartridges, workspace)
     backend = _backend(env, skills_root)
     subagents = []

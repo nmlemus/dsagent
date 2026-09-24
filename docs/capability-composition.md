@@ -4,7 +4,8 @@
 
 DSAgent conserva Deep Agents/LangGraph como motor y separa el contenido de un
 cartridge de las funciones ejecutables del host. Un skill explica cómo trabajar;
-una capacidad autoriza y suministra el código que puede ejecutar ese trabajo.
+una capacidad selecciona la implementación disponible para ese consumidor.
+Esta selección no sustituye autorización ni aislamiento del sistema operativo.
 
 ## Contrato implementado
 
@@ -59,7 +60,17 @@ envs:
 ```
 
 Si falta un proveedor o la versión no coincide, la composición falla antes de
-crear un agente o ejecutar un paso.
+crear un agente o ejecutar un paso. `compose_cartridges(cartridges, registry)`
+acepta tanto un registro como una composición existente: en ambos casos valida
+los requisitos y devuelve el subconjunto del consumidor. También valida el tipo
+esperado por entornos/gates y detecta ejecutores ambiguos para una extensión
+dentro de cada cartridge. Inyectar una composición no permite omitir estos checks.
+
+Cada tool de scripts captura ese subconjunto al construirse, incluso en un chat
+multicartridge. `make_env(spec, workspace)` conserva su forma de dos argumentos:
+crea el entorno y deja que el builder enlace después las capacidades del cartridge.
+Cuando el caller suministra una composición explícita, se respeta como límite;
+no se añaden proveedores implícitamente para satisfacer requisitos ausentes.
 
 Los gates automáticos también declaran su ejecutor. `script.python` es el valor
 compatible por defecto; otro lenguaje se selecciona sin cambiar el runner:
@@ -71,7 +82,7 @@ gate:
   runner: script.shell
 ```
 
-## Composición congelada por run
+## Manifiesto y control de cambios por run
 
 El runner escribe en `run.json`:
 
@@ -85,10 +96,39 @@ El runner escribe en `run.json`:
 }
 ```
 
-Un resume con otra composición se rechaza antes de modificar el estado. Los runs
-anteriores a este contrato se adoptan una sola vez al reanudarse y quedan
-fijados desde entonces. Cada run recibe solo las capacidades de su cartridge,
-aunque el servidor tenga otros dominios cargados.
+La huella anterior identifica proveedores, no la ejecución completa. Ahora
+`run.json` incluye además `execution` (schema 1): hash de configuración efectiva,
+modelo por defecto, identidad del cartridge/workflow y hashes de archivos de
+personas, skills, workflows y contextos de build. Se excluyen cachés Python y
+`.git`; se rechazan symlinks a directorios que no puedan inventariarse. La
+comprobación es conservadora y abarca las definiciones del cartridge completo.
+
+El launcher escribe este registro al crear el run; CLI/chat al entrar al runner.
+Un resume con cambios de definición o contenido se rechaza antes de modificar
+el estado o invocar al agente. Se comprueba de nuevo entre pasos y antes de
+gates para detectar ediciones mientras se ejecuta. La política es **restaurar la
+versión registrada o iniciar otro run**; no se guarda una copia ejecutable de
+los archivos ni se migra un run automáticamente.
+
+`environment_identities` registra el id real de imagen Docker inspeccionado
+en el contenedor y, para kernel, la versión Python y las versiones instaladas
+de los paquetes declarados. Al reprovisionar, un cambio falla antes de ejecutar
+al agente o al script del gate. Un tag Docker que apunta a otra imagen deja de
+pasar inadvertido; la inspección ocurre después de arrancar el contenedor y no
+es una garantía contra efectos de su entrypoint. Si la imagen no puede
+identificarse, se libera el contenedor y se rechaza el entorno.
+
+Los runs antiguos sin `execution` se adoptan una sola vez y se deja constancia
+en `runner.log`: no se puede reconstruir retrospectivamente qué fuentes usaron.
+La identidad de un entorno se registra en su primera provisión conocida.
+Cada run recibe solo las capacidades de su cartridge, aunque el servidor tenga
+otros dominios cargados.
+
+Esto detecta cambios de las entradas declaradas, no convierte el entorno en
+hermético: el código de proveedores se versiona por disciplina de release,
+los paquetes transitivos/datos externos no están bloqueados, y un job remoto
+debe aportar su propia identidad. No constituye una frontera de seguridad
+frente a modificaciones concurrentes maliciosas de los archivos.
 
 ## Añadir un proveedor interno
 
@@ -116,9 +156,17 @@ composition = registry.compose(["acme.compute-job"])
 
 La factoría de un entorno recibe `(EnvSpec, workspace)` y devuelve `Env`; su
 `close()` sigue siendo la frontera de liberación de kernels, contenedores o jobs.
+El cierre de `Env` es idempotente y se intentan todos los cierres aunque uno
+falle; el runner registra errores de cleanup sin ocultar el resultado del trabajo.
 Una factoría `script-runner` recibe `(Env, ruta_relativa, argv)` y devuelve la
 respuesta de ejecución del backend. El host conserva la validación de alcance:
 un script debe estar dentro del skill concedido a la persona.
+
+`requires` comprueba presencia y ciclos; no inicializa ni inyecta servicios. En
+el ejemplo, `provide_identity_context` requiere wiring explícito de la aplicación.
+Un contenedor de servicios con lifecycle de dependencias queda fuera de esta capa.
+Una excepción al ejecutar un gate automático queda registrada como fallo de gate,
+paso y run; los interrupts de revisión humana conservan su semántica.
 
 ## Siguientes contratos
 

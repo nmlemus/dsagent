@@ -176,6 +176,15 @@ Design settled before task 1: `docs/architecture.md` §3.4, "What a Docker env h
 
 ## Decisions log
 
+- 2026-09-23 — **Capability review fixes.** Consumer binding validates injected
+  compositions and scopes script executors per cartridge. Execution manifests
+  now record configuration/source hashes; changed snapshots cannot resume.
+  Docker image ids and declared kernel package versions are checked on environment
+  reprovisioning. Automatic gate provider failures record a failed run and cleanup
+  attempts every resource. Legacy runs adopt a snapshot with a log entry; restoration
+  or a new run is required after source changes. See
+  `docs/reviews_2/capability-composition-review-2026-09-23.md`.
+
 - 2026-09-23 — **Bounded capability composition is the extension boundary.**
   Deep Agents/LangGraph remain the runtime. Trusted providers register stable ids,
   contract kinds, versions and dependencies at boot; cartridges declare what they

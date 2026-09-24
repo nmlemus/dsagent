@@ -54,9 +54,10 @@ class FakeBackend:
         pass
 
 
-def stub_env(spec, workspace: Path) -> Env:
+def stub_env(spec, workspace: Path, capabilities=None) -> Env:
     """What every runner test patches `make_env` to: no kernel, no container."""
-    return Env(spec=spec, workspace=workspace, backend=FakeBackend(workspace))
+    return Env(spec=spec, workspace=workspace, backend=FakeBackend(workspace),
+               capabilities=capabilities)
 
 
 PRODUCES_PREFIX = "- `"

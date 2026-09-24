@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import queue
 import sys
+from importlib.metadata import version
 from pathlib import Path
 
 from deepagents.backends import LocalShellBackend
@@ -105,4 +106,9 @@ def make_kernel_env(spec: EnvSpec, workspace: Path) -> Env:
             kernel.close()
 
     return Env(spec=spec, workspace=workspace, backend=backend, tools=[run_python],
-               closers=[_close], python=sys.executable)
+               closers=[_close], python=sys.executable,
+               runtime_identity={
+                   "python": sys.version,
+                   **{f"package:{requirements.distribution_name(item)}":
+                      version(requirements.distribution_name(item)) for item in spec.requirements},
+               })

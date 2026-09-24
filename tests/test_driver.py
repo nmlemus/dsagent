@@ -244,7 +244,7 @@ def test_a_gate_can_be_answered_the_instant_it_is_announced(driver, tmp_path, mo
 
     monkeypatch.setattr(
         "dsagent.runner.runner.make_env",
-        lambda spec, ws: Env(spec=spec, workspace=ws, backend=SlowBackend()),
+        lambda spec, ws, capabilities=None: Env(spec=spec, workspace=ws, backend=SlowBackend()),
     )
 
     d = driver()

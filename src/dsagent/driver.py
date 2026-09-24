@@ -26,6 +26,8 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any, Protocol
 
+from dsagent.capabilities import CapabilitySet, compose_cartridges
+from dsagent.capabilities.execution import execution_manifest
 from dsagent.cartridge.models import Cartridge, Workflow
 from dsagent.runner.runner import GateDecision, RunState, StepRecord
 from dsagent.runner.tools import RUN_ID_KEY
@@ -68,7 +70,8 @@ def _standing_decision(state: RunState) -> GateDecision | None:
     return None
 
 
-def pending_state(workflow: Workflow, cartridge: Cartridge, inputs: dict[str, Any]) -> RunState:
+def pending_state(workflow: Workflow, cartridge: Cartridge, inputs: dict[str, Any],
+                  capabilities: CapabilitySet | None = None) -> RunState:
     """A run that exists but has not started.
 
     Written before the orchestrator is asked for anything, so the run is in the
@@ -76,12 +79,16 @@ def pending_state(workflow: Workflow, cartridge: Cartridge, inputs: dict[str, An
     The runner picks it up as a resume — every step `pending`, so nothing is
     skipped — and reads its inputs back out of it rather than from the model.
     """
+    composition = compose_cartridges([cartridge], capabilities)
     return RunState(
         workflow=workflow.name,
         cartridge=cartridge.name,
         inputs=inputs,
         status="pending",
         steps={s.id: StepRecord(id=s.id) for s in workflow.ordered_steps()},
+        capabilities=composition.manifest(),
+        capability_fingerprint=composition.fingerprint,
+        execution=execution_manifest(cartridge, workflow.name, composition),
     )
 
 
@@ -132,7 +139,9 @@ class GraphDriver:
         recursion_limit: int,
         log: Callable[[str], None] = lambda m: None,
         store: Any = None,
+        capabilities: CapabilitySet | None = None,
     ) -> None:
+        self.capabilities = compose_cartridges(cartridges, capabilities)
         self.graph = graph
         self.runs_dir = runs_dir
         self.recursion_limit = recursion_limit
@@ -164,7 +173,8 @@ class GraphDriver:
         base = self.store.runs_dir(project) if self.store is not None else self.runs_dir
         run_dir = base / run_id
         (run_dir / "workspace").mkdir(parents=True, exist_ok=True)
-        pending_state(cartridge.workflows[workflow], cartridge, inputs).save(run_dir)
+        pending_state(cartridge.workflows[workflow], cartridge, inputs,
+                      self.capabilities).save(run_dir)
         return run_dir
 
     def start(self, run_id: str, *, resume: bool = False) -> None:

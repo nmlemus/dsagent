@@ -2,6 +2,33 @@
 
 Fecha: 2026-09-23. Commit revisado: `7b187d04370ea85beb83c9d82ecabc0fc6f19b67`.
 
+## Seguimiento de correcciones · 2026-09-23
+
+Los cinco hallazgos se corrigieron después de esta revisión. La evidencia
+original se conserva abajo; los cambios están cubiertos en
+`tests/test_capability_contracts.py` y las pruebas de entornos existentes.
+
+Verificación de las correcciones: **438 pruebas aprobadas, 12 omitidas y 8
+warnings** con `PYTHONPATH=. .venv/bin/pytest -q`; Ruff aprobado en los módulos
+y pruebas de contrato modificados; validación CLI de DS y Marketing aprobada.
+Las pruebas Docker de integración siguen omitidas sin un daemon habilitado;
+la inspección de identidad y el cleanup se verificaron con el cliente simulado.
+
+| Hallazgo | Corrección implementada |
+|---|---|
+| CAP-R01 | Snapshot de configuración y hashes de fuentes desde creación/primera ejecución; rechazo de cambios al reanudar y entre pasos. Identidad real de imagen Docker y versiones Python/paquetes declarados verificadas al reprovisionar. |
+| CAP-R02 | Enlace centralizado que valida requisitos incluso al recibir una composición; aplicado en runner, builders, tools, driver y servidor. |
+| CAP-R03 | Cada tool captura el subconjunto del cartridge al construirse, también en el orchestrator multicartridge. |
+| CAP-R04 | La API `make_env(spec, workspace)` deja el enlace del cartridge al builder; una composición explícita sigue siendo un límite. |
+| CAP-R05 | Validación temprana del tipo de contrato y ambigüedad de ejecutores; excepciones de gates registradas como fallo y cleanup completo. |
+
+La política de snapshot es detectar/rechazar cambios, no archivar y volver a
+ejecutar versiones anteriores. Los runs antiguos se adoptan con aviso en el
+log. Paquetes transitivos, código de proveedor sin cambio de versión y servicios
+externos siguen sujetos a la disciplina de despliegue. Las limitaciones de
+inyección automática de dependencias y autorización siguen abiertas; el
+documento de [composición](../capability-composition.md) precisa ese alcance.
+
 ## Veredicto
 
 La dirección es aprovechable: registro explícito, resolución de dependencias,

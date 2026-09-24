@@ -46,23 +46,32 @@ class Env:
     and the cartridge's requirements are installed in the former.
     """
     capabilities: Any = None
-    """Frozen host composition that created or adopted this environment."""
+    """Explicit host composition; None lets an agent bind its own cartridge."""
+    runtime_identity: dict[str, str] = field(default_factory=dict)
+    _closed: bool = field(default=False, init=False, repr=False)
 
-    def close(self) -> None:  # pragma: no cover - trivial
+    def close(self) -> None:
+        if self._closed:
+            return
+        self._closed = True
         # Resources unwind in the opposite order from acquisition.
-        for c in reversed(self.closers):
-            c()
         closer = getattr(self.backend, "close", None)
-        if closer:
-            closer()
+        errors = []
+        for close in [*reversed(self.closers), *([closer] if closer else [])]:
+            try:
+                close()
+            except Exception as error:  # noqa: BLE001 — finish every cleanup
+                errors.append(error)
+        if errors:
+            raise ExceptionGroup("environment cleanup failed", errors)
 
 
 def make_env(spec: EnvSpec, workspace: Path, capabilities: Any = None) -> Env:
     """Provision an environment through its selected capability provider.
 
     ``capabilities`` is optional for API compatibility.  Direct callers receive
-    a minimal built-in composition containing only this environment provider;
-    runners and servers pass the broader, already-frozen product composition.
+    the requested built-in environment. Its agent will bind the cartridge's
+    composition later; an explicit composition is always enforced as supplied.
     """
     from dsagent.capabilities import builtin_registry
 
@@ -70,5 +79,5 @@ def make_env(spec: EnvSpec, workspace: Path, capabilities: Any = None) -> Env:
     composition = capabilities or builtin_registry().compose([spec.capability_id])
     provider = composition.provider(spec.capability_id, kind="environment")
     env = provider.factory(spec, workspace)
-    env.capabilities = composition
+    env.capabilities = capabilities
     return env

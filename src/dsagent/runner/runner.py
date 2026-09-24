@@ -40,6 +40,7 @@ from pathlib import Path
 from typing import Any
 
 from dsagent.capabilities import CapabilityError, CapabilitySet, compose_cartridges
+from dsagent.capabilities.execution import execution_manifest
 from dsagent.cartridge.models import Cartridge, Step, Workflow
 from dsagent.envs.base import Env, make_env
 from dsagent.models import default_model
@@ -234,6 +235,10 @@ class RunState:
     """Hash of the provider ids, versions and dependencies frozen for this run."""
     capabilities: list[dict[str, Any]] = field(default_factory=list)
     """Human-readable provider manifest paired with ``capability_fingerprint``."""
+    execution: dict[str, Any] = field(default_factory=dict)
+    """Effective definitions/source hashes. Empty for pre-snapshot runs."""
+    environment_identities: dict[str, dict[str, str]] = field(default_factory=dict)
+    """Runtime identities, such as Docker's actual content-addressed image id."""
     gate_wait: float = 0.0
     """Seconds this run has spent waiting for a person, accumulated.
 
@@ -327,6 +332,7 @@ class WorkflowRunner:
         prices: Any = None,
         capabilities: CapabilitySet | None = None,
     ) -> None:
+        self.capabilities = compose_cartridges([cartridge], capabilities)
         self.cartridge = cartridge
         self.run_dir = run_dir
         self.workspace = run_dir / "workspace"
@@ -339,8 +345,6 @@ class WorkflowRunner:
         self.event_log = run_dir / EVENT_LOG
         self.run_log = run_dir / RUN_LOG
         self.prices = prices
-        self._capabilities_supplied = capabilities is not None
-        self.capabilities = capabilities or compose_cartridges([cartridge])
         self._envs: dict[str, Env] = {}
         self._reported: dict[str, float] = {}
         """Workspace mtimes already announced via `dsagent.file` for the running step."""
@@ -517,22 +521,27 @@ class WorkflowRunner:
         if name not in self._envs:
             spec = self.cartridge.envs[name]
             self.log(f"[env] provisioning '{name}' ({spec.capability_id})")
-            # Keep two-argument ``make_env`` calls for existing embedders and
-            # tests that inject an environment factory. A caller supplying a
-            # custom composition opts into the provider-aware third argument.
-            env = (
-                make_env(spec, self.workspace, self.capabilities)
-                if self._capabilities_supplied
-                else make_env(spec, self.workspace)
-            )
+            env = make_env(spec, self.workspace, self.capabilities)
             env.capabilities = self.capabilities
             self._envs[name] = env
-        return self._envs[name]
+        env = self._envs[name]
+        if self._state is not None:
+            recorded = self._state.environment_identities.get(name)
+            if recorded is not None and recorded != env.runtime_identity:
+                raise CapabilityError(f"environment '{name}' runtime identity changed")
+            if env.runtime_identity and recorded is None:
+                self._state.environment_identities[name] = dict(env.runtime_identity)
+                self._state.save(self.run_dir)
+        return env
 
     def close(self) -> None:
-        for e in self._envs.values():
-            e.close()
+        envs = list(self._envs.values())
         self._envs.clear()
+        for env in reversed(envs):
+            try:
+                env.close()
+            except Exception as error:  # noqa: BLE001 — do not mask work/gate failures
+                self.log(f"[env] cleanup failed for '{env.spec.name}': {error}")
 
     def _default_factory(self, cartridge: Cartridge, persona: str, env: Env, workspace: Path):
         from dsagent.host.build import build_persona_agent
@@ -549,6 +558,15 @@ class WorkflowRunner:
             if resume and (self.run_dir / "run.json").exists()
             else None
         )
+        snapshot = execution_manifest(self.cartridge, workflow_name, self.capabilities)
+        if state is not None:
+            if (state.cartridge, state.workflow) != (self.cartridge.name, workflow_name):
+                raise CapabilityError("cannot resume a different cartridge or workflow")
+            if state.execution and state.execution.get("fingerprint") != snapshot["fingerprint"]:
+                raise CapabilityError(
+                    "cannot resume: execution configuration or source changed; "
+                    "restore the recorded cartridge version or start a new run"
+                )
         if state is not None and state.capability_fingerprint not in (
             "", self.capabilities.fingerprint
         ):
@@ -566,6 +584,8 @@ class WorkflowRunner:
         # model, authoritative about what the run is running on.
         inputs = self._resolve_inputs(wf, {**(inputs or {}), **(state.inputs if state else {})})
         if state is not None:
+            if not state.execution:
+                self.log("[run] adopting legacy execution snapshot; earlier source was not recorded")
             state.inputs = inputs
             # Runs written before capability manifests existed are adopted once
             # on their first resume; subsequent resumes are pinned.
@@ -576,12 +596,15 @@ class WorkflowRunner:
                              steps={s.id: StepRecord(id=s.id) for s in wf.steps},
                              capability_fingerprint=self.capabilities.fingerprint,
                              capabilities=self.capabilities.manifest())
+        state.execution = snapshot
         state.status = "running"
         self._state = state
         state.save(self.run_dir)
 
         try:
             for step in wf.ordered_steps():
+                if not self._execution_unchanged(wf, step, state):
+                    return state
                 if self._stopped(state):
                     return state
                 rec = state.steps[step.id]
@@ -601,6 +624,8 @@ class WorkflowRunner:
                 # stopped run should not do.
                 if self._stopped(state):
                     return state
+                if not self._execution_unchanged(wf, step, state):
+                    return state
                 if step.gate and not self._gate(wf, step, rec, state, dry_run):
                     return state
             state.status = "done"
@@ -609,6 +634,20 @@ class WorkflowRunner:
         finally:
             if not dry_run:
                 self.close()
+
+    def _execution_unchanged(self, wf: Workflow, step: Step, state: RunState) -> bool:
+        try:
+            current = execution_manifest(self.cartridge, wf.name, self.capabilities)
+            if current["fingerprint"] != state.execution["fingerprint"]:
+                raise CapabilityError("execution configuration or source changed during run")
+        except CapabilityError as error:
+            rec = state.steps[step.id]
+            rec.status, rec.error = "failed", str(error)
+            state.status = "failed"
+            state.save(self.run_dir)
+            self._emit_step(wf, step, "failed", rec.error)
+            return False
+        return True
 
     def _stopped(self, state: RunState) -> bool:
         """Whether somebody asked this run to stop, and honouring it if so.
@@ -990,14 +1029,17 @@ class WorkflowRunner:
         if decided == GateDecision.APPROVE.value or dry_run:
             return True
         self.log(f"[gate] auto check {gate.check} after {step.id}")
-        env = self.env_for(step.env or wf.env)
-        script = self._materialize_check(wf, gate.check)
         asked_at = time.time()
-        provider = self.capabilities.provider(gate.runner, kind="script-runner")
-        r = provider.factory(env, Path(script), [])
-        output = r.output.strip()
+        try:
+            env = self.env_for(step.env or wf.env)
+            script = self._materialize_check(wf, gate.check)
+            provider = self.capabilities.provider(gate.runner, kind="script-runner")
+            r = provider.factory(env, Path(script), [])
+            output, passed = r.output.strip(), r.exit_code == 0
+        except Exception as error:  # noqa: BLE001 — record provider failures, not human interrupts
+            output, passed = f"{type(error).__name__}: {error}", False
         prompt = f"auto check {gate.check}"
-        if r.exit_code != 0:
+        if not passed:
             rec.gate = GateRecord(decision=GateDecision.REJECT.value, note=output[-500:],
                                   ts=time.time(), asked_at=asked_at)
             rec.status, rec.error = "failed", f"auto gate failed:\n{output}"

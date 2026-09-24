@@ -29,6 +29,7 @@ class CapabilityRequirement:
 
     id: str
     version: str | None = None
+    kind: str | None = None
 
     def __post_init__(self) -> None:
         if not _ID.fullmatch(self.id):
@@ -60,6 +61,7 @@ class CapabilityProvider:
             raise ValueError(f"capability {self.id!r} has an empty version")
         for dependency in self.requires:
             CapabilityRequirement(dependency)
+        object.__setattr__(self, "requires", tuple(self.requires))
         metadata = dict(self.metadata)
         if any(not isinstance(key, str) or not isinstance(value, str)
                for key, value in metadata.items()):
@@ -102,6 +104,11 @@ class CapabilityRegistry:
                 raise CapabilityError(
                     f"{consumer} requires capability '{requirement.id}' version "
                     f"{requirement.version}, but version {provider.version} is registered"
+                )
+            if requirement.kind is not None and requirement.kind != provider.kind:
+                raise CapabilityError(
+                    f"{consumer} requires '{requirement.id}' as {requirement.kind!r}, "
+                    f"but its provider is {provider.kind!r}"
                 )
             if requirement.id in resolved:
                 return

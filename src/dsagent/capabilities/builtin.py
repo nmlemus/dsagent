@@ -63,14 +63,24 @@ def builtin_registry() -> CapabilityRegistry:
 
 
 def compose_cartridges(
-    cartridges: Iterable[Cartridge], registry: CapabilityRegistry | None = None
+    cartridges: Iterable[Cartridge], registry: CapabilityRegistry | CapabilitySet | None = None
 ) -> CapabilitySet:
     """Resolve every explicit and environment capability before work starts."""
-    registry = registry or builtin_registry()
+    registry = registry if registry is not None else builtin_registry()
     cartridges = list(cartridges)
     try:
         requirements = requirements_for_cartridges(cartridges)
-        return registry.compose(requirements)
+        resolve = registry.restrict if isinstance(registry, CapabilitySet) else registry.compose
+        composition = resolve(requirements)
+        # Validate routing within each consumer, not across a multi-domain host:
+        # two cartridges may intentionally use different executors for .py.
+        for cartridge in cartridges:
+            scoped = composition.restrict(requirements_for_cartridges([cartridge]))
+            for entry in scoped.manifest():
+                extension = entry['metadata'].get('extension')
+                if entry['kind'] == 'script-runner' and extension:
+                    scoped.select(kind='script-runner', metadata=('extension', extension))
+        return composition
     except (CapabilityError, ValueError) as error:
         names = ", ".join(cartridge.name for cartridge in cartridges)
         raise CapabilityError(f"cannot compose cartridge(s) {names}: {error}") from error
@@ -86,10 +96,11 @@ def requirements_for_cartridges(
             CapabilityRequirement(item.id, item.version) for item in cartridge.capabilities
         )
         requirements.extend(
-            CapabilityRequirement(spec.capability_id) for spec in cartridge.envs.values()
+            CapabilityRequirement(spec.capability_id, kind="environment")
+            for spec in cartridge.envs.values()
         )
         requirements.extend(
-            CapabilityRequirement(step.gate.runner)
+            CapabilityRequirement(step.gate.runner, kind="script-runner")
             for workflow in cartridge.workflows.values()
             for step in workflow.steps
             if step.gate is not None and step.gate.kind == "auto"

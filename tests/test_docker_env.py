@@ -61,7 +61,8 @@ class FakeDocker:
         self.timeouts.append(timeout)
         if self.raises is not None:
             raise self.raises
-        code, out, err = self.answers.get(argv[1], (0, "", ""))
+        default = (0, "sha256:fake-image", "") if argv[1] == "inspect" else (0, "", "")
+        code, out, err = self.answers.get(argv[1], default)
         return subprocess.CompletedProcess(list(argv), code, out, err)
 
     def of(self, subcommand: str) -> list[list[str]]:
@@ -252,7 +253,16 @@ def test_the_env_closes_its_container(workspace):
     env.close()
 
     assert env.python == "python3", "the auto-gate and run_skill_script run env.python"
+    assert env.runtime_identity == {"docker_image_id": "sha256:fake-image"}
     assert docker.of("build") == [], "an env with an image does not build"
+    assert len(docker.of("rm")) == 1
+
+
+def test_unidentifiable_docker_runtime_is_closed_before_returning(workspace):
+    docker = FakeDocker(inspect=(1, "", "container disappeared"))
+    spec = EnvSpec(name="test", kind="docker", image="mutable:latest")
+    with pytest.raises(DockerError, match="could not identify"):
+        make_docker_env(spec, workspace, runner=docker)
     assert len(docker.of("rm")) == 1
 
 

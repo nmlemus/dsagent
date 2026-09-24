@@ -118,7 +118,7 @@ def test_task_message_lists_only_visible_inputs(tmp_path, monkeypatch):
 
     monkeypatch.setattr(
         "dsagent.runner.runner.make_env",
-        lambda spec, ws: Env(spec=spec, workspace=ws, backend=Backend()),
+        lambda spec, ws, capabilities=None: Env(spec=spec, workspace=ws, backend=Backend()),
     )
     runner = WorkflowRunner(
         load_cartridge(DS), tmp_path / "run",

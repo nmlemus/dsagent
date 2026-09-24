@@ -26,7 +26,7 @@ Revisiones posteriores (cada una identifica el commit evaluado):
 | [Requisitos contra Deep Agents](deep-agents-requirements-fit-2026-09-22.md) | 48 requisitos, responsabilidad por capa, evidencia del SDK instalado y desafíos de rediseño; sustituye la prioridad de comparar motores mediante prototipos |
 | [Filosofía de DeepSeek Harness](deepseek-harness-plugin-philosophy-2026-09-23.md) | Composición por plugins contrastada con código versionado; qué adoptar sobre Deep Agents y qué garantías siguen siendo responsabilidad de DSAgent |
 | [Composición implementada](../capability-composition.md) | Primera capa ejecutable: proveedores versionados, dependencias, entornos y scripts, manifiesto inmutable por run |
-| [Revisión de la composición](capability-composition-review-2026-09-23.md) | Revisión de `7b187d0`: cinco hallazgos reproducidos, límites de las garantías y criterios de corrección |
+| [Revisión de la composición](capability-composition-review-2026-09-23.md) | Revisión de `7b187d0` y seguimiento: cinco hallazgos corregidos con pruebas de regresión; límites de snapshot, dependencias y autorización documentados |
 
 Las revisiones añaden evidencia y propuestas. La primera capa de composición
 recomendada el 23 de septiembre ya está implementada; no cierra por sí sola los

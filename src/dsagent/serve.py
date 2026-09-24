@@ -157,9 +157,9 @@ def build_app(
     from fastapi import FastAPI
 
     from dsagent.capabilities import compose_cartridges
-    from dsagent.capabilities.builtin import requirements_for_cartridges
 
-    capabilities = capabilities or compose_cartridges(cartridges)
+    source = capabilities if capabilities is not None else (env.capabilities if env else None)
+    capabilities = compose_cartridges(cartridges, source)
     if env is not None:
         env.capabilities = capabilities
 
@@ -277,9 +277,7 @@ def build_app(
                 ws.mkdir(parents=True, exist_ok=True)
                 carts = cartridges_for(project_id)
                 env_spec = carts[0].envs["default"]
-                chat_capabilities = capabilities.restrict(
-                    requirements_for_cartridges(carts)
-                )
+                chat_capabilities = compose_cartridges(carts, capabilities)
                 chat_env = (
                     env if project_id == DEFAULT_ID
                     else make_env(env_spec, ws, chat_capabilities)
@@ -330,6 +328,7 @@ def build_app(
         driver = GraphDriver(
             orchestrator(env, workspace, checkpointer_for(workspace, memory=memory_checkpointer)),
             cartridges, runs_dir, recursion_limit=recursion_limit, store=store,
+            capabilities=capabilities,
         )
 
     from dsagent.api import add_runs_routes

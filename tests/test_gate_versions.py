@@ -42,7 +42,7 @@ class Writer:
 def run(tmp_path, monkeypatch):
     monkeypatch.setattr(
         "dsagent.runner.runner.make_env",
-        lambda spec, ws: Env(spec=spec, workspace=ws,
+        lambda spec, ws, capabilities=None: Env(spec=spec, workspace=ws,
                              backend=type("B", (), {"close": lambda s: None})()),
     )
 
@@ -187,7 +187,7 @@ def test_rewriting_one_of_several_promises_is_enough(run, tmp_path, monkeypatch)
 
     monkeypatch.setattr(
         "dsagent.runner.runner.make_env",
-        lambda spec, ws: Env(spec=spec, workspace=ws,
+        lambda spec, ws, capabilities=None: Env(spec=spec, workspace=ws,
                              backend=type("B", (), {"close": lambda s: None})()),
     )
     steps = [{"id": "check", "produces": ["a.md", "b.json"],

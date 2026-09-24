@@ -13,7 +13,7 @@ from dsagent.capabilities import (
     compose_cartridges,
 )
 from dsagent.cartridge import load_cartridge
-from dsagent.cartridge.models import EnvSpec
+from dsagent.cartridge.models import CapabilitySpec, EnvSpec
 from dsagent.envs.base import Env, make_env
 from dsagent.host.build import SKILLS_DIR, _skill_script_tool, materialize_skills
 from dsagent.runner import WorkflowRunner
@@ -109,6 +109,7 @@ def test_ds_cartridge_declares_its_script_runtime_and_environment():
 
 def test_skill_scripts_are_dispatched_by_declared_provider(tmp_path):
     cartridge = load_cartridge(DS)
+    cartridge.capabilities = [CapabilitySpec(id="script.shell")]
     workspace = tmp_path / "workspace"
     workspace.mkdir()
     materialize_skills([cartridge], workspace)
@@ -117,7 +118,9 @@ def test_skill_scripts_are_dispatched_by_declared_provider(tmp_path):
     env = Env(
         spec=cartridge.envs["default"], workspace=workspace,
         backend=FakeBackend(workspace),
-        capabilities=builtin_registry().compose(["environment.kernel", "script.shell"]),
+        capabilities=builtin_registry().compose([
+            "environment.kernel", "environment.docker", "script.python", "script.shell",
+        ]),
     )
 
     result = _skill_script_tool(cartridge, "marie", env, workspace).invoke({
@@ -135,11 +138,12 @@ def test_a_run_cannot_resume_under_a_different_composition(tmp_path):
         "w", {"data_path": "x.csv"}, dry_run=True
     )
 
-    registry = builtin_registry()
-    registry.register(provider("audit.extra"))
-    changed = registry.compose(["environment.kernel", "audit.extra"])
+    registry = CapabilityRegistry().register(CapabilityProvider(
+        id="environment.kernel", kind="environment", version="2", factory=lambda: None,
+    ))
+    changed = registry.compose(["environment.kernel"])
 
-    with pytest.raises(CapabilityError, match="different capability composition"):
+    with pytest.raises(CapabilityError, match="execution configuration or source changed"):
         WorkflowRunner(
             cartridge, run_dir, log=lambda message: None, capabilities=changed
         ).run("w", {"data_path": "x.csv"}, resume=True, dry_run=True)

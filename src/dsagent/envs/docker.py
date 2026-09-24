@@ -261,6 +261,17 @@ def make_docker_env(spec: EnvSpec, workspace: Path, *, runner: Runner | None = N
     backend = DockerBackend(
         image, workspace, gpu=spec.gpu == "required", user=host_user() or None, runner=runner,
     )
+    try:
+        inspected = (runner or run_docker)(
+            ["docker", "inspect", "--format", "{{.Image}}", backend.id]
+        )
+        image_id = inspected.stdout.strip()
+        if inspected.returncode != 0 or not image_id.startswith("sha256:"):
+            raise DockerError(f"could not identify the runtime image for env '{spec.name}'")
+    except BaseException:
+        backend.close()
+        raise
     # No `closers`: `Env.close` already calls the backend's own `close`, and the
     # container must be removed exactly as reliably either way.
-    return Env(spec=spec, workspace=workspace, backend=backend, python=PYTHON)
+    return Env(spec=spec, workspace=workspace, backend=backend, python=PYTHON,
+               runtime_identity={"docker_image_id": image_id})

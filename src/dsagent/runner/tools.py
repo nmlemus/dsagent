@@ -19,8 +19,7 @@ from typing import Annotated, Any
 from langchain_core.runnables.config import ensure_config
 from langchain_core.tools import InjectedToolCallId, tool
 
-from dsagent.capabilities import CapabilitySet
-from dsagent.capabilities.builtin import requirements_for_cartridges
+from dsagent.capabilities import CapabilitySet, compose_cartridges
 from dsagent.cartridge.models import Cartridge
 from dsagent.datasets import seed_run
 from dsagent.runner.charts import amend_tools
@@ -122,6 +121,7 @@ def workflow_tools(
     `<workspace>/data/x.csv` and the workflow's `data_path` reads `data/x.csv`.
     A resumed run is never re-seeded; its workspace is already the run's.
     """
+    capabilities = compose_cartridges(cartridges, capabilities)
     by_wf = {w: c for c in cartridges for w in c.workflows}
 
     @tool
@@ -149,10 +149,7 @@ def workflow_tools(
             given, thread_id, name, tool_call_id, runs_dir, store, session_project
         )
         resume = (run_dir / "run.json").exists()
-        run_capabilities = (
-            capabilities.restrict(requirements_for_cartridges([by_wf[name]]))
-            if capabilities is not None else None
-        )
+        run_capabilities = compose_cartridges([by_wf[name]], capabilities)
         runner = WorkflowRunner(
             by_wf[name], run_dir, ask_human=ask_human, log=log, on_event=on_event,
             prices=prices, capabilities=run_capabilities,

@@ -298,7 +298,7 @@ def test_a_chart_emitted_in_a_step_reaches_the_log_and_the_run_record(tmp_path, 
 
     monkeypatch.setattr(
         "dsagent.runner.runner.make_env",
-        lambda spec, ws: Env(spec=spec, workspace=ws, backend=type("B", (), {"close": lambda s: None})()),
+        lambda spec, ws, capabilities=None: Env(spec=spec, workspace=ws, backend=type("B", (), {"close": lambda s: None})()),
     )
     ds = Path(__file__).resolve().parents[1] / "cartridges" / "ds"
     run_dir = tmp_path / "run"
@@ -356,7 +356,7 @@ def test_every_step_event_carries_the_section_its_workflow_declared(tmp_path, mo
 
     monkeypatch.setattr(
         "dsagent.runner.runner.make_env",
-        lambda spec, ws: Env(spec=spec, workspace=ws, backend=type("B", (), {"close": lambda s: None})()),
+        lambda spec, ws, capabilities=None: Env(spec=spec, workspace=ws, backend=type("B", (), {"close": lambda s: None})()),
     )
     ds = Path(__file__).resolve().parents[1] / "cartridges" / "ds"
     run_dir = tmp_path / "run"
