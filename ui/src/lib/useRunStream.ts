@@ -106,7 +106,7 @@ export function focusDeliverable(
 
 // Subscribe to a run and expose its folded state. Re-subscribes when runId
 // changes; resets so a switch never bleeds one run's steps into another's.
-export function useRunStream(runId: string | null): RunStream {
+export function useRunStream(runId: string | null, reconnectKey = 0): RunStream {
   const [state, dispatch] = useReducer(reduce, empty);
 
   useEffect(() => {
@@ -118,7 +118,7 @@ export function useRunStream(runId: string | null): RunStream {
       { onEnd: () => dispatch({ type: "end" }) },
     );
     return unsub;
-  }, [runId]);
+  }, [runId, reconnectKey]);
 
   return state;
 }

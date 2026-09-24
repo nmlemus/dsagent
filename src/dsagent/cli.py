@@ -307,7 +307,7 @@ def serve(
     replay_speed: float = typer.Option(10.0, "--replay-speed", help="playback multiplier"),
     memory: bool = typer.Option(
         False, "--memory",
-        help="keep gate interrupts in memory instead of .dsagent/checkpoints.sqlite",
+        help="legacy compatibility flag; workflow approvals are always durable",
     ),
     prices: Path | None = typer.Option(
         None, "--prices", help="model rate table (default: prices.yaml, searched upwards)"

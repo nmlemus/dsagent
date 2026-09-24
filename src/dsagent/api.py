@@ -11,14 +11,8 @@ following. It is also why the gate is answered against the run (`POST
 /runs/{id}/gate`) rather than against whichever stream happens to hold an
 interrupt.
 
-**One run is not like the others: a run started from the chat.** Its interrupt
-lives in the chat graph's saver, which is in memory (`dsagent.serve.build_app`
-explains why), and `POST /runs/{id}/gate` resumes the *driver's* graph. So such a
-run advertises `awaiting_gate` in `run.json` and answers 409 here; it has to be
-approved from the chat that started it, and a server restart loses the question
-entirely. Runs started from the launcher — every run the product's screens
-create — do not have this problem. Closing it means building the AG-UI agent
-inside the server's lifespan so it can hold an async SQLite saver.
+Launcher and chat submit to the same execution service. A human decision is
+addressed to a durable gate id, independent of chat checkpoints or browser tabs.
 
 Nothing here knows any domain. The launcher's form is generated from whatever
 inputs a workflow declares, so a cartridge with other inputs renders without a
@@ -38,13 +32,18 @@ import secrets
 import shutil
 import time
 import zipfile
+from contextlib import nullcontext
+from functools import wraps
+from inspect import iscoroutinefunction
 from pathlib import Path
 from typing import Any
 
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import PlainTextResponse, Response, StreamingResponse
+from fastapi.responses import JSONResponse, PlainTextResponse, Response, StreamingResponse
 
 from dsagent.cartridge.models import Cartridge
+from dsagent.datasets import seed_run
+from dsagent.execution_storage import RunBusy, durable_json
 from dsagent.export import CHART_CONFIG, export_html
 from dsagent.runner.charts import VEGA_LITE
 from dsagent.runner.runner import GATE_VERSIONS, STOP_FILE
@@ -57,7 +56,6 @@ from dsagent.runs import (
     read_state,
     summarize,
 )
-from dsagent.datasets import seed_run
 from dsagent.serve import decision_of, resolve_run_file
 from dsagent.sessions import mark_session
 from dsagent.tabular import READERS, TableUnreadable, read_table
@@ -203,6 +201,30 @@ def add_runs_routes(
 ) -> None:
     by_workflow = {w: c for c in cartridges for w in c.workflows}
 
+    @app.exception_handler(RunBusy)
+    async def run_busy(_request: Request, exc: RunBusy):
+        return JSONResponse(status_code=409, content={"detail": str(exc)})
+
+    def exclusive(fn):
+        """Serialize administrative writes with job execution, including checks."""
+        def guard(run_id):
+            return driver.edit(run_id) if hasattr(driver, "edit") else nullcontext()
+
+        if iscoroutinefunction(fn):
+            @wraps(fn)
+            async def async_wrapped(run_id: str, *args, **kwargs):
+                run_dir_of(run_id)
+                with guard(run_id):
+                    return await fn(run_id, *args, **kwargs)
+            return async_wrapped
+
+        @wraps(fn)
+        def wrapped(run_id: str, *args, **kwargs):
+            run_dir_of(run_id)
+            with guard(run_id):
+                return fn(run_id, *args, **kwargs)
+        return wrapped
+
     def run_dir_of(run_id: str) -> Path:
         if not run_id or "/" in run_id or "\\" in run_id or run_id in (".", ".."):
             raise HTTPException(status_code=404, detail="unknown run")
@@ -293,6 +315,7 @@ def add_runs_routes(
         return {"run_id": run_id, "project": project, "session": session, "inputs": inputs}
 
     @app.delete("/runs/{run_id}")
+    @exclusive
     def delete_run(run_id: str) -> dict[str, Any]:
         """Remove a run that never started.
 
@@ -311,12 +334,13 @@ def add_runs_routes(
             raise HTTPException(
                 status_code=409, detail="this run has started; its record is not deletable"
             )
-        if driver.is_running(run_id):
+        if not hasattr(driver, "edit") and driver.is_running(run_id):
             raise HTTPException(status_code=409, detail="this run is being driven right now")
         shutil.rmtree(run_dir)
         return {"deleted": run_id}
 
     @app.put("/runs/{run_id}/data/{name}")
+    @exclusive
     async def upload_input(run_id: str, name: str, request: Request,
                            filename: str = "") -> dict[str, Any]:
         """Put a file in the run's `data/` and point one input at it.
@@ -356,10 +380,11 @@ def add_runs_routes(
         if driver.is_running(run_id):
             return {"started": False, "reason": "already running"}
         resume = state.get("status") not in ("pending",)
-        driver.start(run_id, resume=resume)
-        return {"started": True, "resumed": resume}
+        started = driver.start(run_id, resume=resume)
+        return {"started": started is not False, "resumed": resume}
 
     @app.post("/runs/{run_id}/plan")
+    @exclusive
     async def plan_run(run_id: str, request: Request) -> dict[str, Any]:
         """What this run will do, before it does any of it.
 
@@ -386,10 +411,10 @@ def add_runs_routes(
         """
         run_dir = run_dir_of(run_id)
         state = read_state(run_dir)
+        if state.get("status") != "pending":
+            raise HTTPException(status_code=409, detail="this run has already started")
         edited = (await _json_body(request)).get("inputs") if await request.body() else None
         if edited:
-            if state.get("status") != "pending":
-                raise HTTPException(status_code=409, detail="this run has already started")
             if not isinstance(edited, dict):
                 raise HTTPException(status_code=400, detail="inputs must be a JSON object")
             state["inputs"] = {**(state.get("inputs") or {}), **edited}
@@ -430,6 +455,8 @@ def add_runs_routes(
         A run nobody is driving is simply marked stopped.
         """
         run_dir = run_dir_of(run_id)
+        if hasattr(driver, "stop"):
+            return driver.stop(run_id)
         state = read_state(run_dir)
         if state.get("status") in ("done", "failed", "stopped"):
             return {"stopping": False, "status": state.get("status")}
@@ -456,9 +483,17 @@ def add_runs_routes(
         body = await _json_body(request)
         decision = decision_of(body)
         note = str(body.get("note") or "") if isinstance(body, dict) else ""
-        accepted = driver.answer_gate(run_id, decision, note)
+        if getattr(driver, "requires_gate_id", False):
+            if not isinstance(body, dict) or body.get("decision") not in ("approve", "reject"):
+                raise HTTPException(status_code=400, detail="decision must be approve or reject")
+            gate_id = str(body.get("gate_id") or "")
+            if not gate_id:
+                raise HTTPException(status_code=400, detail="gate_id is required; refresh the run")
+            accepted = driver.answer_gate(run_id, decision, note, gate_id=gate_id)
+        else:
+            accepted = driver.answer_gate(run_id, decision, note)
         if not accepted:
-            raise HTTPException(status_code=409, detail="this run is not waiting at a gate")
+            raise HTTPException(status_code=409, detail="gate changed or already answered; refresh the run")
         return {"accepted": True, "decision": decision.value}
 
     @app.get("/runs/{run_id}/events.json")
@@ -844,19 +879,8 @@ async def _json_body(request: Request) -> dict[str, Any]:
 
 
 def _rewrite_state(run_dir: Path, state: dict[str, Any]) -> None:
-    """Write `run.json` back atomically, the way the runner writes it.
-
-    Including the per-thread temp name: this process writes the file from a
-    request handler while the run's own threads write it too, and a shared temp
-    path is a crash waiting for the two to coincide.
-    """
-    import os
-    import threading
-
-    path = run_dir / "run.json"
-    tmp = path.with_name(f".run.json.{os.getpid()}.{threading.get_ident()}.tmp")
-    tmp.write_text(json.dumps(state, indent=2), encoding="utf-8")
-    os.replace(tmp, path)
+    """Publish a snapshot while the route holds the run's execution lock."""
+    durable_json(run_dir / "run.json", state)
 
 
 def _safe_name(filename: str) -> str:
@@ -872,5 +896,3 @@ def _safe_name(filename: str) -> str:
         c if c.isalnum() or c in "-_." else "-" for c in name
     )).strip("-.")
     return cleaned or "upload"
-
-

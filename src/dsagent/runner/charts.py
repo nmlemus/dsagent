@@ -533,11 +533,20 @@ def amend_tools(runs_dir: Path, store: Any = None) -> list[Any]:
         numbers nobody has computed, say so instead: this tool edits a chart, it
         does not run an analysis.
         """
-        tools = bound(run_id)
-        if tools is None:
+        from dsagent.execution_storage import RunBusy, locked
+
+        run_dir = located(run_id)
+        if run_dir is None:
             return f"unknown run {run_id}"
-        return tools[0].invoke({
-            "spec": spec, "data_ref": data_ref, "title": title, "chart_id": chart_id,
-        })
+        try:
+            with locked(run_dir):
+                tools = bound(run_id)
+                if tools is None:
+                    return f"unknown run {run_id}"
+                return tools[0].invoke({
+                    "spec": spec, "data_ref": data_ref, "title": title, "chart_id": chart_id,
+                })
+        except RunBusy:
+            return "This run is executing. Wait until it pauses or finishes before amending charts."
 
     return [read_chart, amend_chart]

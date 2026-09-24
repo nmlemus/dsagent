@@ -267,6 +267,7 @@ a {
   background: var(--gate);
   animation: pulse 1.3s infinite;
 }
+.s-interrupted .dot-s,
 .s-stopped .dot-s,
 .dot-s.stopped {
   background: var(--warn);

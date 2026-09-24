@@ -165,6 +165,8 @@ def build_app(
 
     @asynccontextmanager
     async def lifespan(app: Any):
+        if hasattr(app.state.driver, "recover"):
+            app.state.driver.recover()
         yield
         # Each non-default project's chat holds a live env (a kernel/container);
         # release them on shutdown. The default env is the caller's to close.
@@ -211,9 +213,12 @@ def build_app(
         from fastapi.responses import StreamingResponse
 
         from dsagent.datasets import seed_run
-        from dsagent.driver import GraphDriver
         from dsagent.envs.base import make_env
+        from dsagent.execution import ExecutionService
         from dsagent.host import build_orchestrator
+
+        driver = ExecutionService(cartridges, runs_dir, store=store,
+                                  capabilities=capabilities, seed=seed, prices=prices)
 
         def orchestrator(
             chat_env: Env, ws: Path, checkpointer: Any, carts: list[Cartridge] = cartridges
@@ -223,6 +228,7 @@ def build_app(
                 ask_human=interrupt_gate, on_event=dispatch_runner_event, seed=seed,
                 prices=prices, store=store, session_project=sessions.project_of,
                 capabilities=chat_env.capabilities or capabilities,
+                execution=driver,
             )
             return build_orchestrator(
                 carts, chat_env, ws, model=model, workflow_tools=tools,
@@ -259,15 +265,9 @@ def build_app(
         # LangGraph's `add_messages` dedups against them and the checkpoint always
         # converges to the stored transcript. It can never durably diverge from it.
         #
-        # A durable checkpointer is now technically possible — these graphs are
-        # built lazily inside the async request (a loop exists, so an
-        # `AsyncSqliteSaver` would construct) — but it is deliberately not used:
-        # it would persist the transcript a *second* time, beside the SessionStore,
-        # and two durable copies are exactly what can drift. The accepted cost of
-        # staying in-memory is narrow: a chat `ask_human` interrupt in flight when
-        # the server restarts is lost (the user just re-asks). Runs started from
-        # the launcher keep their gate across restarts via the file-backed driver
-        # below — that path has no competing transcript store.
+        # Workflow jobs and gates belong to ExecutionService, including jobs
+        # submitted from chat. Its journal survives a restart independently of
+        # this ephemeral graph. A lost chat turn does not lose its submitted job.
         chat_agents: dict[str, Any] = {}
         chat_envs: dict[str, Env] = {}
 
@@ -324,12 +324,6 @@ def build_app(
 
         # The lifespan shutdown closes these (the per-project kernels/containers).
         app.state.chat_envs = chat_envs
-
-        driver = GraphDriver(
-            orchestrator(env, workspace, checkpointer_for(workspace, memory=memory_checkpointer)),
-            cartridges, runs_dir, recursion_limit=recursion_limit, store=store,
-            capabilities=capabilities,
-        )
 
     from dsagent.api import add_runs_routes
     from dsagent.api_projects import add_projects_routes

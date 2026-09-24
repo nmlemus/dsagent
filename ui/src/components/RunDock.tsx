@@ -55,7 +55,8 @@ export function RunDock({
   onClose: () => void;
 }) {
   const { nouns } = useExperience();
-  const stream = useRunStream(runId);
+  const [streamRevision, setStreamRevision] = useState(0);
+  const stream = useRunStream(runId, streamRevision);
   const [detail, setDetail] = useState<RunDetail | null>(null),
     [error, setError] = useState("");
   const [selected, setSelected] = useState<string | null>(null),
@@ -102,7 +103,23 @@ export function RunDock({
   );
   const charts = Object.values(stream.charts);
   const terminal =
-    detail && ["done", "failed", "stopped"].includes(detail.status);
+    detail && ["done", "failed", "stopped", "interrupted"].includes(detail.status);
+  const retryable = detail && (
+    ["failed", "stopped", "interrupted"].includes(detail.status) ||
+    (detail.status === "awaiting_gate" && !detail.awaiting)
+  );
+  async function retry() {
+    setStopping(true);
+    try {
+      await api.start(runId);
+      setStreamRevision((version) => version + 1);
+      refresh();
+    } catch {
+      setError("No se pudo reanudar. Vuelve a intentarlo.");
+    } finally {
+      setStopping(false);
+    }
+  }
   async function stop() {
     setStopping(true);
     try {
@@ -149,6 +166,13 @@ export function RunDock({
             {detail.driver_error}
           </div>
         )}
+        {detail?.status === "interrupted" && (
+          <p role="alert" className="err-banner">
+            La ejecución se interrumpió. Revisa los archivos y las acciones del
+            último paso antes de reintentarlo: puede haber realizado cambios
+            aunque no haya registrado su resultado.
+          </p>
+        )}
         {detail && (
           <div className="run-summary-strip">
             <div>
@@ -167,6 +191,11 @@ export function RunDock({
               <strong>{cost(detail.cost_usd)}</strong>
             </div>
             <div className="run-summary-actions">
+              {retryable && (
+                <button className="btn sm" disabled={stopping} onClick={retry}>
+                  {stopping ? "Reanudando…" : "Reintentar paso pendiente"}
+                </button>
+              )}
               {!terminal && (
                 <button
                   className="btn danger sm"
@@ -185,6 +214,7 @@ export function RunDock({
         )}
         {detail?.status === "awaiting_gate" && detail.awaiting && (
           <GateCard
+            key={detail.awaiting.gate_id ?? detail.awaiting.step}
             runId={runId}
             gate={detail.awaiting}
             stepTitle={(() => {
@@ -202,6 +232,7 @@ export function RunDock({
         <div className="run-step-track">
           {(detail?.workflow_shape?.steps ?? []).map((shape, i) => {
             const status =
+              (detail?.steps[shape.id]?.status === "interrupted" ? "interrupted" : undefined) ??
               stream.steps[shape.id]?.status ??
               detail?.steps[shape.id]?.status ??
               "pending";
@@ -217,7 +248,9 @@ export function RunDock({
                 <div>
                   <strong>{stepTitle(shape)}</strong>
                   <small>
-                    {shape.gate?.kind === "human"
+                    {status === "interrupted"
+                      ? "Interrumpido: requiere revisión"
+                      : shape.gate?.kind === "human"
                       ? "Incluye revisión humana"
                       : shape.persona}
                   </small>

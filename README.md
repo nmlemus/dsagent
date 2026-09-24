@@ -57,11 +57,14 @@ pip install -e ".[ui,anthropic]"
 dsagent serve                            # 127.0.0.1:8000, --host/--port to change
 ```
 
-Two routes:
+Principal routes:
 
 | Route | What it is |
 |---|---|
-| `POST /agent` | The orchestrator as an AG-UI SSE stream. A workflow's progress arrives as `CUSTOM` events named `dsagent.step`, `dsagent.tool` and `dsagent.file`; a human gate arrives as an interrupt the client answers with `{"decision": "approve"}`. `GET /agent/health` reports liveness. |
+| `POST /agent` | The conversational orchestrator over AG-UI. Workflow tools submit jobs to the execution service and return a run id. `GET /agent/health` reports liveness. |
+| `POST /runs`, `POST /runs/{id}/start` | Create and start a workflow directly, without asking an orchestrator model to launch it. |
+| `GET /runs/{id}`, `GET /runs/{id}/events` | Durable state and live progress over SSE. |
+| `POST /runs/{id}/gate` | Answer with `{"gate_id": "<current gate UUID>", "decision": "approve", "note": ""}`. The decision survives server restarts. |
 | `GET /runs/{run_id}/files/{path}` | One file from a run's workspace, so the canvas can render the artifacts those events announce. Resolved inside `<run_dir>/workspace` — anything escaping it, and anything under `.dsagent/`, is a 404. |
 
 The UI lives in [`ui/`](ui/) — Next.js + CopilotKit, chat left and canvas right:
@@ -91,10 +94,12 @@ When a workflow reaches a human gate, the run pauses and a gate card appears in 
 right pane with the step, its persona, and links to what it produced. Approving
 resumes the run.
 
-Each browser tab is one `thread_id`, which is what a gate resumes into. The slice
-checkpoints in memory, so a `serve` restart loses in-flight gates; `run.json` still
-has every finished step, and the run resumes from there. Event schemas and the
-frontend plan are in [`docs/ui-slice.md`](docs/ui-slice.md).
+Launcher and chat use the same job owner. Closing a tab does not stop a job;
+restarting the server preserves pending gates and accepted decisions. A job whose
+process died during a step becomes `interrupted` and requires explicit retry after
+reviewing possible external effects. This implementation coordinates processes
+on one POSIX host with local storage; it is not a distributed queue. See the
+[execution service ADR](docs/execution-service.md).
 
 ## Cartridge contract
 

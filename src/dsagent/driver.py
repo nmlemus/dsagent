@@ -1,4 +1,7 @@
-"""Who owns a run while it is happening.
+"""Legacy graph driver and shared pending-state construction.
+
+The web server now uses ExecutionService (see docs/execution-service.md).
+GraphDriver remains for existing embedders; do not drive the same run from both.
 
 A run started from the launcher is driven by the **server**, on its own thread,
 not by whichever browser tab happened to press Start. That is what makes a reload

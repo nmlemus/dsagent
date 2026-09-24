@@ -326,7 +326,18 @@ Every step also records what it actually did, into its `run.json` entry: tool ca
 
 **`cli.py` / `serve.py`** — the two front ends. `cli.py` is `dsagent cartridge validate|list`, `run`, `chat` and `serve`. `serve.py` is the HTTP surface, and it replaces the v1 FastAPI + WebSocket server rather than porting it: the transport is AG-UI over SSE, via `ag_ui_langgraph.add_langgraph_fastapi_endpoint` and `copilotkit.LangGraphAGUIAgent`, so there is no hand-rolled protocol to maintain (`docs/ui.md`). It mounts the orchestrator at `POST /agent` and serves a run's workspace at `GET /runs/{run_id}/files/{path}`, resolved inside the workspace and refusing anything that escapes it or lives under `.dsagent/`.
 
-The two front ends differ in exactly two ways, and share `runner/tools.py` for everything else: how a gate is asked, and where runner events go. In the terminal a gate is `typer.confirm` and events are printed; under `serve` a gate is a LangGraph `interrupt()` carrying the payload in `docs/ui-slice.md` §3, and events go out through `dispatch_custom_event`. Interrupts need a checkpointer, so the served graph is built with one (in-memory for the M2.2 slice); `run.json` remains what survives a process restart, and the checkpointer only has to outlive a gate answer. `build_orchestrator` takes `middleware` and `checkpointer` so that wiring lives in `serve.py` and the harness core never imports either package — the `ui` extra is optional.
+**`execution.py`** owns server workflow jobs independently of chat. The launcher
+starts a job deterministically; the chat's `run_workflow` submits to the same
+service and returns its id. `run.json` owns execution progress, an immutable gate
+decision journal owns accepted responses, and a POSIX lock provides one executor
+per run across processes on the same host. Human gates are keyed by run, step,
+attempt and UUID, not by positional graph interrupts. A server restart preserves
+pending gates; uncertain work is marked `interrupted` for explicit retry. The
+[execution ADR](execution-service.md) defines authority, recovery and limits.
+
+CLI execution remains synchronous, with terminal gates. Legacy `GraphDriver`
+and interrupt adapters remain available for embedders but are no longer used by
+the server. Chat graph checkpoints remain ephemeral; SessionStore owns transcripts.
 
 Everything in v1's `core/engine.py` (924-line hand-rolled LLM loop), `core/planner.py`, `core/context.py`, `prompts/` and `memory/summarizer.py` is dropped: Deep Agents provides the loop, the todo/planning middleware, context management and summarization.
 
@@ -337,7 +348,7 @@ Everything in v1's `core/engine.py` (924-line hand-rolled LLM loop), `core/plann
 | Persona | entry in `subagents=[…]` with `name`, `description`, `system_prompt`, `skills`, `model` |
 | Skill scope | `skills=[…]` on the subagent; orchestrator gets only `scope: all` skills |
 | Workflow step | `task(persona, instructions)` issued by the runner, not by the model |
-| Human gate | `interrupt_on` / LangGraph interrupt, surfaced by the API layer |
+| Human workflow gate | Durable execution-service decision, supplied to the runner by gate id |
 | Environment | `backend=` (KernelBackend or DockerBackend via `SandboxBackendProtocol`) |
 | Run workspace | backend filesystem rooted at the run directory |
 | Session memory | Deep Agents `memory` (AGENTS.md-style) per run + v1 session store for transcripts |

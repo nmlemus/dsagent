@@ -205,11 +205,11 @@ export const api = {
       json<Record<string, unknown>>,
     ),
 
-  gate: (id: string, decision: GateDecision, note = "") =>
+  gate: (id: string, decision: GateDecision, note = "", gateId?: string) =>
     fetch(`/runs/${id}/gate`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ decision, note }),
+      body: JSON.stringify({ decision, note, gate_id: gateId }),
     }).then(json<{ accepted: boolean; decision: string }>),
 
   del: (id: string) =>

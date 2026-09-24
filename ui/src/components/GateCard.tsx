@@ -29,7 +29,7 @@ export function GateCard({ runId, gate, stepTitle, onAnswered }: Props) {
     setBusy(decision);
     setError(null);
     try {
-      await api.gate(runId, decision, note);
+      await api.gate(runId, decision, note, gate.gate_id);
       onAnswered();
     } catch (e) {
       setError(String(e));

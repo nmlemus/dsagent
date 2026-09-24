@@ -894,6 +894,7 @@ p {
   color: var(--err);
   background: var(--err-dim);
 }
+.s-interrupted,
 .s-stopped {
   color: var(--fg-dim);
   background: var(--bg-3);
@@ -906,6 +907,7 @@ p {
 .s-awaiting_gate .dot-s {
   background: var(--warn);
 }
+.s-interrupted .dot-s,
 .s-stopped .dot-s {
   background: var(--fg-faint);
 }

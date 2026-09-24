@@ -34,6 +34,12 @@ partial fix under SR-024/SR-029, not closure of the full parent tasks.
 
 ### Backend hardening — order of execution (2026-09-21)
 
+Update 2026-09-23: the approved [execution service](execution-service.md) implements
+deterministic launch, shared chat/HTTP submission, single-host ownership,
+durable gate identities and conservative restart recovery. It follows capability
+composition; it does not close remote compute, permissions, cancellation or all
+state-concurrency work.
+
 The [independent backend review](reviews_2/backend-harness-review-2026-09-21.md)
 proposes `BH-T01`–`BH-T12`. They are **not** a second backlog: each one is a
 slice of the SR tasks it names, and status is still owned by
@@ -50,8 +56,8 @@ that reproduces it.
 | 3 | Sessions without false successes (BH-T04) | done | a failed write is a 500, a stale save a 409, a project change a 409 |
 | 4 | Active content off the app origin (rest of BH-T01) | next | needs the viewer to open reports through the sandboxed route; paired UI + server change |
 | 5 | Tool allowlist per persona (rest of BH-T02) | next | `Persona.tools` is declared and not applied; either apply it or stop presenting it as a permission |
-| 6 | Transactional run state (BH-T05) | after 4–5 | two writers currently lose updates; evaluate SQLite before new infrastructure |
-| 7 | Deterministic launch (BH-T06) | after 6 | the launcher already chose; it should not pay a model to choose again |
+| 6 | Transactional run state (BH-T05) | partial | server jobs and administrative/chart edits share a run lock; decisions are durable. Distributed ownership and legacy CLI coordination remain outside this slice |
+| 7 | Deterministic launch (BH-T06) | done 2026-09-23 | launcher calls ExecutionService directly; chat submits to the same service; no orchestrator call needed to launch |
 | 8 | Deadlines, cancellation, isolation (BH-T07) | blocked on a decision | `Step.timeout` is accepted and ignored; the kernel runs with the server's privileges. Needs the execution-boundary decision first, not more code |
 | 9 | Cartridge versioning and input validation (rest of BH-T08) | after 7 | a run keeps a cartridge name, not a digest, so an update can change what history means |
 | 10 | Usage per attempt (BH-T09) | after 9 | a stream that fails loses the tokens it already spent |

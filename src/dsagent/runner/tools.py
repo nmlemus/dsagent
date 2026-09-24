@@ -9,6 +9,7 @@ it already did.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import shutil
 import time
@@ -104,6 +105,7 @@ def workflow_tools(
     store: Any = None,
     session_project: Callable[[str], str] | None = None,
     capabilities: CapabilitySet | None = None,
+    execution: Any = None,
 ) -> list[Any]:
     """The workflow and run-reading tools, bound to one front end's gate and events.
 
@@ -139,7 +141,9 @@ def workflow_tools(
         inputs: dict | None = None,
         tool_call_id: Annotated[str, InjectedToolCallId] = "",
     ) -> str:
-        """Run a cartridge workflow end to end. `inputs` is a dict matching the workflow's declared inputs."""
+        """Start a workflow with its declared inputs. The server returns a job id;
+        follow that job with get_run_status. Human approvals happen in its run view.
+        """
         if name not in by_wf:
             return f"unknown workflow {name}; use list_workflows"
         configurable = ensure_config().get("configurable") or {}
@@ -148,6 +152,20 @@ def workflow_tools(
         run_dir = resolve_run_dir(
             given, thread_id, name, tool_call_id, runs_dir, store, session_project
         )
+        if execution is not None:
+            # A tool call belongs to a session, not to a global id namespace.
+            # Hashing also keeps provider-specific tool ids out of file paths.
+            identity = f"{thread_id or ''}:{tool_call_id}" if tool_call_id else str(time.time_ns())
+            run_id = given or f"{name}-{hashlib.sha256(identity.encode()).hexdigest()[:24]}"
+            project = session_project(thread_id) if session_project and thread_id else "default"
+            state = execution.submit(run_id, name, inputs or {}, project=project,
+                                     session=str(thread_id or ""))
+            return json.dumps({
+                "run_id": run_id, "run_dir": str(execution._run_dir(run_id)),
+                "status": state.status,
+                "message": "Job submitted. Follow the run for progress and human approvals.",
+                "steps": {k: v.status for k, v in state.steps.items()},
+            })
         resume = (run_dir / "run.json").exists()
         run_capabilities = compose_cartridges([by_wf[name]], capabilities)
         runner = WorkflowRunner(
@@ -176,6 +194,23 @@ def workflow_tools(
             "run_dir": str(run_dir), "status": state.status,
             "steps": {k: v.status for k, v in state.steps.items()},
             "gates": {k: v.gate.decision for k, v in state.steps.items() if v.gate},
+        })
+
+    @tool
+    def get_run_status(run_id: str) -> str:
+        """Read a job's current status, step progress and pending human review."""
+        from dsagent.runs import read_state
+
+        workspace = _run_workspace(runs_dir, run_id, store)
+        if workspace is None:
+            return f"unknown run {run_id}"
+        state = read_state(workspace.parent)
+        return json.dumps({
+            "run_id": run_id, "status": state.get("status"), "gate": state.get("gate"),
+            "error": state.get("driver_error"),
+            "steps": {k: {"status": v["status"], "attempt": v.get("attempt", 0),
+                          "error": v.get("error", "")}
+                      for k, v in state.get("steps", {}).items()},
         })
 
     @tool
@@ -210,7 +245,7 @@ def workflow_tools(
             return text[:max_chars] + f"\n… truncated at {max_chars} of {len(text)} chars"
         return text
 
-    return [list_workflows, run_workflow, list_run_files, read_run_file,
+    return [list_workflows, run_workflow, get_run_status, list_run_files, read_run_file,
             *amend_tools(runs_dir, store=store)]
 
 

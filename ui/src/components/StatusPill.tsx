@@ -7,6 +7,7 @@ const LABEL: Record<string, string> = {
   done: "Completado",
   failed: "Con errores",
   stopped: "Detenido",
+  interrupted: "Interrumpido",
 };
 
 export function StatusPill({ status }: { status: RunStatus | string }) {

@@ -2,7 +2,7 @@
 // fields the UI reads are typed; the server may send more.
 
 export type RunStatus =
-  "pending" | "running" | "awaiting_gate" | "done" | "failed" | "stopped";
+  "pending" | "running" | "awaiting_gate" | "done" | "failed" | "stopped" | "interrupted";
 
 export interface InputSpec {
   type: string;
@@ -117,6 +117,8 @@ export interface CartridgesResponse {
 }
 
 export interface AwaitingGate {
+  gate_id?: string;
+  attempt?: number;
   step: string;
   prompt: string;
   produces?: string[];

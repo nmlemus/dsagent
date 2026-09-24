@@ -28,10 +28,8 @@ turns these into `CUSTOM` events.
 from __future__ import annotations
 
 import json
-import os
 import re
 import shutil
-import threading
 import time
 from collections.abc import Callable
 from dataclasses import asdict, dataclass, field
@@ -43,6 +41,7 @@ from dsagent.capabilities import CapabilityError, CapabilitySet, compose_cartrid
 from dsagent.capabilities.execution import execution_manifest
 from dsagent.cartridge.models import Cartridge, Step, Workflow
 from dsagent.envs.base import Env, make_env
+from dsagent.execution_storage import durable_json
 from dsagent.models import default_model
 from dsagent.runner.charts import (
     CHART_EVENT,
@@ -151,6 +150,8 @@ class GateRequest:
     persona: str
     produces: list[str]
     prompt: str
+    gate_id: str = ""
+    attempt: int = 0
 
 
 @dataclass
@@ -165,6 +166,7 @@ class GateAnswer:
 
     decision: GateDecision
     note: str = ""
+    decided_at: float | None = None
 
 
 def as_answer(value: GateDecision | GateAnswer) -> GateAnswer:
@@ -191,11 +193,14 @@ class GateRecord:
     note: str = ""
     ts: float = 0.0
     asked_at: float = 0.0
+    gate_id: str = ""
+    attempt: int = 0
 
 
 @dataclass
 class StepRecord:
     id: str
+    attempt: int = 0
     status: str = "pending"  # pending | running | done | failed — the work, not the gate
     gate: GateRecord | None = None
     """The decision on this step's gate, once one has been made. `None` while
@@ -230,6 +235,7 @@ class RunState:
     cartridge: str
     inputs: dict[str, Any]
     status: str = "pending"  # pending | running | done | failed | awaiting_gate
+    driver_error: str = ""
     steps: dict[str, StepRecord] = field(default_factory=dict)
     capability_fingerprint: str = ""
     """Hash of the provider ids, versions and dependencies frozen for this run."""
@@ -280,25 +286,8 @@ class RunState:
         return cls(**d)
 
     def save(self, run_dir: Path) -> None:
-        """Write `run.json`, atomically, from any thread.
-
-        A run is written while it is being read: the runs API reads this file on
-        every list and every poll, and a plain overwrite has a window where the
-        reader gets a truncated — or empty — file. Same-directory temp plus
-        `os.replace`, which is atomic on POSIX and on Windows.
-
-        The temp name carries the thread id because a run is also written from
-        **two** threads: the runner's, and whichever one a tool call lands on —
-        `show_chart` records itself the moment it is called. With one shared temp
-        path the two collide, the first `os.replace` consumes it, and the second
-        dies with `No such file or directory: .run.json.tmp`. That killed
-        `analyze` five minutes into a real run, after eleven `run_python` calls,
-        with nothing wrong with the analysis at all.
-        """
-        path = run_dir / "run.json"
-        tmp = path.with_name(f".{path.name}.{os.getpid()}.{threading.get_ident()}.tmp")
-        tmp.write_text(json.dumps(asdict(self), indent=2), encoding="utf-8")
-        os.replace(tmp, path)
+        """Atomically publish a durable snapshot with a unique temporary file."""
+        durable_json(run_dir / "run.json", asdict(self))
 
 
 def _step_record(d: dict[str, Any]) -> StepRecord:
@@ -331,6 +320,7 @@ class WorkflowRunner:
         on_event: Callable[[RunnerEvent], None] | None = None,
         prices: Any = None,
         capabilities: CapabilitySet | None = None,
+        replay_decided_gates: bool = True,
     ) -> None:
         self.capabilities = compose_cartridges([cartridge], capabilities)
         self.cartridge = cartridge
@@ -339,6 +329,9 @@ class WorkflowRunner:
         self.workspace.mkdir(parents=True, exist_ok=True)
         self.agent_factory = agent_factory or self._default_factory
         self.ask_human = ask_human or (lambda request: GateDecision.APPROVE)
+        # Legacy graph embedders use positional interrupt replay. The execution
+        # service consumes durable decisions by identity and disables this.
+        self.replay_decided_gates = replay_decided_gates
         self._log = log
         self.on_event = on_event
         self.run_id = run_dir.name
@@ -608,10 +601,8 @@ class WorkflowRunner:
                 if self._stopped(state):
                     return state
                 rec = state.steps[step.id]
-                # The work is skipped once it is done; the gate never is. A gate
-                # is a `interrupt()` call under `dsagent serve`, and LangGraph
-                # matches resume values by position, so a gate that disappears
-                # from one entry to the next hands its answer to the next gate.
+                # Completed work is never replayed. _gate handles either durable
+                # decisions (service) or positional interrupts (legacy callers).
                 if rec.status != "done":
                     self._run_step(wf, step, rec, state, inputs, dry_run)
                     if rec.status == "failed":
@@ -721,6 +712,9 @@ class WorkflowRunner:
         env_name = step.env or wf.env
         self._here = StepContext(step=step.id, persona=step.persona, section=step.section or "")
         rec.status, rec.started_at = "running", time.time()
+        rec.attempt += 1
+        rec.error = ""
+        rec.finished_at = None
         state.save(self.run_dir)
         # The step event carries this and more; `log` keeps the lines it owns
         # alone (env provisioning, gates, failures).
@@ -876,18 +870,11 @@ class WorkflowRunner:
     def _gate(self, wf: Workflow, step: Step, rec: StepRecord, state: RunState, dry_run: bool) -> bool:
         """Decide whether the run may go past this step. True = carry on.
 
-        An **auto** gate is a script, and re-running a convergence check that
-        already passed costs minutes for nothing, so it is skipped once approved.
-
-        A **human** gate is asked on every entry, decided or not, and the answer
-        is thrown away when `rec.gate` already reads `approve`. That looks
-        wasteful and is the whole point of this method: under `dsagent serve`
-        `ask_human` becomes a LangGraph `interrupt()`, LangGraph re-executes
-        `run_workflow` from the top on resume and matches resume values
-        positionally, and `Interrupt.id` comes from the call's position rather
-        than its payload. Drop the call for gate 1 on re-entry and gate 2 silently
-        receives gate 1's answer. Reproduced on langgraph 1.2.11; see
-        `docs/ui-slice.md` §2.
+        The execution service skips approved human gates and consumes decisions
+        by their durable identity. Legacy graph callers can still opt into
+        positional interrupt replay with `replay_decided_gates=True`: removing
+        an interrupt there would hand one gate's answer to the next gate.
+        Auto gates are skipped once approved in either mode.
         """
         gate = step.gate
         assert gate is not None
@@ -910,19 +897,21 @@ class WorkflowRunner:
             # gate 2 without an `asked_at` and reporting a 0 s wait — not the
             # accumulated wait, and not the event log, where a re-announced
             # "awaiting" for a decided gate is a question nobody is being asked.
-            if not dry_run:
+            if not dry_run and self.replay_decided_gates:
                 self.ask_human(request)  # the call is the point; the answer is discarded
             self._emit_step(wf, step, rec.status, gate=_gate_event(gate.kind, prompt, rec.gate))
             return True
 
-        # When the run stopped, not when it was resumed. Under `dsagent serve` the
-        # first pass never returns from `ask_human` — it raises a LangGraph
-        # interrupt — and the whole tool re-executes when the answer arrives, so
-        # a clock read here would measure the resume rather than the wait, and
-        # every gate would report 0s. The pending record written below is what
-        # remembers the real moment; on re-entry it is read back, and it is keyed
-        # by step so one gate never reads another's.
+        # Preserve when and what was asked across worker restarts. The service
+        # callback parks by raising GatePending after this question is durable.
         pending = state.gate if isinstance(state.gate, dict) else None
+        if pending and (pending.get("step") != step.id
+                        or pending.get("attempt", rec.attempt) != rec.attempt):
+            pending = None
+        from uuid import uuid4
+
+        request.gate_id = (pending or {}).get("gate_id") or uuid4().hex
+        request.attempt = rec.attempt
         asked_at = (
             float(pending["asked_at"])
             if pending and pending.get("step") == step.id and pending.get("asked_at")
@@ -942,18 +931,18 @@ class WorkflowRunner:
         answer = (
             GateAnswer(GateDecision.APPROVE) if dry_run else as_answer(self.ask_human(request))
         )
-        decided_at = time.time()
+        decided_at = answer.decided_at if answer.decided_at is not None else time.time()
         state.status, state.gate = "running", None
         state.gate_wait = round(state.gate_wait + max(0.0, decided_at - asked_at), 3)
         rec.gate = GateRecord(decision=answer.decision.value, note=answer.note,
-                              ts=decided_at, asked_at=asked_at)
-        state.save(self.run_dir)
+                              ts=decided_at, asked_at=asked_at,
+                              gate_id=request.gate_id, attempt=rec.attempt)
         if answer.decision is GateDecision.APPROVE:
+            state.save(self.run_dir)
             self.log(f"[gate] approved after {decided_at - asked_at:.0f}s")
             self._emit_step(wf, step, rec.status, gate=_gate_event(gate.kind, prompt, rec.gate))
             return True
         state.status = "awaiting_gate"
-        superseded = self._keep_version(step)
         # **A rejection sends the step back.** It used to leave the step `done`
         # and simply re-ask on resume, which made "send back with a note" a
         # pause: the persona never saw the note, nothing was rewritten, and the
@@ -965,6 +954,7 @@ class WorkflowRunner:
         # makes when they say no.
         rec.status = "pending"
         state.save(self.run_dir)
+        superseded = self._keep_version(step)
         self._emit_step(wf, step, "awaiting_gate",
                         gate={**_gate_event(gate.kind, prompt, rec.gate),
                               "superseded": superseded})
