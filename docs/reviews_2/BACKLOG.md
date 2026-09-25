@@ -1,6 +1,9 @@
 # Backlog reconciliado de producto
 
-Fecha: 2026-09-19. **Estado actual: UI-001 implementada y verificada localmente por prioridad explícita del usuario; tareas SR pendientes de sus criterios completos.**
+Fecha base: 2026-09-19. **Actualizado 2026-09-24:** UI-001 implementada;
+SR-032.a y SR-046.a cerradas con evidencia. Los padres SR conservan sus criterios
+restantes. Otras entregas recientes del harness están documentadas en el roadmap;
+su reconciliación completa con los criterios SR sigue pendiente.
 
 Esta es la fuente de estado vigente para preparación de producto. Los backlogs anteriores se conservan como fuentes históricas; sus checkboxes no se sincronizan. Se conservan SR-001–041 y se añaden SR-042–057. Véanse [síntesis](00-RECONCILIACION.md), [decisiones pendientes](DECISIONES.md) y [mapeo completo](TRAZABILIDAD.md).
 
@@ -50,7 +53,7 @@ Conservar [invariantes](../../CLAUDE.md), actualizar [arquitectura](../architect
 | [ ] | SR-029 | P2 | Reparar layout adaptable y lectura de entregables | SR-024 |
 | [ ] | SR-030 | P2 | Corregir accesibilidad de formularios, diálogos y estados | SR-025, SR-026, SR-029 |
 | [ ] | SR-031 | P1 | Preparar instalación, actualización y recuperación local | SR-001, SR-010, SR-021, SR-050 |
-| [ ] | SR-032 | P2 | Endurecer el contrato de cartridges y herramientas | SR-010, SR-020 |
+| [~] | SR-032 | P2 | Endurecer el contrato de cartridges y herramientas | SR-010, SR-020 |
 | [ ] | SR-033 | P2 | Medir y corregir cuellos de botella de eventos y UI | SR-018, SR-019, SR-024 |
 | [ ] | SR-034 | P1 | Construir evaluación analítica y aceptación del piloto | SR-020, SR-021, SR-026 |
 | [ ] | SR-035 | V | Definir cliente objetivo, problema y oferta inicial | — |
@@ -64,7 +67,7 @@ Conservar [invariantes](../../CLAUDE.md), actualizar [arquitectura](../architect
 | [ ] | SR-043 | P1 | Registrar el chat antes del primer envío | SR-005, SR-042 |
 | [ ] | SR-044 | P1 | Impedir que respuestas tardías cambien el chat activo | — |
 | [ ] | SR-045 | P0 | Proteger acceso HTTP y peticiones desde otros sitios | — |
-| [ ] | SR-046 | P0 | Limitar variables heredadas por shell y Jupyter | — |
+| [~] | SR-046 | P0 | Limitar variables heredadas por shell y Jupyter | — |
 | [ ] | SR-047 | P1 | Persistir proyectos y datasets de forma atómica | — |
 | [ ] | SR-048 | P0 | Separar registros de control de archivos del modelo | SR-009, SR-010 |
 | [ ] | SR-049 | P1 | Hacer que el servidor sea dueño de la transcripción | SR-006, SR-042, SR-043 |
@@ -359,6 +362,10 @@ Conservar [invariantes](../../CLAUDE.md), actualizar [arquitectura](../architect
 
 ### SR-032 — Contrato de cartridges
 
+- [x] SR-032.a (2026-09-24): permisos efectivos de herramientas en workflows/chat,
+  delegación restringida y validación de grants; [contrato y evidencia](../tool-permissions.md).
+  El padre conserva los criterios restantes de esta sección.
+
 **Alcance:** loader, namespaces, herramientas concedidas, visibilidad y generación de skills.
 
 **Aceptación:** cartridge ficticio de otro dominio funciona; nombres repetidos de persona/workflow entre cartridges no se sobreescriben silenciosamente; metadatos `tools` se aplican o se rechazan/documentan explícitamente si no soportados. Probar límites de rutas en scripts y coherencia de skills; distinguir alcance de herramientas de aislamiento del sistema operativo. Mantener compatibilidad con el contrato de plugin declarado.
@@ -487,6 +494,11 @@ Conservar [invariantes](../../CLAUDE.md), actualizar [arquitectura](../architect
 
 ### SR-046 — Limitar variables heredadas por shell y Jupyter
 
+- [x] SR-046.a (2026-09-24): entorno mínimo de shell/Jupyter; secretos marcador y
+  persistencia de kernel verificados; [contrato y evidencia](../tool-permissions.md).
+- [ ] SR-046.b: directorio de usuario efectivamente controlado dentro del sandbox
+  y contrato de credenciales por herramienta. Omitir HOME no cumple ese aislamiento.
+
 **Alcance/archivos:** `envs/kernel.py`, `envs/docker.py`.
 
 **Aceptación:** Aplicar allowlist a ambos procesos, con directorio HOME controlado para la ejecución. Un secreto marcador del servidor no aparece en shell/kernel. Revisar credenciales entregadas por herramienta. Es una reducción de exposición: no cierra el acceso a archivos, red ni procesos del host; SR-009/010 siguen siendo obligatorias.
@@ -595,5 +607,6 @@ Objetivos propuestos para el conjunto soportado: al menos 95% de finalización, 
 | ID | Responsable | Inicio | Cierre | Commit/PR | Validación y evidencia | Desviaciones |
 |---|---|---|---|---|---|---|
 | UI-001 | Codex | 2026-09-19 | 2026-09-19 | Cambios locales, sin commit/PR | [Build y navegador](../ui-workspace-redesign-2026-09-19.md) | Priorización del usuario; no cierra los padres SR |
+| SR-032.a / SR-046.a | Codex | 2026-09-24 | 2026-09-24 | `harness: enforce tool grants and minimize compute credentials [ADR]` | [Contrato, pruebas de dispatch y kernel real](../tool-permissions.md) | Los padres siguen parciales; sandbox, HOME controlado y credenciales por herramienta pendientes |
 
 Evidencias futuras: `docs/runs/startup-readiness/SR-xxx/`. El cierre de documentos de planificación no cierra ninguna tarea de implementación.

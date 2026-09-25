@@ -2,6 +2,11 @@
 
 **Estado:** primera capa implementada · **Fecha:** 2026-09-23
 
+Actualización 2026-09-24: el host añade [process.local](process-control.md) para
+supervisar workflows y [permisos de herramientas](tool-permissions.md) efectivos
+por persona. Los permisos no son un proveedor de herramientas/conectores genérico
+ni sustituyen el aislamiento de seguridad.
+
 DSAgent conserva Deep Agents/LangGraph como motor y separa el contenido de un
 cartridge de las funciones ejecutables del host. Un skill explica cómo trabajar;
 una capacidad selecciona la implementación disponible para ese consumidor.
@@ -170,15 +175,16 @@ paso y run; los interrupts de revisión humana conservan su semántica.
 
 ## Siguientes contratos
 
-Esta entrega prueba la composición en las dos superficies que ya ejecutaban
-código. No convierte todavía conectores, recursos, procesos ni vistas en
-capacidades. El orden recomendado para los tres dominios es:
+La primera entrega probó entornos y ejecutores de scripts. `process.local` añadió
+posteriormente el control local de cómputo. Conectores, recursos y vistas aún no
+son capacidades. El orden original de contratos para los tres dominios era:
 
 1. `resource-provider`: dataset, repositorio y biblioteca de marca con identidad
    y versión.
 2. `tool-provider`: SQL, Git, búsqueda, medios y APIs, con permisos efectivos.
 3. `process-provider`: estado y transiciones de DS, marketing y SDLC fuera del
-   tool call monolítico.
+   tool call monolítico. Implementado para workflows locales mediante
+   ExecutionService y process.local; chat interactivo y workers remotos pendientes.
 4. `artifact-renderer` y validadores específicos por tipo de resultado.
 5. proveedores de cómputo remoto con cancelación, deadlines, reconciliación y
    recuperación explícitas.

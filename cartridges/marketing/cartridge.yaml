@@ -13,8 +13,11 @@ description: Marketing studio — a brand strategist and a copywriter, from brie
 capabilities: []
 
 personas:
-  lucia: { role: "Brand Strategist", workflows: [campaign-brief] }
-  tomas: { role: "Copywriter",       workflows: [] }
+  lucia:
+    role: Brand Strategist
+    workflows: [campaign-brief]
+    tools: &editor_tools [ls, read_file, write_file, edit_file, glob, grep, write_todos]
+  tomas: { role: "Copywriter", workflows: [], tools: *editor_tools }
 
 skills:
   briefs: { scope: all }          # traversal — how this team reads and writes a brief
@@ -24,8 +27,8 @@ workflows:
   - workflows/campaign-brief
 
 envs:
-  # Nothing to install: the team reads and writes markdown. A kernel env still
-  # gives the personas a filesystem and a Python they can use for word counts.
+  # Nothing to install: this team only receives file tools. Python and shell
+  # remain unavailable unless explicitly granted above.
   default: { kind: kernel }
 
 experience:

@@ -8,6 +8,7 @@ works with after loading.
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 from typing import Literal
 
@@ -33,6 +34,18 @@ class Persona(BaseModel):
     workflows: list[str] = Field(default_factory=list)
     tools: list[str] | None = None
     path: Path
+
+    @field_validator("tools")
+    @classmethod
+    def _tools(cls, value):
+        if value is not None:
+            if len(value) != len(set(value)) or any(
+                not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_.-]*", name) for name in value
+            ):
+                raise ValueError("tools must contain unique explicit tool names (no wildcards)")
+            if "task" in value:
+                raise ValueError("persona delegation is not supported; only the host routes work")
+        return value
 
 
 class CapabilitySpec(BaseModel, extra="forbid"):

@@ -117,7 +117,7 @@ def _load_personas(root: Path, matrix: dict[str, Any]) -> dict[str, Persona]:
             system_prompt=body.strip(),
             skills=list(meta.get("skills", [])),
             workflows=list(entry.get("workflows", [])),
-            tools=meta.get("tools"),
+            tools=entry.get("tools", meta.get("tools")),
             path=md,
         )
     for name in matrix:
@@ -285,7 +285,10 @@ def load_cartridge(root: str | Path, *, generate_commands: bool = True) -> Cartr
 
     name = cy.get("name") or plugin.get("name") or root.name
     skills = _load_skills(root, cy.get("skills", {}) or {}, cartridge=name)
-    personas = _load_personas(root, cy.get("personas", {}) or {})
+    try:
+        personas = _load_personas(root, cy.get("personas", {}) or {})
+    except ValidationError as exc:
+        raise CartridgeError(f"{root}: invalid persona configuration:\n{exc}") from exc
     workflows = _load_workflows(root, cy.get("workflows", []) or [])
     envs = _load_envs(root, cy.get("envs", {}) or {}, cartridge=name)
     experience = _load_experience(root, cy.get("experience"))

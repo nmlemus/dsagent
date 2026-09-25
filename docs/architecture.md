@@ -11,6 +11,13 @@ chat/run/chart renderers over the existing REST and SSE interfaces. This changes
 presentation and client state management, not runner ownership or the agent loop.
 See [UI-001](ui-workspace-redesign-2026-09-19.md) for scope and verification.
 
+**Tool grants (2026-09-24):** the host now enforces each persona's declared tools
+at model discovery and tool dispatch, including chat subagents. Code execution
+is explicit; the router delegates only to its named roster. Shell and Jupyter
+receive a minimal environment instead of inherited server credentials. Effective
+grants are part of execution fingerprints. This is not an OS sandbox or user
+authorization. See [the contract and migration](tool-permissions.md).
+
 ---
 
 ## 1. Thesis

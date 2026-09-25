@@ -28,6 +28,13 @@ from langchain_core.tools import tool
 from dsagent.capabilities import CapabilityError, compose_cartridges
 from dsagent.cartridge.models import Cartridge, Persona
 from dsagent.envs.base import SKILLS_DIR, Env
+from dsagent.host.permissions import (
+    DEFAULT_TOOLS,
+    ToolPolicy,
+    effective_tools,
+    persona_policy,
+    tool_name,
+)
 from dsagent.models import default_model
 
 DEFAULT_MODEL = default_model()
@@ -163,13 +170,16 @@ def _skill_script_tool(cartridge: Cartridge, persona: str, env: Env, workspace: 
 
 def _persona_prompt(c: Cartridge, p: Persona) -> str:
     peers = ", ".join(f"{q.name} ({q.role})" for q in c.personas.values() if q.name != p.name)
+    scripts = (
+        " Run a skill's scripts with `run_skill_script`, never by shell path."
+        if "run_skill_script" in effective_tools(p) else ""
+    )
     return (
         f"{p.system_prompt}\n\n"
         f"## Context\n"
         f"You are **{p.name}**, {p.role}, part of the '{c.name}' team. Peers: {peers or 'none'}.\n"
         f"The run workspace is the filesystem root; write every artifact under it using the exact "
-        f"paths you are asked for. Read a skill's SKILL.md before using it, and run a skill's "
-        f"scripts with `run_skill_script` — never by path, they are not reachable from the shell."
+        f"paths you are asked for. Read a skill's SKILL.md before using it.{scripts}"
     )
 
 
@@ -184,14 +194,17 @@ def build_persona_agent(
 ):
     compose_cartridges([cartridge], env.capabilities)
     p = cartridge.personas[persona]
+    tools = [*env.tools, _skill_script_tool(cartridge, persona, env, workspace),
+             *(extra_tools or [])]
+    policy = persona_policy(p, tools)
     skills_root = workspace / SKILLS_DIR
     if not (skills_root / persona).exists():
         materialize_skills([cartridge], workspace)
     return create_deep_agent(
         model=model or p.model or DEFAULT_MODEL,
         system_prompt=_persona_prompt(cartridge, p),
-        tools=[*env.tools, _skill_script_tool(cartridge, persona, env, workspace),
-               *(extra_tools or [])],
+        tools=policy.filter(tools),
+        middleware=[policy],
         skills=[f"{SKILLS_MOUNT}{persona}/"],
         backend=_backend(env, skills_root),
         name=persona,
@@ -225,9 +238,10 @@ ORCHESTRATOR_PROMPT = """You are the DSAgent orchestrator. You do not do domain 
 requests to the right persona with the `task` tool, or start a workflow with `run_workflow`.
 
 Routing rules:
+- Delegation targets are exactly the named personas in the roster below.
 - If the user names a persona ("Ana, ...") delegate to that persona.
 - If the user names a workflow or a `/<cartridge>-<workflow>` command, call `run_workflow`.
-- If a request clearly matches a workflow a persona owns (e.g. "build an MMM"), call
+- If a request clearly matches a workflow a persona owns, call
   `run_workflow` — the same thing that persona would do.
 - Otherwise pick the persona whose role fits and delegate.
 - Never run a workflow that no persona in the roster owns unless the user explicitly asks.
@@ -260,24 +274,34 @@ def build_orchestrator(
     subagents = []
     for c in cartridges:
         for p in c.personas.values():
+            tools = [*env.tools, _skill_script_tool(c, p.name, env, workspace)]
+            policy = persona_policy(p, tools)
             subagents.append(
                 {
                     "name": p.name,
                     "description": f"{p.role}. {p.description}",
                     "system_prompt": _persona_prompt(c, p),
                     "skills": [f"{SKILLS_MOUNT}{p.name}/"],
-                    "tools": [*env.tools, _skill_script_tool(c, p.name, env, workspace)],
+                    "tools": policy.filter(tools),
+                    "middleware": [policy],
                     **({"model": p.model} if p.model else {}),
                 }
             )
+    # Host-supplied workflow tools are trusted control operations. Environment
+    # tools belong to the named persona, never the router or implicit GP agent.
+    tools = list(workflow_tools or [])
+    policy = ToolPolicy(
+        DEFAULT_TOOLS | {"task"} | {tool_name(t) for t in tools},
+        delegates=[p.name for c in cartridges for p in c.personas.values()],
+    )
     return create_deep_agent(
         model=model or DEFAULT_MODEL,
         system_prompt=ORCHESTRATOR_PROMPT.format(roster=_roster(cartridges)),
-        tools=[*env.tools, *(workflow_tools or [])],
+        tools=tools,
         subagents=subagents,
         skills=[f"{SKILLS_MOUNT}_orchestrator/"],
         backend=backend,
         name="orchestrator",
-        middleware=middleware,
+        middleware=[*middleware, policy],
         **({"checkpointer": checkpointer} if checkpointer is not None else {}),
     )

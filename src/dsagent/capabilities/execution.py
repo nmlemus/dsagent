@@ -25,6 +25,8 @@ def _hash(value: Any) -> str:
 
 def execution_manifest(cartridge: Cartridge, workflow: str, capabilities: CapabilitySet) -> dict:
     """Hash effective definitions and declared source trees without absolute root paths."""
+    from dsagent.host.permissions import POLICY_VERSION, effective_tools
+
     root = cartridge.root.resolve()
 
     def normalize(value):
@@ -39,6 +41,10 @@ def execution_manifest(cartridge: Cartridge, workflow: str, capabilities: Capabi
 
     definition = cartridge.model_dump(exclude={"root", "experience"})
     definition["default_model"] = default_model()
+    definition["tool_policy"] = {
+        "version": POLICY_VERSION,
+        "personas": {name: sorted(effective_tools(p)) for name, p in cartridge.personas.items()},
+    }
     files: dict[str, str] = {}
 
     def record(label: str, path: Path) -> None:

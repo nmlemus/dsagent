@@ -77,6 +77,9 @@ def test_public_two_argument_environment_api_still_runs_ds_scripts(tmp_path, mon
 def test_multicartridge_orchestrator_scopes_executors_per_persona(tmp_path, monkeypatch):
     carts = [load_cartridge(ROOT / "cartridges" / name, generate_commands=False)
              for name in ("ds", "marketing")]
+    # A tool grant alone cannot supply an executor missing from its cartridge.
+    # The shipped marketing policy now excludes this tool entirely.
+    carts[1].personas["lucia"].tools.append("run_skill_script")
     ws = tmp_path / "ws"
     env = Env(spec=carts[0].envs["default"], workspace=ws, backend=FakeBackend(ws),
               capabilities=compose_cartridges(carts))
@@ -114,7 +117,7 @@ def test_auto_gate_wrong_kind_is_rejected_before_work(tmp_path):
     assert not (tmp_path / "run").exists()
 
 
-@pytest.mark.parametrize("change", ["image", "requirements", "instructions", "skill", "persona", "build", "version"])
+@pytest.mark.parametrize("change", ["image", "requirements", "instructions", "skill", "persona", "tools", "build", "version"])
 def test_resume_rejects_changed_execution_before_touching_state(tmp_path, change):
     cart = tiny_cartridge(tmp_path / "cart", [{"id": "work"}])
     build = cart.root / "build"
@@ -135,6 +138,8 @@ def test_resume_rejects_changed_execution_before_touching_state(tmp_path, change
         (cart.skills["only"].path / "SKILL.md").write_text("Changed skill")
     elif change == "persona":
         cart.personas["ana"].system_prompt = "Different worker"
+    elif change == "tools":
+        cart.personas["ana"].tools = ["read_file"]
     elif change == "build":
         (build / "Dockerfile").write_text("FROM example:2")
     else:

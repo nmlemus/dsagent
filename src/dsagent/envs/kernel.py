@@ -20,6 +20,7 @@ from dsagent import requirements
 from dsagent.cartridge.models import EnvSpec
 from dsagent.envs.base import Env, EnvRequirementsError
 from dsagent.envs.controlled_shell import ControlledShellBackend
+from dsagent.envs.variables import compute_environment
 from dsagent.execution_storage import durable_json
 from dsagent.processes import identity, resource_intent
 
@@ -31,9 +32,14 @@ class JupyterKernel:
         from jupyter_client import KernelManager
 
         self._km = KernelManager(kernel_name="python3")
+        # Use our interpreter and no kernelspec-injected environment. Otherwise
+        # a local user kernelspec can silently add credentials/startup commands.
+        self._km.kernel_spec.argv = [sys.executable, "-m", "ipykernel_launcher",
+                                     "-f", "{connection_file}"]
+        self._km.kernel_spec.env = {}
         resource = resource_intent("process")
         try:
-            self._km.start_kernel(cwd=str(cwd))
+            self._km.start_kernel(cwd=str(cwd), env=compute_environment(cwd))
             if resource:
                 durable_json(resource, {"kind": "process",
                                         "identity": identity(self._km.provisioner.pid)})
@@ -100,7 +106,8 @@ def _verify_requirements(spec: EnvSpec) -> None:
 
 def make_kernel_env(spec: EnvSpec, workspace: Path) -> Env:
     _verify_requirements(spec)
-    backend = ControlledShellBackend(root_dir=workspace, virtual_mode=True, inherit_env=True)
+    backend = ControlledShellBackend(root_dir=workspace, virtual_mode=True,
+                                     env=compute_environment(workspace), inherit_env=False)
     kernel: JupyterKernel | None = None
 
     @tool

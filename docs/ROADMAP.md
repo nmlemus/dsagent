@@ -34,6 +34,11 @@ partial fix under SR-024/SR-029, not closure of the full parent tasks.
 
 ### Backend hardening — order of execution (2026-09-21)
 
+Update 2026-09-24: [tool permissions](tool-permissions.md) implements SR-032.a
+and SR-046.a: persona grants at dispatch, restricted delegation, and minimal
+shell/Jupyter environment. OS isolation, controlled user home, active-content
+isolation and per-user authorization remain open.
+
 Update 2026-09-24: [local process control](process-control.md) now supervises server
 workflow workers, enforces step deadlines, cancels active work, and reconciles
 registered kernels/containers before retry. This closes the local workflow slice
@@ -61,18 +66,17 @@ that reproduces it.
 | 2 | Run identity and one resolver (BH-T03) | done | ids unique across projects and reserved when handed out; chat tools and chart tools resolve like the HTTP routes |
 | 3 | Sessions without false successes (BH-T04) | done | a failed write is a 500, a stale save a 409, a project change a 409 |
 | 4 | Active content off the app origin (rest of BH-T01) | next | needs the viewer to open reports through the sandboxed route; paired UI + server change |
-| 5 | Tool allowlist per persona (rest of BH-T02) | next | `Persona.tools` is declared and not applied; either apply it or stop presenting it as a permission |
+| 5 | Tool allowlist per persona (rest of BH-T02) | done 2026-09-24 | grants enforced for workflow/chat tools and runtime-injected tools; router delegation restricted; OS isolation remains separate |
 | 6 | Transactional run state (BH-T05) | partial | server jobs and administrative/chart edits share a run lock; decisions are durable. Distributed ownership and legacy CLI coordination remain outside this slice |
 | 7 | Deterministic launch (BH-T06) | done 2026-09-23 | launcher calls ExecutionService directly; chat submits to the same service; no orchestrator call needed to launch |
 | 8 | Deadlines, cancellation, isolation (BH-T07) | partial 2026-09-24 | supervised workflow processes enforce deadlines and cancel compute; kernel privileges and security isolation remain unresolved |
-| 9 | Cartridge versioning and input validation (rest of BH-T08) | after 7 | a run keeps a cartridge name, not a digest, so an update can change what history means |
+| 9 | Cartridge versioning and input validation (rest of BH-T08) | partial | execution/configuration/tool-policy fingerprints reject changed resumes; executable archives, full dependency locks and remaining input validation stay open |
 | 10 | Usage per attempt (BH-T09) | after 9 | a stream that fails loses the tokens it already spent |
 | 11 | Environment serialization and lifetime (BH-T10) | after 10 | one kernel per project, shared by every chat, with no queue |
 | 12 | Resource limits and CI (BH-T11/T12) | after 11 | `pytest` as documented does not collect the suite; no lock file, no pipeline |
 
-Item 8 is deliberately not "write code next". The review's own verdict is that
-the execution boundary has to be *defined* before it is implemented, and the
-rest of the list is worth more per hour until then.
+The local process lifecycle in item 8 is implemented. Its security-isolation
+contract still has to be defined before selecting and validating a sandbox.
 
 ## M1 — Harness skeleton (kernel env only) — DONE 2026-09-16
 

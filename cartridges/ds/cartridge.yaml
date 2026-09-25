@@ -10,10 +10,13 @@ capabilities:
   - { id: script.python, version: "1" }
 
 personas:
-  marie: { role: "Data Analyst",      workflows: [eda-to-report] }
-  noel:  { role: "Data Scientist",    workflows: [eda-to-report] }
-  ana:   { role: "MMM Lead",          workflows: [mmm-meridian] }
-  pablo: { role: "MMM Data Engineer", workflows: [] }
+  marie:
+    role: Data Analyst
+    workflows: [eda-to-report]
+    tools: &analysis_tools [ls, read_file, write_file, edit_file, glob, grep, write_todos, execute, run_python, run_skill_script, show_chart, show_table]
+  noel:  { role: "Data Scientist",    workflows: [eda-to-report], tools: *analysis_tools }
+  ana:   { role: "MMM Lead",          workflows: [mmm-meridian], tools: *analysis_tools }
+  pablo: { role: "MMM Data Engineer", workflows: [], tools: *analysis_tools }
 
 skills:
   reports: { scope: all }                    # traversal — every persona
