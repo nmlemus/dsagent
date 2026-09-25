@@ -2,6 +2,10 @@
 
 Fecha: 2026-09-23. Estado: aceptado e implementado en este bloque.
 
+Actualización 2026-09-24: el [control de cómputo](process-control.md) añade workers
+en subprocesses, cancelación efectiva y deadlines. Sus decisiones sustituyen las
+limitaciones de threads/cancelación que este ADR describe para la primera fase.
+
 ## Decisión
 
 `ExecutionService` es el dueño de los workflows del servidor. El launcher llama

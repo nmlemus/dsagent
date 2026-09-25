@@ -335,6 +335,13 @@ attempt and UUID, not by positional graph interrupts. A server restart preserves
 pending gates; uncertain work is marked `interrupted` for explicit retry. The
 [execution ADR](execution-service.md) defines authority, recovery and limits.
 
+The server now runs each workflow invocation inside a supervised subprocess via
+the host's `process.local` provider. Step deadlines include model calls and tools;
+stop requests terminate the worker and its registered compute resources. Process
+identity and Docker ownership labels protect reconciliation; unverified cleanup
+blocks retries. See [process control](process-control.md). Interactive chat and
+explicit legacy embedders remain outside this process boundary.
+
 CLI execution remains synchronous, with terminal gates. Legacy `GraphDriver`
 and interrupt adapters remain available for embedders but are no longer used by
 the server. Chat graph checkpoints remain ephemeral; SessionStore owns transcripts.

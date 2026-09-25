@@ -10,15 +10,18 @@ from __future__ import annotations
 
 import queue
 import sys
+import time
 from importlib.metadata import version
 from pathlib import Path
 
-from deepagents.backends import LocalShellBackend
 from langchain_core.tools import tool
 
 from dsagent import requirements
 from dsagent.cartridge.models import EnvSpec
 from dsagent.envs.base import Env, EnvRequirementsError
+from dsagent.envs.controlled_shell import ControlledShellBackend
+from dsagent.execution_storage import durable_json
+from dsagent.processes import identity, resource_intent
 
 
 class JupyterKernel:
@@ -28,7 +31,15 @@ class JupyterKernel:
         from jupyter_client import KernelManager
 
         self._km = KernelManager(kernel_name="python3")
-        self._km.start_kernel(cwd=str(cwd))
+        resource = resource_intent("process")
+        try:
+            self._km.start_kernel(cwd=str(cwd))
+            if resource:
+                durable_json(resource, {"kind": "process",
+                                        "identity": identity(self._km.provisioner.pid)})
+        except Exception:
+            self._km.shutdown_kernel(now=True)
+            raise
         self._kc = self._km.client()
         self._kc.start_channels()
         self._kc.wait_for_ready(timeout=60)
@@ -36,13 +47,17 @@ class JupyterKernel:
 
     def run(self, code: str) -> str:
         msg_id = self._kc.execute(code)
+        deadline = time.monotonic() + self.timeout
         out: list[str] = []
         while True:
             try:
-                msg = self._kc.get_iopub_msg(timeout=self.timeout)
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise queue.Empty()
+                msg = self._kc.get_iopub_msg(timeout=remaining)
             except queue.Empty:
-                out.append(f"[timeout after {self.timeout}s]")
-                break
+                self.close()
+                raise TimeoutError(f"kernel execution exceeded {self.timeout}s; kernel terminated") from None
             if msg["parent_header"].get("msg_id") != msg_id:
                 continue
             t, c = msg["msg_type"], msg["content"]
@@ -85,7 +100,7 @@ def _verify_requirements(spec: EnvSpec) -> None:
 
 def make_kernel_env(spec: EnvSpec, workspace: Path) -> Env:
     _verify_requirements(spec)
-    backend = LocalShellBackend(root_dir=workspace, virtual_mode=True, inherit_env=True)
+    backend = ControlledShellBackend(root_dir=workspace, virtual_mode=True, inherit_env=True)
     kernel: JupyterKernel | None = None
 
     @tool
@@ -99,7 +114,11 @@ def make_kernel_env(spec: EnvSpec, workspace: Path) -> Env:
         nonlocal kernel
         if kernel is None:
             kernel = JupyterKernel(workspace)
-        return kernel.run(code)
+        try:
+            return kernel.run(code)
+        except TimeoutError:
+            kernel = None
+            raise
 
     def _close() -> None:
         if kernel is not None:

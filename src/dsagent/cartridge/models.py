@@ -11,7 +11,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Literal
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 
 class Skill(BaseModel):
@@ -79,6 +79,18 @@ class Step(BaseModel):
     produces: list[str] = Field(default_factory=list)
     gate: Gate | None = None
     timeout: str | None = None
+
+    @field_validator("timeout", mode="before")
+    @classmethod
+    def valid_timeout(cls, value):
+        from dsagent.processes import seconds
+
+        if isinstance(value, (int, float)) and not isinstance(value, bool):
+            value = str(value)
+        if value is not None and not isinstance(value, str):
+            raise ValueError("timeout must be seconds or a duration string")
+        seconds(value)
+        return value
     sees: list[str] | None = None
     """Workflow inputs this step is shown. `None` means the ones its own
     instruction text interpolates — a step that never writes `{question}` is

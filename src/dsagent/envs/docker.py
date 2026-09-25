@@ -36,6 +36,7 @@ from deepagents.backends.sandbox import BaseSandbox
 
 from dsagent.cartridge.models import EnvSpec
 from dsagent.envs.base import SKILLS_DIR, Env
+from dsagent.processes import PROCESS_DIR_ENV, resource_intent
 
 WORKDIR = "/workspace"
 """Where the run's workspace is mounted, and the container's working directory.
@@ -174,7 +175,13 @@ class DockerBackend(BaseSandbox):
         # The read-only bind needs something to bind: Docker would otherwise
         # create it as a root-owned directory on the host.
         (workspace / SKILLS).mkdir(parents=True, exist_ok=True)
-        started = self._runner(run_argv(image, self._id, workspace, gpu=gpu, user=user))
+        argv = run_argv(image, self._id, workspace, gpu=gpu, user=user)
+        process_root = os.environ.get(PROCESS_DIR_ENV)
+        if process_root:
+            owner = Path(process_root).name
+            resource_intent("docker", name=self._id, owner=owner)
+            argv[2:2] = ["--label", f"dsagent.execution={owner}"]
+        started = self._runner(argv)
         if started.returncode != 0:
             raise DockerError(
                 f"could not start a container from {image}: "

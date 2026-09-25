@@ -895,6 +895,8 @@ p {
   background: var(--err-dim);
 }
 .s-interrupted,
+.s-cleanup_required,
+.s-cancelling,
 .s-stopped {
   color: var(--fg-dim);
   background: var(--bg-3);

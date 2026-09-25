@@ -11,6 +11,7 @@ a test wants the runner without a kernel or a container.
 from __future__ import annotations
 
 import subprocess
+import time
 from pathlib import Path
 from typing import Any
 
@@ -58,6 +59,26 @@ def stub_env(spec, workspace: Path, capabilities=None) -> Env:
     """What every runner test patches `make_env` to: no kernel, no container."""
     return Env(spec=spec, workspace=workspace, backend=FakeBackend(workspace),
                capabilities=capabilities)
+
+
+class ProcessAgent:
+    """Importable fake used across the real workflow subprocess boundary."""
+
+    def __init__(self, workspace):
+        self.workspace = workspace
+
+    def invoke(self, payload):
+        paths = produces_of(payload["messages"][0]["content"])
+        (self.workspace / "entered").touch()
+        if (self.workspace / "long").exists():
+            time.sleep(120)
+        for path in paths:
+            (self.workspace / path).write_text("completed")
+        return {"messages": []}
+
+
+def process_agent(cart, persona, env, workspace):
+    return ProcessAgent(workspace)
 
 
 PRODUCES_PREFIX = "- `"

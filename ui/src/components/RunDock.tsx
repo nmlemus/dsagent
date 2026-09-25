@@ -103,7 +103,7 @@ export function RunDock({
   );
   const charts = Object.values(stream.charts);
   const terminal =
-    detail && ["done", "failed", "stopped", "interrupted"].includes(detail.status);
+    detail && ["done", "failed", "stopped", "interrupted", "cleanup_required"].includes(detail.status);
   const retryable = detail && (
     ["failed", "stopped", "interrupted"].includes(detail.status) ||
     (detail.status === "awaiting_gate" && !detail.awaiting)
@@ -127,6 +127,17 @@ export function RunDock({
       refresh();
     } catch {
       setError("No se pudo detener. Vuelve a intentarlo.");
+    } finally {
+      setStopping(false);
+    }
+  }
+  async function reconcile() {
+    setStopping(true);
+    try {
+      await api.reconcile(runId);
+      refresh();
+    } catch {
+      setError("La limpieza sigue sin verificarse. Revisa los recursos indicados y vuelve a comprobar.");
     } finally {
       setStopping(false);
     }
@@ -173,6 +184,19 @@ export function RunDock({
             aunque no haya registrado su resultado.
           </p>
         )}
+        {detail?.status === "cleanup_required" && (
+          <div role="alert" className="err-banner">
+            No se ha podido confirmar que todos los procesos terminaron. El
+            reintento está bloqueado hasta resolver la limpieza.
+            {detail.process?.cleanup_errors?.map((message) => <p key={message}>{message}</p>)}
+            <button className="btn sm" disabled={stopping} onClick={reconcile}>
+              {stopping ? "Verificando…" : "Verificar limpieza"}
+            </button>
+          </div>
+        )}
+        {detail?.status === "cancelling" && (
+          <p role="status">Cancelando la tarea y liberando sus recursos…</p>
+        )}
         {detail && (
           <div className="run-summary-strip">
             <div>
@@ -199,10 +223,10 @@ export function RunDock({
               {!terminal && (
                 <button
                   className="btn danger sm"
-                  disabled={stopping}
+                  disabled={stopping || detail.status === "cancelling"}
                   onClick={stop}
                 >
-                  {stopping ? "Deteniendo…" : "Detener"}
+                  {stopping || detail.status === "cancelling" ? "Cancelando…" : "Cancelar ejecución"}
                 </button>
               )}
               <a className="btn ghost sm" href={api.downloadUrl(runId)}>

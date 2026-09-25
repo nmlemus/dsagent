@@ -264,6 +264,7 @@ def add_runs_routes(
             "workflow_shape": workflow_shape(cartridge, workflow) if cartridge else None,
             "plan": state.get("plan"),
             "driver_error": getattr(driver, "error_for", lambda _: None)(run_id),
+            "process": getattr(driver, "process_for", lambda _: None)(run_id),
         }
 
     @app.post("/runs")
@@ -495,6 +496,13 @@ def add_runs_routes(
         if not accepted:
             raise HTTPException(status_code=409, detail="gate changed or already answered; refresh the run")
         return {"accepted": True, "decision": decision.value}
+
+    @app.post("/runs/{run_id}/reconcile")
+    def reconcile_run(run_id: str) -> dict[str, Any]:
+        run_dir_of(run_id)
+        if not hasattr(driver, "reconcile"):
+            raise HTTPException(status_code=409, detail="this driver does not manage processes")
+        return driver.reconcile(run_id)
 
     @app.get("/runs/{run_id}/events.json")
     def events_json(run_id: str, after: int = 0) -> dict[str, Any]:
@@ -851,6 +859,9 @@ def _with_live(driver: Any, summary):
     that never stops.
     """
     summary.live = driver.is_running(summary.run_id)
+    if (summary.live and getattr(driver, "isolated", False)
+            and (driver._run_dir(summary.run_id) / STOP_FILE).exists()):
+        summary.status = "cancelling"
     return summary
 
 

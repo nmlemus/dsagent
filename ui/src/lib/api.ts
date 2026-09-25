@@ -205,6 +205,9 @@ export const api = {
       json<Record<string, unknown>>,
     ),
 
+  reconcile: (id: string) =>
+    fetch(`/runs/${id}/reconcile`, { method: "POST" }).then(json<{ verified: boolean }>),
+
   gate: (id: string, decision: GateDecision, note = "", gateId?: string) =>
     fetch(`/runs/${id}/gate`, {
       method: "POST",

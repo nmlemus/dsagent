@@ -44,7 +44,8 @@ def setup(tmp_path, monkeypatch):
 
     def service(**kwargs):
         return ExecutionService([cart], tmp_path / "runs",
-                                agent_factory=lambda c, p, e, ws: Agent(ws, calls), **kwargs)
+                                agent_factory=lambda c, p, e, ws: Agent(ws, calls),
+                                isolated=False, **kwargs)
 
     return cart, service, calls
 
@@ -187,7 +188,7 @@ def test_chat_submission_is_async_project_scoped_and_idempotent(setup, tmp_path)
     store = ProjectStore(tmp_path / "projects", tmp_path / "runs")
     store.ensure_default()
     project = store.create("Marketing", cartridge=cart.name).id
-    service = ExecutionService([cart], tmp_path / "runs", store=store,
+    service = ExecutionService([cart], tmp_path / "runs", store=store, isolated=False,
                                agent_factory=lambda c, p, e, ws: Agent(ws, calls))
     tool = next(t for t in workflow_tools(
         [cart], service.runs_dir, ask_human=lambda _: pytest.fail("chat interrupt invoked"),
@@ -214,6 +215,7 @@ def test_launcher_uses_no_orchestrator_and_http_requires_current_gate(setup, tmp
                         lambda *a, **k: pytest.fail("launcher called the chat model"))
     app = serve.build_app([cart], None, tmp_path / "ws", tmp_path / "runs")
     app.state.driver.agent_factory = lambda c, p, e, ws: Agent(ws, calls)
+    app.state.driver.isolated = False  # this suite tests the service protocol in-process
     with TestClient(app) as client:
         created = client.post("/runs", json={"workflow": "w", "inputs": {"data_path": "x"}})
         assert created.status_code == 200
@@ -246,7 +248,7 @@ class Agent:
     def invoke(self, _):
         Path(sys.argv[2], 'job', 'workspace', 'external-effect').write_text('happened')
         os._exit(17)
-service = ExecutionService([load_cartridge(Path(sys.argv[1]))], Path(sys.argv[2]),
+service = ExecutionService([load_cartridge(Path(sys.argv[1]))], Path(sys.argv[2]), isolated=False,
                            agent_factory=lambda *args: Agent())
 service.start('job')
 while True: time.sleep(.1)
@@ -332,7 +334,7 @@ import dsagent.runner.runner as runner
 from tests.fakes import stub_env
 from tests.test_execution_service import Agent
 runner.make_env = stub_env
-service = ExecutionService([load_cartridge(Path(sys.argv[1]))], Path(sys.argv[2]),
+service = ExecutionService([load_cartridge(Path(sys.argv[1]))], Path(sys.argv[2]), isolated=False,
                            agent_factory=lambda c, p, e, ws: Agent(ws, []))
 service.start('job')
 while service.is_running('job'): time.sleep(.01)

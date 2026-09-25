@@ -101,6 +101,12 @@ reviewing possible external effects. This implementation coordinates processes
 on one POSIX host with local storage; it is not a distributed queue. See the
 [execution service ADR](docs/execution-service.md).
 
+Workflow jobs now run in supervised local subprocesses. **Cancel execution** stops
+the active worker and cleans up its registered resources. `Step.timeout` accepts
+durations such as `30s`, `5m` or `1h` (default: one hour). Unverified cleanup blocks
+retries and is exposed in the UI. See [process control](docs/process-control.md)
+for recovery behavior and the single-host boundary.
+
 ## Cartridge contract
 
 A cartridge is a Claude Code plugin (`.claude-plugin/plugin.json`, `agents/`,

@@ -44,6 +44,9 @@ def builtin_registry() -> CapabilityRegistry:
     """A new registry containing providers shipped with this DSAgent build."""
     registry = CapabilityRegistry()
     registry.register(CapabilityProvider(
+        id="process.local", kind="process", version="1", factory=_local_process,
+    ))
+    registry.register(CapabilityProvider(
         id="environment.kernel", kind="environment", version="1",
         factory=_kernel,
     ))
@@ -60,6 +63,12 @@ def builtin_registry() -> CapabilityRegistry:
         factory=_shell_script, metadata={"extension": ".sh"},
     ))
     return registry
+
+
+def _local_process():
+    from dsagent.processes import LocalProcessProvider
+
+    return LocalProcessProvider()
 
 
 def compose_cartridges(

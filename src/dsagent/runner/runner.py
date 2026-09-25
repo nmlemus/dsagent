@@ -236,6 +236,7 @@ class RunState:
     inputs: dict[str, Any]
     status: str = "pending"  # pending | running | done | failed | awaiting_gate
     driver_error: str = ""
+    process_executor: dict[str, str] = field(default_factory=dict)
     steps: dict[str, StepRecord] = field(default_factory=dict)
     capability_fingerprint: str = ""
     """Hash of the provider ids, versions and dependencies frozen for this run."""
@@ -321,6 +322,7 @@ class WorkflowRunner:
         prices: Any = None,
         capabilities: CapabilitySet | None = None,
         replay_decided_gates: bool = True,
+        process_dir: Path | None = None,
     ) -> None:
         self.capabilities = compose_cartridges([cartridge], capabilities)
         self.cartridge = cartridge
@@ -332,6 +334,7 @@ class WorkflowRunner:
         # Legacy graph embedders use positional interrupt replay. The execution
         # service consumes durable decisions by identity and disables this.
         self.replay_decided_gates = replay_decided_gates
+        self.process_dir = process_dir
         self._log = log
         self.on_event = on_event
         self.run_id = run_dir.name
@@ -544,6 +547,17 @@ class WorkflowRunner:
 
     # ---- run ----------------------------------------------------------------
 
+    def _deadline(self, step: Step | None, *, cleanup: bool = False) -> None:
+        if self.process_dir is not None:
+            from dsagent.processes import seconds
+
+            duration = 30 if cleanup else seconds(step.timeout) if step else None
+            durable_json(self.process_dir / "deadline.json", {
+                "step": step.id if step else None,
+                "expires": time.time() + duration if duration else None,
+                "phase": "cleanup" if cleanup else "step" if step else "human_gate",
+            })
+
     def run(self, workflow_name: str, inputs: dict[str, Any] | None = None, *, resume: bool = False, dry_run: bool = False) -> RunState:
         wf = self.cartridge.workflows[workflow_name]
         state = (
@@ -596,6 +610,7 @@ class WorkflowRunner:
 
         try:
             for step in wf.ordered_steps():
+                self._deadline(step)
                 if not self._execution_unchanged(wf, step, state):
                     return state
                 if self._stopped(state):
@@ -624,6 +639,7 @@ class WorkflowRunner:
             return state
         finally:
             if not dry_run:
+                self._deadline(None, cleanup=True)
                 self.close()
 
     def _execution_unchanged(self, wf: Workflow, step: Step, state: RunState) -> bool:
@@ -924,6 +940,7 @@ class WorkflowRunner:
         # question with it.
         state.status = "awaiting_gate"
         state.gate = {**asdict(request), "kind": "human", "asked_at": asked_at}
+        self._deadline(None)
         state.save(self.run_dir)
         self._emit_step(wf, step, "awaiting_gate",
                         gate={"kind": "human", "prompt": prompt, "asked_at": asked_at,

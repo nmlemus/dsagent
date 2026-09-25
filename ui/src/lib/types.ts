@@ -2,7 +2,7 @@
 // fields the UI reads are typed; the server may send more.
 
 export type RunStatus =
-  "pending" | "running" | "awaiting_gate" | "done" | "failed" | "stopped" | "interrupted";
+  "pending" | "running" | "awaiting_gate" | "done" | "failed" | "stopped" | "interrupted" | "cancelling" | "cleanup_required";
 
 export interface InputSpec {
   type: string;
@@ -145,6 +145,11 @@ export interface RunSummary {
 }
 
 export interface RunDetail extends RunSummary {
+  process?: {
+    status: string;
+    reason?: string;
+    cleanup_errors?: string[];
+  } | null;
   steps: Record<string, StepRecord>;
   workflow_shape: WorkflowShape | null;
   plan: unknown;

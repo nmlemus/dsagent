@@ -34,6 +34,12 @@ partial fix under SR-024/SR-029, not closure of the full parent tasks.
 
 ### Backend hardening — order of execution (2026-09-21)
 
+Update 2026-09-24: [local process control](process-control.md) now supervises server
+workflow workers, enforces step deadlines, cancels active work, and reconciles
+registered kernels/containers before retry. This closes the local workflow slice
+of BH-T07; security isolation, interactive chat cancellation and remote compute
+remain separate work.
+
 Update 2026-09-23: the approved [execution service](execution-service.md) implements
 deterministic launch, shared chat/HTTP submission, single-host ownership,
 durable gate identities and conservative restart recovery. It follows capability
@@ -58,7 +64,7 @@ that reproduces it.
 | 5 | Tool allowlist per persona (rest of BH-T02) | next | `Persona.tools` is declared and not applied; either apply it or stop presenting it as a permission |
 | 6 | Transactional run state (BH-T05) | partial | server jobs and administrative/chart edits share a run lock; decisions are durable. Distributed ownership and legacy CLI coordination remain outside this slice |
 | 7 | Deterministic launch (BH-T06) | done 2026-09-23 | launcher calls ExecutionService directly; chat submits to the same service; no orchestrator call needed to launch |
-| 8 | Deadlines, cancellation, isolation (BH-T07) | blocked on a decision | `Step.timeout` is accepted and ignored; the kernel runs with the server's privileges. Needs the execution-boundary decision first, not more code |
+| 8 | Deadlines, cancellation, isolation (BH-T07) | partial 2026-09-24 | supervised workflow processes enforce deadlines and cancel compute; kernel privileges and security isolation remain unresolved |
 | 9 | Cartridge versioning and input validation (rest of BH-T08) | after 7 | a run keeps a cartridge name, not a digest, so an update can change what history means |
 | 10 | Usage per attempt (BH-T09) | after 9 | a stream that fails loses the tokens it already spent |
 | 11 | Environment serialization and lifetime (BH-T10) | after 10 | one kernel per project, shared by every chat, with no queue |

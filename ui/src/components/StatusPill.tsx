@@ -8,6 +8,8 @@ const LABEL: Record<string, string> = {
   failed: "Con errores",
   stopped: "Detenido",
   interrupted: "Interrumpido",
+  cancelling: "Cancelando",
+  cleanup_required: "Requiere limpieza",
 };
 
 export function StatusPill({ status }: { status: RunStatus | string }) {
