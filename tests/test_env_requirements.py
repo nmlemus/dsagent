@@ -89,13 +89,14 @@ def test_docker_env_requirements_are_validated_but_not_checked(tmp_path):
 
 def test_ds_cartridge_declares_what_its_skill_scripts_need():
     default = load_cartridge(DS).envs["default"]
-    assert default.kind == "kernel"
+    assert default.kind == "docker"
     # The last two are the odd ones out: nothing in the cartridge draws with
     # them. They are how `show_chart` validates a spec — altair for the schema,
     # vl-convert to compile and draw it once — declared here so a CLI run, which
     # has no `[ui]` extra, still validates before recording a chart.
     assert default.requirements == [
         "pandas>=2", "matplotlib", "markdown", "altair>=5.5,<6", "vl-convert-python>=1.7",
+        "jupyter-client", "ipykernel",
     ]
 
 
@@ -126,14 +127,11 @@ def test_kernel_env_provisions_when_requirements_are_satisfied(tmp_path):
 # --- install command ---------------------------------------------------------
 
 
-def test_cartridge_install_dry_run_prints_a_pasteable_command():
+def test_cartridge_install_dry_run_does_not_install_docker_deps_on_the_host():
     result = CliRunner().invoke(app, ["cartridge", "install", str(DS), "--dry-run"])
     assert result.exit_code == 0, result.output
-    printed = result.output.replace("\n", " ")  # rich soft-wraps the line
-    assert "-m pip install" in printed
-    assert "'pandas>=2'" in printed  # unquoted, a paste would redirect into a file named 2
-    # meridian declares no requirements of its own, so there is nothing to skip
-    assert "meridian" not in printed
+    assert "skipping docker env(s) default" in result.output
+    assert "declares no kernel-env requirements" in result.output
 
 
 def _cartridge(**envs: EnvSpec) -> Cartridge:

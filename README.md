@@ -6,9 +6,10 @@ execution environments. The harness is domain-agnostic; the DS cartridge in
 `cartridges/ds` turns it into a data science team. Swap in a BMAD-style cartridge
 and it becomes an SDLC team.
 
-See `docs/architecture.md` for the design. This repo is milestone **M1**: harness
-skeleton, kernel env, the `eda-to-report` workflow end to end, CLI. The Docker env
-and the `mmm-meridian` workflow are wired but need a Docker daemon (M2).
+See `docs/architecture.md` for the design. The current local product slice includes
+the web workspace, durable supervised workflows, effective persona tool grants,
+and hardened Docker execution. Data-science serve mode requires a Docker daemon
+and prebuilt cartridge images.
 
 ## Layout
 
@@ -18,7 +19,7 @@ src/dsagent/
   cartridge/   models + loader (+ matrix validation, /ds-<workflow> command generation)
   host/        cartridge → Deep Agents (persona agents, orchestrator with subagents)
   runner/      declared-DAG workflow runner: envs per step, produces checks, gates, resume
-  envs/        kernel (local shell + persistent Jupyter) and docker (BaseSandbox) backends
+  envs/        filesystem, trusted-local kernel and hardened Docker backends
   cli.py       dsagent cartridge validate|list · run · chat · serve
   serve.py     FastAPI: the orchestrator over AG-UI, plus a run's files over HTTP
 cartridges/ds/ the data science cartridge — also a valid Claude Code plugin
@@ -54,6 +55,8 @@ which is what the web UI in `ui/` will talk to. It needs the `ui` extra:
 
 ```bash
 pip install -e ".[ui,anthropic]"
+docker build -t dsagent/ds-default:latest cartridges/ds/envs/analysis
+docker build -t dsagent/ds-meridian:latest cartridges/ds/envs/meridian
 dsagent serve                            # 127.0.0.1:8000, --host/--port to change
 ```
 
@@ -106,6 +109,12 @@ the active worker and cleans up its registered resources. `Step.timeout` accepts
 durations such as `30s`, `5m` or `1h` (default: one hour). Unverified cleanup blocks
 retries and is exposed in the UI. See [process control](docs/process-control.md)
 for recovery behavior and the single-host boundary.
+
+Serve mode rejects host `kernel` environments and Docker environments that lack a
+prebuilt `image:`. `--insecure-local` is an explicit development escape hatch.
+Compute containers have no network, run non-root with resource limits and a
+read-only root/control directory, while their persistent Python kernel stays
+inside the container. See the [sandbox ADR](docs/sandbox-isolation.md).
 
 ## Cartridge contract
 

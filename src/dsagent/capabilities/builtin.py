@@ -28,6 +28,12 @@ def _docker(spec: EnvSpec, workspace: Path):
     return make_docker_env(spec, workspace)
 
 
+def _filesystem(spec: EnvSpec, workspace: Path):
+    from dsagent.envs.filesystem import make_filesystem_env
+
+    return make_filesystem_env(spec, workspace)
+
+
 def _execute(env, argv: list[str]):
     return env.backend.execute(" ".join(shlex.quote(value) for value in argv))
 
@@ -53,6 +59,10 @@ def builtin_registry() -> CapabilityRegistry:
     registry.register(CapabilityProvider(
         id="environment.docker", kind="environment", version="1",
         factory=_docker,
+    ))
+    registry.register(CapabilityProvider(
+        id="environment.filesystem", kind="environment", version="1",
+        factory=_filesystem,
     ))
     registry.register(CapabilityProvider(
         id="script.python", kind="script-runner", version="1",

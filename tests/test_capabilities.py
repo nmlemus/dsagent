@@ -101,7 +101,6 @@ def test_ds_cartridge_declares_its_script_runtime_and_environment():
     cartridge = load_cartridge(DS)
     composition = compose_cartridges([cartridge])
 
-    assert composition.has("environment.kernel")
     assert composition.has("environment.docker")
     assert composition.has("script.python")
     assert not composition.has("script.shell")
@@ -119,7 +118,8 @@ def test_skill_scripts_are_dispatched_by_declared_provider(tmp_path):
         spec=cartridge.envs["default"], workspace=workspace,
         backend=FakeBackend(workspace),
         capabilities=builtin_registry().compose([
-            "environment.kernel", "environment.docker", "script.python", "script.shell",
+            "environment.kernel", "environment.docker", "environment.filesystem",
+            "script.python", "script.shell",
         ]),
     )
 

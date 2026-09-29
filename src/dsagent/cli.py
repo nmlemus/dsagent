@@ -309,6 +309,10 @@ def serve(
         False, "--memory",
         help="legacy compatibility flag; workflow approvals are always durable",
     ),
+    insecure_local: bool = typer.Option(
+        False, "--insecure-local",
+        help="allow host kernel environments for trusted local development only",
+    ),
     prices: Path | None = typer.Option(
         None, "--prices", help="model rate table (default: prices.yaml, searched upwards)"
     ),
@@ -324,8 +328,15 @@ def serve(
         raise typer.Exit(1) from e
 
     from dsagent.envs import make_env
+    from dsagent.serve import validate_serve_environments
 
     carts = load_cartridges(cartridge)
+    if not replay:
+        try:
+            validate_serve_environments(carts, allow_host_compute=insecure_local)
+        except ValueError as exc:
+            console.print(f"[red]{exc}[/red]")
+            raise typer.Exit(2) from exc
     capabilities = compose_cartridges(carts)
     # A replay serves a recording: no model, and so no env to run anything in.
     env = None if replay else make_env(carts[0].envs["default"], workspace, capabilities)
@@ -336,7 +347,7 @@ def serve(
                             recursion_limit=recursion_limit or RECURSION_LIMIT,
                             replay=replay, replay_speed=replay_speed,
                             memory_checkpointer=memory, prices=rates,
-                            capabilities=capabilities)
+                            capabilities=capabilities, allow_host_compute=insecure_local)
     mode = f"[yellow]replay[/yellow] {replay} at {replay_speed:g}×" if replay else "live"
     priced = f"{len(rates.rates)} model rate(s)" if rates.rates else "[yellow]no prices[/yellow]"
     console.print(

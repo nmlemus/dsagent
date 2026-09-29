@@ -29,7 +29,7 @@ workflows:
 envs:
   # Nothing to install: this team only receives file tools. Python and shell
   # remain unavailable unless explicitly granted above.
-  default: { kind: kernel }
+  default: { kind: filesystem }
 
 experience:
   version: 1

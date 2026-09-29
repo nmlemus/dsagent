@@ -8,10 +8,9 @@ derived from those.
 Everything the harness does after a step reads the run directory from the host —
 `produces` is verified there, the files endpoint serves from it, `show_chart`
 names a file in it, the zip is built from it — so a container writing to its own
-copy would produce a run whose evidence does not exist. Skills come along inside
-that mount, because they are materialized under `<workspace>/.dsagent/skills/`;
-they get a second, read-only bind of the same directory so that a persona cannot
-rewrite the skill it was granted.
+copy would produce a run whose evidence does not exist. Harness-controlled
+material comes along under `<workspace>/.dsagent/`; that entire directory gets a
+second, read-only bind so generated code cannot rewrite its skills or checks.
 
 Every `docker` invocation is built by a function that returns a list of strings
 and runs nothing, and the thing that runs them is injected. That is what makes
@@ -23,16 +22,20 @@ real.
 from __future__ import annotations
 
 import base64
+import json
 import os
 import shlex
 import subprocess
 import tempfile
+import textwrap
 import uuid
 from collections.abc import Callable, Sequence
+from dataclasses import dataclass
 from pathlib import Path
 
 from deepagents.backends.protocol import ExecuteResponse, FileDownloadResponse, FileUploadResponse
 from deepagents.backends.sandbox import BaseSandbox
+from langchain_core.tools import tool
 
 from dsagent.cartridge.models import EnvSpec
 from dsagent.envs.base import SKILLS_DIR, Env
@@ -48,6 +51,8 @@ thing on both sides of the boundary."""
 SKILLS = SKILLS_DIR.as_posix()
 """Materialized skills, relative to the workspace. Inside the mount already;
 bound a second time read-only so a step cannot edit what it was granted."""
+CONTROL_DIR = SKILLS_DIR.parent
+"""All trusted material exposed inside the workspace, mounted read-only."""
 
 DEFAULT_TIMEOUT = 3600
 PYTHON = "python3"
@@ -97,8 +102,33 @@ def run_docker(argv: Sequence[str], *, timeout: int | None = None) -> subprocess
 # ---- the argv, as values -----------------------------------------------------
 
 
+@dataclass(frozen=True)
+class SandboxLimits:
+    """Host policy. A cartridge cannot weaken these container restrictions."""
+
+    memory: str = "8g"
+    cpus: str = "4"
+    pids: int = 256
+    tmpfs: str = "512m"
+
+
+DEFAULT_LIMITS = SandboxLimits()
+SANDBOX_ENV = {
+    "HOME": "/tmp/dsagent-home",
+    "LANG": "C.UTF-8",
+    "LC_ALL": "C.UTF-8",
+    "PYTHONIOENCODING": "utf-8",
+    "PYTHONDONTWRITEBYTECODE": "1",
+    "PYTHONNOUSERSITE": "1",
+    "IPYTHONDIR": "/tmp/ipython",
+    "JUPYTER_CONFIG_DIR": "/tmp/jupyter",
+    "MPLCONFIGDIR": "/tmp/matplotlib",
+    "XDG_CACHE_HOME": "/tmp/cache",
+}
+
+
 def run_argv(image: str, container: str, workspace: Path, *, gpu: bool = False,
-             user: str | None = None) -> list[str]:
+             user: str | None = None, limits: SandboxLimits = DEFAULT_LIMITS) -> list[str]:
     """`docker run` for a run's container: detached, mounted, idle.
 
     `sleep infinity` rather than a command, because the container is the *run's*
@@ -108,17 +138,31 @@ def run_argv(image: str, container: str, workspace: Path, *, gpu: bool = False,
     """
     argv = [
         "docker", "run", "--detach", "--name", container,
+        "--network", "none",
+        "--read-only",
+        "--cap-drop", "ALL",
+        "--security-opt", "no-new-privileges=true",
+        "--pids-limit", str(limits.pids),
+        "--memory", limits.memory,
+        "--memory-swap", limits.memory,
+        "--cpus", limits.cpus,
+        "--ulimit", "nofile=1024:1024",
+        "--init",
+        "--tmpfs", f"/tmp:rw,nosuid,nodev,noexec,size={limits.tmpfs},mode=1777",
         "--volume", f"{workspace}:{WORKDIR}",
-        # The same directory again, read-only, over the top: skills arrive with
-        # the workspace, and a persona may run them but not rewrite them.
-        "--volume", f"{workspace / SKILLS}:{WORKDIR}/{SKILLS}:ro",
+        # Harness material (skills and auto-gate scripts) lives below this
+        # directory. It may change from the trusted host after the mount starts,
+        # but code inside the sandbox cannot rewrite it.
+        "--volume", f"{workspace / CONTROL_DIR}:{WORKDIR}/{CONTROL_DIR.as_posix()}:ro",
         "--workdir", WORKDIR,
     ]
+    for key, value in SANDBOX_ENV.items():
+        argv += ["--env", f"{key}={value}"]
     if user:
         argv += ["--user", user]
     if gpu:
         argv += ["--gpus", "all"]
-    return [*argv, image, "sleep", "infinity"]
+    return [*argv, image, "bash", "-lc", 'mkdir -p "$HOME" && exec sleep infinity']
 
 
 def exec_argv(container: str, command: str) -> list[str]:
@@ -172,10 +216,15 @@ class DockerBackend(BaseSandbox):
         self._closed = False
         self.image = image
         self.timeout = timeout
+        resolved_user = user or host_user()
+        if not resolved_user or resolved_user.split(":", 1)[0] == "0":
+            raise DockerError(
+                "sandbox containers require a non-root POSIX host identity"
+            )
         # The read-only bind needs something to bind: Docker would otherwise
         # create it as a root-owned directory on the host.
-        (workspace / SKILLS).mkdir(parents=True, exist_ok=True)
-        argv = run_argv(image, self._id, workspace, gpu=gpu, user=user)
+        (workspace / CONTROL_DIR).mkdir(parents=True, exist_ok=True)
+        argv = run_argv(image, self._id, workspace, gpu=gpu, user=resolved_user)
         process_root = os.environ.get(PROCESS_DIR_ENV)
         if process_root:
             owner = Path(process_root).name
@@ -263,10 +312,16 @@ def ensure_image(spec: EnvSpec, *, runner: Runner | None = None) -> str:
     return tag
 
 
-def make_docker_env(spec: EnvSpec, workspace: Path, *, runner: Runner | None = None) -> Env:
+def make_docker_env(
+    spec: EnvSpec,
+    workspace: Path,
+    *,
+    runner: Runner | None = None,
+    user: str | None = None,
+) -> Env:
     image = ensure_image(spec, runner=runner)
     backend = DockerBackend(
-        image, workspace, gpu=spec.gpu == "required", user=host_user() or None, runner=runner,
+        image, workspace, gpu=spec.gpu == "required", user=user or host_user(), runner=runner,
     )
     try:
         inspected = (runner or run_docker)(
@@ -278,7 +333,113 @@ def make_docker_env(spec: EnvSpec, workspace: Path, *, runner: Runner | None = N
     except BaseException:
         backend.close()
         raise
-    # No `closers`: `Env.close` already calls the backend's own `close`, and the
-    # container must be removed exactly as reliably either way.
+    kernel: DockerKernel | None = None
+
+    @tool
+    def run_python(code: str) -> str:
+        """Run Python in the sandbox's persistent Jupyter kernel.
+
+        Variables and imports persist for this environment. The kernel and its
+        client both run inside the network-isolated container.
+        """
+        nonlocal kernel
+        if kernel is None:
+            kernel = DockerKernel(backend)
+        try:
+            return kernel.run(code)
+        except TimeoutError:
+            # DockerKernel stops a failed kernel. A later tool call must create
+            # a fresh one rather than reusing the closed transport.
+            kernel = None
+            raise
+
+    def close_kernel() -> None:
+        if kernel is not None:
+            kernel.close()
+
     return Env(spec=spec, workspace=workspace, backend=backend, python=PYTHON,
+               tools=[run_python], closers=[close_kernel],
                runtime_identity={"docker_image_id": image_id})
+
+
+_KERNEL_CLIENT = textwrap.dedent(r"""
+    import base64, json, queue, sys, time
+    from jupyter_client import BlockingKernelClient
+
+    connection, encoded, timeout = sys.argv[1], sys.argv[2], float(sys.argv[3])
+    client = BlockingKernelClient(connection_file=connection)
+    client.load_connection_file()
+    client.start_channels()
+    output = []
+    try:
+        client.wait_for_ready(timeout=min(timeout, 20))
+        msg_id = client.execute(base64.b64decode(encoded).decode())
+        deadline = time.monotonic() + timeout
+        while True:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise TimeoutError("kernel execution deadline exceeded")
+            try:
+                msg = client.get_iopub_msg(timeout=remaining)
+            except queue.Empty:
+                raise TimeoutError("kernel execution deadline exceeded") from None
+            if msg.get("parent_header", {}).get("msg_id") != msg_id:
+                continue
+            kind, content = msg["msg_type"], msg["content"]
+            if kind == "stream":
+                output.append(content.get("text", ""))
+            elif kind in ("execute_result", "display_data"):
+                data = content.get("data", {})
+                output.append(data.get("text/plain", ""))
+                if "image/png" in data:
+                    output.append("[image/png output — save it to a file to keep it]")
+            elif kind == "error":
+                output.append("\n".join(content.get("traceback", [])))
+            elif kind == "status" and content.get("execution_state") == "idle":
+                break
+        print("DSAGENT_KERNEL_RESULT=" + json.dumps({"output": "".join(output).strip()}))
+    finally:
+        client.stop_channels()
+""")
+
+
+class DockerKernel:
+    """Persistent IPython kernel whose process and transport remain in Docker."""
+
+    def __init__(self, backend: DockerBackend, timeout: int = 600) -> None:
+        self.backend = backend
+        self.timeout = timeout
+        self.connection = "/tmp/dsagent-kernel.json"
+        start = backend.execute(
+            "rm -f /tmp/dsagent-kernel.json /tmp/dsagent-kernel.pid; "
+            "nohup python3 -m ipykernel_launcher -f /tmp/dsagent-kernel.json "
+            ">/tmp/dsagent-kernel.log 2>&1 & echo $! >/tmp/dsagent-kernel.pid; "
+            "for i in $(seq 1 200); do test -s /tmp/dsagent-kernel.json && exit 0; sleep .05; done; "
+            "cat /tmp/dsagent-kernel.log; exit 1",
+            timeout=20,
+        )
+        if start.exit_code != 0:
+            raise DockerError(f"sandbox kernel did not start: {start.output[-500:]}")
+
+    def run(self, code: str) -> str:
+        helper = base64.b64encode(_KERNEL_CLIENT.encode()).decode()
+        payload = base64.b64encode(code.encode()).decode()
+        command = " ".join(shlex.quote(value) for value in [
+            PYTHON, "-c", f"import base64;exec(base64.b64decode('{helper}'))",
+            self.connection, payload, str(self.timeout),
+        ])
+        result = self.backend.execute(command, timeout=self.timeout + 30)
+        marker = "DSAGENT_KERNEL_RESULT="
+        if result.exit_code != 0 or marker not in result.output:
+            self.close()
+            raise TimeoutError(
+                f"sandbox kernel execution failed or exceeded {self.timeout}s: {result.output[-500:]}"
+            )
+        record = json.loads(result.output.rsplit(marker, 1)[1].splitlines()[0])
+        return record["output"] or "(no output)"
+
+    def close(self) -> None:
+        self.backend.execute(
+            "test ! -f /tmp/dsagent-kernel.pid || kill $(cat /tmp/dsagent-kernel.pid) 2>/dev/null || true",
+            timeout=5,
+        )

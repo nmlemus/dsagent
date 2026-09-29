@@ -213,7 +213,9 @@ def test_launcher_uses_no_orchestrator_and_http_requires_current_gate(setup, tmp
 
     monkeypatch.setattr("dsagent.host.build_orchestrator",
                         lambda *a, **k: pytest.fail("launcher called the chat model"))
-    app = serve.build_app([cart], None, tmp_path / "ws", tmp_path / "runs")
+    app = serve.build_app(
+        [cart], None, tmp_path / "ws", tmp_path / "runs", allow_host_compute=True
+    )
     app.state.driver.agent_factory = lambda c, p, e, ws: Agent(ws, calls)
     app.state.driver.isolated = False  # this suite tests the service protocol in-process
     with TestClient(app) as client:

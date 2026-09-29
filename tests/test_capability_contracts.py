@@ -50,7 +50,7 @@ def test_injected_compositions_cannot_bypass_requirements(tmp_path, monkeypatch,
             from dsagent.serve import build_app
 
             options = {"capabilities": composition} if entry == "server" else {}
-            build_app([cart], env, ws, tmp_path / "runs", **options)
+            build_app([cart], env, ws, tmp_path / "runs", allow_host_compute=True, **options)
     assert not ws.exists(), "failed binding materialized skills before validating"
 
 

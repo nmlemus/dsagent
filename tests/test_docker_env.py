@@ -13,6 +13,7 @@ base image and installs Meridian the first time, which is minutes, not seconds.
 from __future__ import annotations
 
 import os
+import shlex
 import subprocess
 from pathlib import Path
 
@@ -20,6 +21,7 @@ import pytest
 
 from dsagent.cartridge.models import EnvSpec
 from dsagent.envs.docker import (
+    CONTROL_DIR,
     SKILLS,
     WORKDIR,
     DockerBackend,
@@ -86,7 +88,7 @@ def test_a_run_mounts_the_workspace_and_works_in_it(workspace):
     assert ["--workdir", WORKDIR] == argv[argv.index("--workdir"):argv.index("--workdir") + 2]
     # Idle, not a command: the container is the *run's* machine and outlives any
     # one step, which is what lets a later step read what an earlier one wrote.
-    assert argv[-3:] == ["img:1", "sleep", "infinity"]
+    assert argv[-4:] == ["img:1", "bash", "-lc", 'mkdir -p "$HOME" && exec sleep infinity']
 
 
 def test_skills_are_mounted_again_read_only(workspace):
@@ -94,11 +96,28 @@ def test_skills_are_mounted_again_read_only(workspace):
     reachability — a persona may run the skill it was granted, not rewrite it."""
     argv = run_argv("img:1", "c1", workspace)
 
-    assert f"{workspace / SKILLS}:{WORKDIR}/{SKILLS}:ro" in argv
+    assert f"{workspace / '.dsagent'}:{WORKDIR}/.dsagent:ro" in argv
     # And it lands *after* the workspace, or the writable mount would cover it.
     mounts = [argv[i + 1] for i, a in enumerate(argv) if a == "--volume"]
     assert mounts[0].endswith(f":{WORKDIR}")
     assert mounts[1].endswith(":ro")
+
+
+def test_sandbox_policy_cannot_be_weakened_by_a_cartridge(workspace):
+    argv = run_argv("img:1", "c1", workspace)
+
+    assert argv[argv.index("--network") + 1] == "none"
+    assert "--read-only" in argv
+    assert argv[argv.index("--cap-drop") + 1] == "ALL"
+    assert argv[argv.index("--security-opt") + 1] == "no-new-privileges=true"
+    assert argv[argv.index("--pids-limit") + 1] == "256"
+    assert argv[argv.index("--memory") + 1] == "8g"
+    assert argv[argv.index("--memory-swap") + 1] == "8g"
+    assert argv[argv.index("--cpus") + 1] == "4"
+    assert argv[argv.index("--ulimit") + 1] == "nofile=1024:1024"
+    environment = [argv[i + 1] for i, value in enumerate(argv) if value == "--env"]
+    assert "HOME=/tmp/dsagent-home" in environment
+    assert all("KEY=" not in value and "TOKEN=" not in value for value in environment)
 
 
 def test_the_container_runs_as_the_person_who_started_the_run(workspace):
@@ -165,25 +184,34 @@ def test_the_host_user_is_a_uid_gid_pair_on_posix():
 def test_starting_a_backend_starts_one_container(workspace):
     docker = FakeDocker()
 
-    backend = DockerBackend("img:1", workspace, runner=docker)
+    backend = DockerBackend("img:1", workspace, user="1000:1000", runner=docker)
 
     assert len(docker.of("run")) == 1
     assert backend.id.startswith("dsagent-")
     assert backend.id in docker.of("run")[0]
     # The read-only bind needs a directory to bind, or Docker makes one as root.
-    assert (workspace / SKILLS).is_dir()
+    assert (workspace / CONTROL_DIR).is_dir()
+
+
+def test_a_backend_refuses_to_start_as_root(workspace):
+    docker = FakeDocker()
+
+    with pytest.raises(DockerError, match="non-root"):
+        DockerBackend("img:1", workspace, user="0:0", runner=docker)
+
+    assert docker.of("run") == []
 
 
 def test_a_daemon_that_refuses_is_an_error_with_its_own_words(workspace):
     docker = FakeDocker(run=(125, "", "Cannot connect to the Docker daemon"))
 
     with pytest.raises(DockerError, match="Cannot connect to the Docker daemon"):
-        DockerBackend("img:1", workspace, runner=docker)
+        DockerBackend("img:1", workspace, user="1000:1000", runner=docker)
 
 
 def test_execute_reports_the_exit_code_and_both_streams(workspace):
     docker = FakeDocker(exec=(3, "out", "err"))
-    backend = DockerBackend("img:1", workspace, runner=docker)
+    backend = DockerBackend("img:1", workspace, user="1000:1000", runner=docker)
 
     answer = backend.execute("false")
 
@@ -193,7 +221,7 @@ def test_execute_reports_the_exit_code_and_both_streams(workspace):
 
 def test_a_command_that_never_returns_is_a_timeout_not_a_hang(workspace):
     docker = FakeDocker()
-    backend = DockerBackend("img:1", workspace, runner=docker)
+    backend = DockerBackend("img:1", workspace, user="1000:1000", runner=docker)
     docker.raises = subprocess.TimeoutExpired(cmd="docker", timeout=5)
 
     answer = backend.execute("sleep 99", timeout=5)
@@ -209,7 +237,7 @@ def test_files_go_in_and_come_back_out(workspace):
 
     payload = b"weather,precip\nrain,5.4\n"
     docker = FakeDocker(exec=(0, base64.b64encode(payload).decode(), ""))
-    backend = DockerBackend("img:1", workspace, runner=docker)
+    backend = DockerBackend("img:1", workspace, user="1000:1000", runner=docker)
 
     up = backend.upload_files([("artifacts/a.csv", payload)])
     down = backend.download_files(["artifacts/a.csv"])
@@ -221,14 +249,14 @@ def test_files_go_in_and_come_back_out(workspace):
 
 def test_a_file_that_is_not_there_is_not_found(workspace):
     docker = FakeDocker(exec=(1, "", "No such file"))
-    backend = DockerBackend("img:1", workspace, runner=docker)
+    backend = DockerBackend("img:1", workspace, user="1000:1000", runner=docker)
 
     assert backend.download_files(["nope.csv"])[0].error == "file_not_found"
 
 
 def test_closing_removes_the_container_once(workspace):
     docker = FakeDocker()
-    backend = DockerBackend("img:1", workspace, runner=docker)
+    backend = DockerBackend("img:1", workspace, user="1000:1000", runner=docker)
 
     backend.close()
     backend.close()
@@ -239,7 +267,7 @@ def test_closing_removes_the_container_once(workspace):
 def test_a_cleanup_that_fails_does_not_replace_the_reason_the_run_failed(workspace):
     """`close()` is called from a `finally` that may be unwinding an exception."""
     docker = FakeDocker()
-    backend = DockerBackend("img:1", workspace, runner=docker)
+    backend = DockerBackend("img:1", workspace, user="1000:1000", runner=docker)
     docker.raises = OSError("docker went away")
 
     backend.close()  # must not raise
@@ -249,7 +277,7 @@ def test_the_env_closes_its_container(workspace):
     docker = FakeDocker()
     spec = EnvSpec(name="meridian", cartridge="ds", kind="docker", image="img:1")
 
-    env = make_docker_env(spec, workspace, runner=docker)
+    env = make_docker_env(spec, workspace, runner=docker, user="1000:1000")
     env.close()
 
     assert env.python == "python3", "the auto-gate and run_skill_script run env.python"
@@ -262,7 +290,7 @@ def test_unidentifiable_docker_runtime_is_closed_before_returning(workspace):
     docker = FakeDocker(inspect=(1, "", "container disappeared"))
     spec = EnvSpec(name="test", kind="docker", image="mutable:latest")
     with pytest.raises(DockerError, match="could not identify"):
-        make_docker_env(spec, workspace, runner=docker)
+        make_docker_env(spec, workspace, runner=docker, user="1000:1000")
     assert len(docker.of("rm")) == 1
 
 
@@ -270,7 +298,7 @@ def test_an_env_with_a_build_context_builds_before_it_runs(workspace, tmp_path):
     docker = FakeDocker()
     spec = EnvSpec(name="meridian", cartridge="ds", kind="docker", build=tmp_path / "ctx")
 
-    make_docker_env(spec, workspace, runner=docker)
+    make_docker_env(spec, workspace, runner=docker, user="1000:1000")
 
     assert docker.of("build")[0] == build_argv(tmp_path / "ctx", "dsagent/ds-meridian:latest")
     assert docker.calls.index(docker.of("build")[0]) < docker.calls.index(docker.of("run")[0])
@@ -344,8 +372,75 @@ def test_the_meridian_image_builds_and_runs_meridian(tmp_path):
     os.environ.get("DSAGENT_DOCKER") != "1",
     reason="needs a Docker daemon; set DSAGENT_DOCKER=1",
 )
+def test_real_container_enforces_the_host_sandbox_policy(tmp_path, monkeypatch):
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    (workspace / ".dsagent").mkdir()
+    (workspace / ".dsagent" / "trusted.txt").write_text("host control")
+    outside = tmp_path / "outside-sentinel.txt"
+    outside.write_text("host secret")
+    monkeypatch.setenv("DSAGENT_TEST_SECRET", "must-not-cross")
+
+    backend = DockerBackend(BASE, workspace)
+    try:
+        inspection = subprocess.run(
+            ["docker", "inspect", backend.id], capture_output=True, text=True, check=True
+        )
+        record = __import__("json").loads(inspection.stdout)[0]
+        host = record["HostConfig"]
+        assert host["NetworkMode"] == "none"
+        assert host["ReadonlyRootfs"] is True
+        assert host["CapDrop"] == ["ALL"]
+        assert "no-new-privileges=true" in host["SecurityOpt"]
+        assert host["PidsLimit"] == 256
+        assert host["Memory"] == 8 * 1024**3
+        assert host["NanoCpus"] == 4_000_000_000
+        assert "DSAGENT_TEST_SECRET" not in "\n".join(record["Config"]["Env"])
+
+        assert backend.execute("test $(id -u) -ne 0").exit_code == 0
+        assert backend.execute("echo writable > artifacts.txt").exit_code == 0
+        assert (workspace / "artifacts.txt").read_text().strip() == "writable"
+        assert backend.execute("echo changed > .dsagent/trusted.txt").exit_code != 0
+        assert (workspace / ".dsagent" / "trusted.txt").read_text() == "host control"
+        assert backend.execute("echo changed > /etc/forbidden").exit_code != 0
+        assert backend.execute(
+            f"test ! -e {shlex.quote(str(outside))}"
+        ).exit_code == 0
+        network = backend.execute(
+            "python3 -c \"import socket; socket.create_connection(('1.1.1.1', 53), 1)\""
+        )
+        assert network.exit_code != 0
+        assert backend.execute("test ! -S /var/run/docker.sock").exit_code == 0
+    finally:
+        backend.close()
+
+
+@pytest.mark.skipif(
+    os.environ.get("DSAGENT_DOCKER") != "1",
+    reason="needs a Docker daemon; set DSAGENT_DOCKER=1",
+)
+def test_python_state_persists_inside_the_networkless_container(tmp_path):
+    from dsagent.cartridge import load_cartridge
+
+    spec = load_cartridge(DS, generate_commands=False).envs["default"]
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    env = make_docker_env(spec, workspace)
+    run_python = next(tool for tool in env.tools if tool.name == "run_python")
+    try:
+        assert run_python.invoke({"code": "value = 21; print(value * 2)"}) == "42"
+        assert run_python.invoke({"code": "print(value)"}) == "21"
+        assert run_python.invoke({"code": "import socket; print(socket.if_nameindex())"})
+    finally:
+        env.close()
+
+
+@pytest.mark.skipif(
+    os.environ.get("DSAGENT_DOCKER") != "1",
+    reason="needs a Docker daemon; set DSAGENT_DOCKER=1",
+)
 def test_skills_rematerialize_under_a_live_mount(tmp_path):
-    """The container mounts `.dsagent/skills`, and then the host rebuilds it.
+    """The container mounts `.dsagent` read-only, then the host rebuilds skills.
 
     That is the real order: `env_for` starts the container, and the persona's
     agent is built after it. `materialize_skills` used to replace the root

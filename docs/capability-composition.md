@@ -2,10 +2,11 @@
 
 **Estado:** primera capa implementada · **Fecha:** 2026-09-23
 
-Actualización 2026-09-24: el host añade [process.local](process-control.md) para
+Actualización 2026-09-28: el host añade [process.local](process-control.md) para
 supervisar workflows y [permisos de herramientas](tool-permissions.md) efectivos
-por persona. Los permisos no son un proveedor de herramientas/conectores genérico
-ni sustituyen el aislamiento de seguridad.
+por persona. `environment.filesystem` aporta un backend sin ejecución y
+`environment.docker` aplica el [contrato de aislamiento](sandbox-isolation.md) en
+serve. Los permisos siguen sin sustituir autorización por usuario.
 
 DSAgent conserva Deep Agents/LangGraph como motor y separa el contenido de un
 cartridge de las funciones ejecutables del host. Un skill explica cómo trabajar;
@@ -34,6 +35,8 @@ Los proveedores incluidos son:
 |---|---|---:|---|
 | `environment.kernel` | `environment` | 1 | `env.kind: kernel` |
 | `environment.docker` | `environment` | 1 | `env.kind: docker` |
+| `environment.filesystem` | `environment` | 1 | `env.kind: filesystem` |
+| `process.local` | `process` | 1 | supervisor local de workflows |
 | `script.python` | `script-runner` | 1 | archivos `.py` |
 | `script.shell` | `script-runner` | 1 | archivos `.sh` |
 
@@ -50,7 +53,7 @@ capabilities:
     version: "1"
 
 envs:
-  default: { kind: kernel }
+  default: { kind: docker, image: example/analysis@sha256:… }
   heavy: { kind: docker, image: example/worker:1 }
 ```
 
@@ -95,7 +98,7 @@ El runner escribe en `run.json`:
 {
   "capability_fingerprint": "…",
   "capabilities": [
-    {"id": "environment.kernel", "kind": "environment", "version": "1", "requires": [], "metadata": {}},
+    {"id": "environment.docker", "kind": "environment", "version": "1", "requires": [], "metadata": {}},
     {"id": "script.python", "kind": "script-runner", "version": "1", "requires": [], "metadata": {"extension": ".py"}}
   ]
 }

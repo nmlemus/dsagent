@@ -34,6 +34,14 @@ partial fix under SR-024/SR-029, not closure of the full parent tasks.
 
 ### Backend hardening — order of execution (2026-09-21)
 
+Update 2026-09-28: [sandbox isolation](sandbox-isolation.md) implements the local
+pilot slices SR-009.a/SR-010.a/SR-048.a. Serve mode now requires prebuilt,
+networkless hardened Docker for executable cartridges or a non-executing
+filesystem provider; host kernels require `--insecure-local`. Real Docker probes
+cover host markers, secrets, network, root identity, read-only control material,
+resource limits and persistent Python. Multiuser authorization, disk quotas,
+credential brokers, rootless/remote workers and image supply chain remain open.
+
 Update 2026-09-24: [tool permissions](tool-permissions.md) implements SR-032.a
 and SR-046.a: persona grants at dispatch, restricted delegation, and minimal
 shell/Jupyter environment. OS isolation, controlled user home, active-content
@@ -69,14 +77,15 @@ that reproduces it.
 | 5 | Tool allowlist per persona (rest of BH-T02) | done 2026-09-24 | grants enforced for workflow/chat tools and runtime-injected tools; router delegation restricted; OS isolation remains separate |
 | 6 | Transactional run state (BH-T05) | partial | server jobs and administrative/chart edits share a run lock; decisions are durable. Distributed ownership and legacy CLI coordination remain outside this slice |
 | 7 | Deterministic launch (BH-T06) | done 2026-09-23 | launcher calls ExecutionService directly; chat submits to the same service; no orchestrator call needed to launch |
-| 8 | Deadlines, cancellation, isolation (BH-T07) | partial 2026-09-24 | supervised workflow processes enforce deadlines and cancel compute; kernel privileges and security isolation remain unresolved |
+| 8 | Deadlines, cancellation, isolation (BH-T07) | partial 2026-09-28 | supervised workflow processes enforce deadlines/cancellation; executable serve environments use hardened Docker with real negative probes. Remote/multiuser isolation and admission remain open |
 | 9 | Cartridge versioning and input validation (rest of BH-T08) | partial | execution/configuration/tool-policy fingerprints reject changed resumes; executable archives, full dependency locks and remaining input validation stay open |
 | 10 | Usage per attempt (BH-T09) | after 9 | a stream that fails loses the tokens it already spent |
 | 11 | Environment serialization and lifetime (BH-T10) | after 10 | one kernel per project, shared by every chat, with no queue |
 | 12 | Resource limits and CI (BH-T11/T12) | after 11 | `pytest` as documented does not collect the suite; no lock file, no pipeline |
 
-The local process lifecycle in item 8 is implemented. Its security-isolation
-contract still has to be defined before selecting and validating a sandbox.
+The local process lifecycle and dedicated-installation sandbox in item 8 are
+implemented. Its remaining scope is shared-service authorization, remote worker
+isolation, aggregate admission and storage quotas.
 
 ## M1 — Harness skeleton (kernel env only) — DONE 2026-09-16
 
@@ -160,15 +169,16 @@ document the team writes into. 13/13 §6 demo lines with a real model, 5 runs, $
 - [x] Review round (#76): export HTML escaping/sanitising + attachment/CSP, rail layout, Aiuda chart theme, replay re-embed thrash, `timeUnit` preserved on mark change, brush context wired, repair attempts per (step, chart), superseded produces need mtime > decision, stop test, invariant-1 leaks removed
 - [ ] Deferred: PDF export (vl-convert PNGs into a print layout); findings diff between two gate versions (product question, not a button); chat-started runs losing their gate on restart (build the agent inside the server lifespan)
 
-### M2.3 Docker env — next
+### M2.3 Docker env — implemented locally; product limits tracked in SR backlog
 Design settled before task 1: `docs/architecture.md` §3.4, "What a Docker env has to honour".
 - [x] Design: bind-mounted workspace, materialized gate scripts, skills already inside the
       mount (`:ro` for containment only), chart validation stays on the host and says so
 - [x] `DockerBackend` integration test behind `DSAGENT_DOCKER=1` (build `envs/meridian`, `execute("python -c 'import meridian'")`) + a unit test with a fake docker client for command, mounts and cleanup
-- [x] Workspace bind-mount + `.dsagent/skills` read-only + file ownership: non-root user at the host uid/gid, and a step's `produces` written in the container verified on the host
-- [x] Auto-gate scripts run inside the step env; the kernel env unchanged. (`run_skill_script`
-      already does — it resolves a workspace-relative path and runs it through the backend,
-      and task 2 executes that in a container. The auto-gate is what still shells out to the host.)
+- [x] Workspace bind-mount + all `.dsagent` read-only + file ownership: non-root
+      user at the host uid/gid, and a step's `produces` written in the container
+      verified on the host
+- [x] Auto-gate scripts and `run_skill_script` run through the step backend with
+      its declared interpreter
 - [ ] Env lifecycle: one container per run reused across steps, `rm -f` in a `finally` on exit/failure/stop, fresh container on resume, container id + image in `runner.log` and a `dsagent.env` event
 
 ### M2.4 `mmm-meridian` on the Meridian sample dataset
@@ -260,7 +270,7 @@ Design settled before task 1: `docs/architecture.md` §3.4, "What a Docker env h
   whatever `python3` resolves to on PATH.
 
 - 2026-09-17 — **`materialize_skills` empties the skills root; it never replaces it.** A Docker
-  env bind-mounts `<workspace>/.dsagent/skills` read-only, and the real order is that
+  env now bind-mounts `<workspace>/.dsagent` read-only, and the real order is that
   `env_for` starts the container *before* the persona's agent is built — so the host rebuilds
   a directory the container is already holding. A bind-mount follows the inode, so a fresh
   root leaves the container reading one that no longer exists; on macOS it does not get that

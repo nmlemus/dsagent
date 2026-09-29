@@ -32,8 +32,12 @@ envs:
   # `altair` is not for drawing: it is the Vega-Lite schema `show_chart` validates
   # against. Declared here as well as in the harness's `[ui]` extra so a CLI run —
   # which has no `[ui]` — still validates a spec before it is recorded.
-  default:  { kind: kernel, requirements: [pandas>=2, matplotlib, markdown, "altair>=5.5,<6", "vl-convert-python>=1.7"] }
-  meridian: { kind: docker, build: envs/meridian, gpu: optional }
+  default:
+    kind: docker
+    image: dsagent/ds-default:latest
+    build: envs/analysis
+    requirements: [pandas>=2, matplotlib, markdown, "altair>=5.5,<6", "vl-convert-python>=1.7", jupyter-client, ipykernel]
+  meridian: { kind: docker, image: dsagent/ds-meridian:latest, build: envs/meridian, gpu: optional }
 
 # How this cartridge reads in the workspace UI. The UI's structure (home,
 # assistant, runs, resources, deliverables) is the harness's; every word inside

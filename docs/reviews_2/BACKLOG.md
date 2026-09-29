@@ -1,9 +1,9 @@
 # Backlog reconciliado de producto
 
-Fecha base: 2026-09-19. **Actualizado 2026-09-24:** UI-001 implementada;
-SR-032.a y SR-046.a cerradas con evidencia. Los padres SR conservan sus criterios
-restantes. Otras entregas recientes del harness están documentadas en el roadmap;
-su reconciliación completa con los criterios SR sigue pendiente.
+Fecha base: 2026-09-19. **Actualizado 2026-09-28:** UI-001, SR-032.a,
+SR-046.a y el aislamiento local SR-009.a/SR-010.a/SR-048.a están implementados
+con evidencia. Los padres SR conservan sus criterios restantes. Otras entregas
+recientes del harness están documentadas en el roadmap.
 
 Esta es la fuente de estado vigente para preparación de producto. Los backlogs anteriores se conservan como fuentes históricas; sus checkboxes no se sincronizan. Se conservan SR-001–041 y se añaden SR-042–057. Véanse [síntesis](00-RECONCILIACION.md), [decisiones pendientes](DECISIONES.md) y [mapeo completo](TRAZABILIDAD.md).
 
@@ -30,8 +30,8 @@ Conservar [invariantes](../../CLAUDE.md), actualizar [arquitectura](../architect
 | [ ] | SR-006 | P1 | Evitar pérdidas y falsos éxitos al guardar sesiones | — |
 | [ ] | SR-007 | P1 | Reparar el proxy de desarrollo de la UI | — |
 | [ ] | SR-008 | P1 MMM | Rechazar diagnósticos incompletos o no finitos | — |
-| [ ] | SR-009 | P0 | Definir contrato de aislamiento para el piloto | — |
-| [ ] | SR-010 | P0 | Implementar el entorno aislado y sus límites | SR-009 |
+| [~] | SR-009 | P0 | Definir contrato de aislamiento para el piloto | — |
+| [~] | SR-010 | P0 | Implementar el entorno aislado y sus límites | SR-009 |
 | [ ] | SR-011 | P1 | Controlar concurrencia y ciclo de vida de chats | SR-006, SR-010 |
 | [ ] | SR-012 | P1 | Centralizar transiciones y escrituras del estado del run | SR-004, SR-005 |
 | [ ] | SR-013 | P1 | Aplicar deadlines reales a pasos y herramientas | SR-010, SR-012 |
@@ -69,7 +69,7 @@ Conservar [invariantes](../../CLAUDE.md), actualizar [arquitectura](../architect
 | [ ] | SR-045 | P0 | Proteger acceso HTTP y peticiones desde otros sitios | — |
 | [~] | SR-046 | P0 | Limitar variables heredadas por shell y Jupyter | — |
 | [ ] | SR-047 | P1 | Persistir proyectos y datasets de forma atómica | — |
-| [ ] | SR-048 | P0 | Separar registros de control de archivos del modelo | SR-009, SR-010 |
+| [~] | SR-048 | P0 | Separar registros de control de archivos del modelo | SR-009, SR-010 |
 | [ ] | SR-049 | P1 | Hacer que el servidor sea dueño de la transcripción | SR-006, SR-042, SR-043 |
 | [ ] | SR-050 | P1 | Centralizar configuración y soportar cartridges de solo lectura | — |
 | [ ] | SR-051 | P1 comercial | Inventariar derechos, licencias y términos de distribución | — |
@@ -156,6 +156,12 @@ Conservar [invariantes](../../CLAUDE.md), actualizar [arquitectura](../architect
 
 ### SR-009 — Diseño del aislamiento
 
+- [x] SR-009.a (2026-09-28): contrato para instalación dedicada local: filesystem,
+  identidad, secretos, red, recursos, persistencia, limpieza, Python persistente y
+  límites de confianza; [ADR y evidencia](../sandbox-isolation.md).
+- [ ] SR-009.b: elegir y validar la frontera de una instalación compartida
+  (rootless/worker remoto/VM o microVM), con modelo de amenazas por tenant.
+
 **Entregable:** decisión de arquitectura sobre el entorno soportado del piloto, sin cambiar aún el proveedor por conveniencia.
 
 **Aceptación:** documentar filesystem accesible, secretos, red saliente, CPU/RAM/PIDs, persistencia, limpieza, sistema operativo soportado y límites de confianza. Decidir cómo mantener Python persistente dentro del aislamiento y separar credenciales del orquestador de procesos de análisis. Explicar qué cubre Docker y qué garantías adicionales exige un servicio multiusuario.
@@ -165,6 +171,12 @@ Conservar [invariantes](../../CLAUDE.md), actualizar [arquitectura](../architect
 <a id="sr-010"></a>
 
 ### SR-010 — Entorno aislado
+
+- [x] SR-010.a (2026-09-28): Docker endurecido sin red, non-root, rootfs/control
+  de solo lectura, recursos acotados, entorno mínimo y Jupyter persistente interno;
+  proveedor filesystem sin ejecución y pruebas negativas con daemon real.
+- [ ] SR-010.b: cuotas de disco, admisión agregada, excepciones de red/credenciales
+  explícitas y frontera multiusuario/worker remoto.
 
 **Alcance:** implementar SR-009 en `envs/`, preservando el protocolo y las invariantes del runner.
 
@@ -496,8 +508,9 @@ Conservar [invariantes](../../CLAUDE.md), actualizar [arquitectura](../architect
 
 - [x] SR-046.a (2026-09-24): entorno mínimo de shell/Jupyter; secretos marcador y
   persistencia de kernel verificados; [contrato y evidencia](../tool-permissions.md).
-- [ ] SR-046.b: directorio de usuario efectivamente controlado dentro del sandbox
-  y contrato de credenciales por herramienta. Omitir HOME no cumple ese aislamiento.
+- [x] SR-046.b (2026-09-28): HOME y cachés efectivamente controlados dentro del
+  sandbox Docker; variables del host no heredadas.
+- [ ] SR-046.c: contrato y broker de credenciales por herramienta/conector.
 
 **Alcance/archivos:** `envs/kernel.py`, `envs/docker.py`.
 
@@ -514,6 +527,11 @@ Conservar [invariantes](../../CLAUDE.md), actualizar [arquitectura](../architect
 <a id="sr-048"></a>
 
 ### SR-048 — Separar registros de control de archivos del modelo
+
+- [x] SR-048.a (2026-09-28): `.dsagent` completo es de solo lectura dentro del
+  sandbox y no se expone el socket Docker; skills y gates no son modificables.
+- [ ] SR-048.b: sacar todos los registros/checkpoints/auditoría del árbol de
+  artefactos y probar cada lector/exportador HTTP y el actor de gates.
 
 **Alcance/archivos:** `serve.py`, `host/build.py`, checkpointers, lectores/exportadores de archivos.
 
@@ -608,5 +626,6 @@ Objetivos propuestos para el conjunto soportado: al menos 95% de finalización, 
 |---|---|---|---|---|---|---|
 | UI-001 | Codex | 2026-09-19 | 2026-09-19 | Cambios locales, sin commit/PR | [Build y navegador](../ui-workspace-redesign-2026-09-19.md) | Priorización del usuario; no cierra los padres SR |
 | SR-032.a / SR-046.a | Codex | 2026-09-24 | 2026-09-24 | `harness: enforce tool grants and minimize compute credentials [ADR]` | [Contrato, pruebas de dispatch y kernel real](../tool-permissions.md) | Los padres siguen parciales; sandbox, HOME controlado y credenciales por herramienta pendientes |
+| SR-009.a / SR-010.a / SR-046.b / SR-048.a | Codex | 2026-09-28 | 2026-09-28 | `harness: isolate served compute in hardened containers [ADR]` | [Contrato y sondas Docker reales](../sandbox-isolation.md) | Instalación dedicada local; multiusuario, cuota de disco, credenciales, storage de control y supply chain siguen abiertos |
 
 Evidencias futuras: `docs/runs/startup-readiness/SR-xxx/`. El cierre de documentos de planificación no cierra ninguna tarea de implementación.

@@ -18,7 +18,7 @@ def test_marketing_cartridge_loads_and_matrix_is_consistent():
     assert [s.name for s in c.skills_for("tomas")] == ["briefs", "copy"]
     assert [s.name for s in c.traversal_skills()] == ["briefs"]
     assert set(c.workflows) == {"campaign-brief"}
-    assert c.envs["default"].kind == "kernel"
+    assert c.envs["default"].kind == "filesystem"
     assert c.envs["default"].requirements == []
 
 

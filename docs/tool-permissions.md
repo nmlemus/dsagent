@@ -39,7 +39,7 @@ Python, shell y scripts requieren concesión explícita. Herramientas nuevas de 
 entorno o plugin no se heredan por defecto. Los nombres desconocidos fallan antes
 de crear el agente; los nombres reservados de cómputo pueden estar declarados
 aunque un entorno concreto no aporte esa herramienta, por ejemplo run_python en
-Docker. Una concesión no instala un proveedor ni amplía el scope de skills.
+`filesystem`. Una concesión no instala un proveedor ni amplía el scope de skills.
 
 El cartridge de ciencia de datos conserva sus herramientas de cómputo mediante
 declaraciones explícitas. Marketing concede solo herramientas de archivos y
@@ -75,9 +75,9 @@ inicio de shell ni la ruta de control del supervisor.
 
 Jupyter usa el intérprete de DSAgent y descarta `argv`/`env` inyectados por el
 kernelspec local. Las herramientas que necesiten credenciales deberán recibirlas
-mediante un contrato explícito futuro. Docker no recibe nuevas variables en esta
-entrega; la configuración y credenciales incluidas en imágenes siguen siendo
-responsabilidad del administrador.
+mediante un contrato explícito futuro. Docker recibe solo variables fijas de
+locale, HOME y caché; la configuración o credenciales incluidas en una imagen
+siguen siendo responsabilidad del administrador.
 
 ## Límite de seguridad y trabajo siguiente
 
@@ -86,19 +86,18 @@ arbitrario con las facultades del entorno. Por ejemplo, permitir Python y denega
 shell no impide que Python invoque comandos. El control es sobre herramientas,
 no una clasificación de todos los efectos posibles de un programa.
 
-El backend kernel sigue usando el usuario y filesystem del host. Omitir HOME no
-impide que una librería resuelva el directorio real del usuario, ni que el código
-lea `.env`, otros procesos o archivos accesibles. La política no separa usuarios,
-red, controles del host, CPU, RAM ni disco. No se declara cerrado SR-009/010/048
-ni habilitado el acceso compartido.
+El backend kernel sigue usando el usuario y filesystem del host y solo está
+permitido en desarrollo confiable. Serve usa ahora Docker endurecido para personas
+con cómputo y `filesystem` para las que solo editan archivos; HOME, red, rootfs,
+recursos y `.dsagent` están controlados según el
+[ADR de aislamiento](sandbox-isolation.md). Esto sigue sin separar usuarios o
+tenants ni imponer cuota al bind mount.
 
 Siguiente parte del bloque de seguridad:
 
-1. SR-009.a: contrato del entorno del piloto: filesystem, identidad de ejecución,
-   red, secretos, directorio de usuario y separación del control.
-2. SR-010.a/SR-048.a: proveedor que haga cumplir ese contrato y pruebas negativas
-   de acceso al host y al estado de control, con Docker real o la alternativa
-   elegida. Instalar código arbitrario no puede conceder privilegios del host.
+1. Completar autorización por recurso y credenciales explícitas por herramienta.
+2. Añadir cuotas de disco/admisión y decidir rootless Docker o workers remotos para
+   una instalación compartida.
 3. SR-002: cerrar contenido activo servido desde el origen de la aplicación.
 
 ## Evidencia

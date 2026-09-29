@@ -129,6 +129,34 @@ def interrupt_gate(request: GateRequest) -> GateAnswer:
     return GateAnswer(decision=decision_of(answer), note=str(note or ""))
 
 
+def validate_serve_environments(cartridges: list[Cartridge], *, allow_host_compute: bool) -> None:
+    """Refuse host execution and request-time image builds unless opted in."""
+    if allow_host_compute:
+        return
+    kernels = [
+        f"{cartridge.name}.{name}"
+        for cartridge in cartridges
+        for name, spec in cartridge.envs.items()
+        if spec.kind == "kernel"
+    ]
+    builds = [
+        f"{cartridge.name}.{name}"
+        for cartridge in cartridges
+        for name, spec in cartridge.envs.items()
+        if spec.kind == "docker" and not spec.image
+    ]
+    if kernels or builds:
+        details = []
+        if kernels:
+            details.append("host kernels: " + ", ".join(kernels))
+        if builds:
+            details.append("request-time image builds: " + ", ".join(builds))
+        raise ValueError(
+            "serve refuses " + "; ".join(details)
+            + ". Use prebuilt docker/filesystem providers, or --insecure-local for trusted development only."
+        )
+
+
 def build_app(
     cartridges: list[Cartridge],
     env: Env | None,
@@ -144,6 +172,7 @@ def build_app(
     memory_checkpointer: bool = False,
     prices: Any = None,
     capabilities: Any = None,
+    allow_host_compute: bool = False,
 ):
     """The FastAPI app: the orchestrator at `path`, the runs API under `/runs`.
 
@@ -157,6 +186,9 @@ def build_app(
     from fastapi import FastAPI
 
     from dsagent.capabilities import compose_cartridges
+
+    if replay is None:
+        validate_serve_environments(cartridges, allow_host_compute=allow_host_compute)
 
     source = capabilities if capabilities is not None else (env.capabilities if env else None)
     capabilities = compose_cartridges(cartridges, source)

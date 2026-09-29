@@ -18,6 +18,14 @@ receive a minimal environment instead of inherited server credentials. Effective
 grants are part of execution fingerprints. This is not an OS sandbox or user
 authorization. See [the contract and migration](tool-permissions.md).
 
+**Sandbox update (2026-09-28):** server compute now uses hardened, networkless
+Docker containers built before startup; file-only cartridges use a workspace
+filesystem provider. Host kernels and request-time image builds are refused in
+serve mode unless the operator selects `--insecure-local`. The container keeps a
+persistent Jupyter kernel while `.dsagent`, the root filesystem and server
+credentials remain outside its writable boundary. See the
+[isolation ADR](sandbox-isolation.md).
+
 ---
 
 ## 1. Thesis
@@ -118,8 +126,8 @@ workflows:
   - workflows/eda-to-report
 
 envs:
-  default:  { kind: kernel, requirements: [pandas>=2, matplotlib, markdown] }
-  meridian: { kind: docker, build: envs/meridian, gpu: optional }
+  default:  { kind: docker, image: dsagent/ds-default:latest, build: envs/analysis }
+  meridian: { kind: docker, image: dsagent/ds-meridian:latest, build: envs/meridian, gpu: optional }
 
 capabilities:
   - { id: script.python, version: "1" }
@@ -143,7 +151,7 @@ env: meridian                            # default env for every step unless ove
 steps:
   - id: ingest
     persona: pablo
-    env: default                         # light work, kernel is enough
+    env: default                         # light work, default sandbox is enough
     instructions: steps/01-ingest.md
     produces: [data/raw.parquet, artifacts/data-profile.md]
 
@@ -263,12 +271,22 @@ experience:
 
 An environment is where a step's `execute` calls land. `kind` resolves through
 a versioned capability provider (`environment.<kind>`), so the model no longer
-has a closed enum that must change for every compute backend. Two providers ship
+has a closed enum that must change for every compute backend. Three providers ship
 in v2.0:
 
-`kernel` is the persistent Jupyter kernel ported from v1 (`kernel/local.py`, `kernel/introspector.py`). Variables survive across steps and across chat turns; it is the right home for EDA and reporting.
+`kernel` is the persistent Jupyter kernel ported from v1. It is retained for
+trusted CLI/development use and is rejected by `serve` unless
+`--insecure-local` is explicit.
 
-`docker` builds (or pulls) an image and runs the step inside it, mounting the run's workspace at `/workspace`. A built image is tagged `dsagent/<cartridge>-<env>:latest`, which is why `EnvSpec` carries the cartridge that declared it: two cartridges may both declare an env called `meridian`, and without the namespace the second build silently replaces the first. Every `docker` invocation is a list of strings built by a function that runs nothing, and the thing that runs them is injected — so the mounts, the flags and the cleanup are ordinary unit tests, and only the test that genuinely needs a daemon needs one (`DSAGENT_DOCKER=1`). It implements Deep Agents' `SandboxBackendProtocol`, which only requires `execute()` (plus upload/download for file transfer); the base class derives read/write/ls/glob/grep from that. Meridian is the canonical case: `google-meridian` on Python 3.11/3.12 with the JAX backend, GPU strongly recommended for fits (`[and-cuda]` extra on Linux), CPU acceptable for small models and for the optimizer/report stages.
+`docker` runs a prebuilt image with the run workspace at `/workspace`. Serve mode
+requires `image:` and never builds third-party code during startup or a request.
+The image's actual content id is recorded per run. Every Docker invocation is a
+list of strings built by a pure function, so policy flags and cleanup have unit
+tests; `DSAGENT_DOCKER=1` enables real daemon probes. The complete security
+contract is in [the isolation ADR](sandbox-isolation.md).
+
+`filesystem` exposes only workspace-scoped file operations. It has no `execute`
+or `run_python`, and is the default for the marketing cartridge.
 
 Executable features outside an environment are declared in `capabilities:`.
 Skill scripts are the first example: `.py` and `.sh` are dispatched through
@@ -290,10 +308,18 @@ An env declares the Python distributions it must provide:
 
 ```yaml
 envs:
-  default: { kind: kernel, requirements: [pandas>=2, matplotlib, markdown] }
+  default:
+    kind: docker
+    image: dsagent/ds-default:latest
+    build: envs/analysis
+    requirements: [pandas>=2, matplotlib, markdown]
 ```
 
-`requirements` are opaque pip requirement strings. The harness never interprets them — which is what keeps invariant 1 intact: that `pandas` is needed is the `ds` cartridge's business, not the harness's. A kernel env verifies them when it is provisioned and refuses to start with the exact `pip install` command for whatever is missing, so a run fails before any persona is invoked rather than three tool calls into step 1. `dsagent cartridge install <path>` installs every kernel env's requirements into the interpreter running DSAgent. Docker envs declare theirs for documentation only: the image installs them and the harness only validates that the field is well formed.
+`requirements` are opaque pip requirement strings. The harness never interprets
+them. A kernel env verifies them at provisioning; Docker dependencies are installed
+by the image and remain declarations for validation/documentation. The build path
+is included in the execution fingerprint even when serve selects the prebuilt
+`image:`. `dsagent cartridge install` only installs requirements for kernel envs.
 
 The check is distribution metadata, not `import`: what a cartridge declares is what pip installs, and the import name is frequently not the distribution name (`scikit-learn` imports as `sklearn`). Resolving that would mean the harness carrying a table of package knowledge. Version specifiers are pip's business at install time.
 
@@ -305,9 +331,15 @@ M2.5 and M2.6 added three things to the harness that were written against the ke
 
 **The workspace is a bind-mount, never a copy.** Everything else here depends on it. The run directory is the single record a run keeps — `produces` is verified on the host after a step, the files endpoint serves from it, `show_chart` names a file in it, the zip is built from it — so a container that writes to its own copy produces a run whose evidence does not exist. `-v <run>/workspace:/workspace -w /workspace`, and the step's files are on disk the moment it writes them.
 
-**Skills are already inside it.** `materialize_skills` copies each persona's granted skills to `<workspace>/.dsagent/skills/<persona>/`, which is *within* the bind-mount, and `run_skill_script` runs `<env.python> <path relative to the workspace root>` through `env.backend.execute()` with the container's working directory set to the mount. So the tool needs no change at all and no second mount to be reachable — a mount "at the same absolute path" would be solving a problem that does not exist. What is worth adding is the *read-only* guarantee: a second bind of the same directory with `:ro` over the first, so a persona cannot rewrite the skill it was granted. That is a containment property, not a plumbing one.
+**Trusted control material is read-only.** Skills and auto-gate scripts live below
+`<workspace>/.dsagent/`. A nested read-only bind overlays that entire directory,
+so generated code can read its granted instructions/checks but cannot rewrite
+them. The remainder of the workspace stays writable for artifacts.
 
-**Auto-gate scripts are not inside it.** `gate.check` resolves against the workflow directory (`wf.path / gate.check`) — in the cartridge, outside the workspace — and `_auto_gate` runs it with `subprocess.run(["python3", …])` on the host, ignoring the env entirely. In a Docker env that is the wrong machine, the wrong interpreter and the wrong dependencies: an R-hat check that needs the fitted posterior needs the image that produced it. The gate script is therefore **materialized like a skill** — copied to `<workspace>/.dsagent/gates/<workflow>/` at the gate (the design said run start; the gate is simpler and just as safe, because unlike skills there is no second bind to race — the whole workspace is one mount, so a file written there is inside the container the moment it exists) — and run through `env.backend.execute()` with `env.python`, in the step's own env. Materializing rather than mounting the cartridge keeps one rule for both env kinds: the kernel env runs the identical command and nothing about it changes.
+**Auto-gates run in the step environment.** The host materializes the trusted
+check below `.dsagent/gates/` and invokes it through the same backend and Python
+interpreter that produced the evidence. The host records the decision; model code
+cannot modify the check.
 
 **Chart validation stays on the host, and says so when it cannot happen.** `show_chart` writes nothing into the env: it reads a table the step already wrote and checks a Vega-Lite spec with `altair` and `vl-convert` in the harness's own process. That is correct — validation belongs where the answer is recorded, not where the data was computed — and it is another reason the workspace must be shared rather than copied. The consequence is that the *harness* needs the `[ui]` extra whenever a cartridge draws charts, even if every step runs in Docker. Today `validate_spec` returns "no problem" when either package is missing, which turns a missing install into silently unvalidated charts. It must be loud instead: a warning in `runner.log` the first time a chart is recorded unvalidated, and a note from `dsagent cartridge validate` when the harness cannot validate what this cartridge's personas are told to emit.
 
@@ -329,7 +361,8 @@ Every step also records what it actually did, into its `run.json` entry: tool ca
 
 `run.json` is the record *after* the fact; while a step runs the runner also streams what it sees to an optional `on_event` callback, as `RunnerEvent`s named `dsagent.step`, `dsagent.tool` and `dsagent.file`. Each step event carries that step's `produces`, which is the declared contract the runner already verifies on disk, so a consumer can tell a deliverable from a working file without guessing from extensions. This is why a step's persona is executed with `.stream(stream_mode=["updates", "values"])` rather than `.invoke()`: steps run for minutes, and a consumer that only hears from one when it ends cannot show progress through the part worth watching. The last `values` chunk is the same final state `.invoke()` would have returned, so telemetry and `produces` verification are unchanged. Nothing in the runner knows about AG-UI or HTTP — `docs/ui-slice.md` describes the adapter that turns these into AG-UI `CUSTOM` events, and the payload schemas are pinned there.
 
-**`envs/`** — `KernelBackend` (ported) and `DockerBackend` (new), both behind the sandbox protocol.
+**`envs/`** — trusted local `KernelBackend`, isolated `DockerBackend`, and the
+non-executing `FilesystemBackend` adapter, all behind the sandbox protocol.
 
 **`cli.py` / `serve.py`** — the two front ends. `cli.py` is `dsagent cartridge validate|list`, `run`, `chat` and `serve`. `serve.py` is the HTTP surface, and it replaces the v1 FastAPI + WebSocket server rather than porting it: the transport is AG-UI over SSE, via `ag_ui_langgraph.add_langgraph_fastapi_endpoint` and `copilotkit.LangGraphAGUIAgent`, so there is no hand-rolled protocol to maintain (`docs/ui.md`). It mounts the orchestrator at `POST /agent` and serves a run's workspace at `GET /runs/{run_id}/files/{path}`, resolved inside the workspace and refusing anything that escapes it or lives under `.dsagent/`.
 
@@ -363,7 +396,7 @@ Everything in v1's `core/engine.py` (924-line hand-rolled LLM loop), `core/plann
 | Skill scope | `skills=[…]` on the subagent; orchestrator gets only `scope: all` skills |
 | Workflow step | `task(persona, instructions)` issued by the runner, not by the model |
 | Human workflow gate | Durable execution-service decision, supplied to the runner by gate id |
-| Environment | `backend=` (KernelBackend or DockerBackend via `SandboxBackendProtocol`) |
+| Environment | `backend=` (filesystem, Docker, or trusted-local kernel via `SandboxBackendProtocol`) |
 | Run workspace | backend filesystem rooted at the run directory |
 | Session memory | Deep Agents `memory` (AGENTS.md-style) per run + v1 session store for transcripts |
 
@@ -377,7 +410,9 @@ Personas: **Marie** (Data Analyst: descriptive analysis, dashboards, stakeholder
 
 Skills: `reports` (traversal — report structure, executive summary rules, chart conventions, templates), `eda` (profiling, null/outlier gates, the v1 EDA skill upgraded), `mmm` (Meridian usage, adstock/saturation guidance, prior elicitation checklist, optimizer interpretation), `ml` (feature engineering, CV strategy, leakage checks, model cards).
 
-Workflows: `mmm-meridian` (above) as the flagship; `eda-to-report` (ingest → profile → gate → report) as the two-persona smoke test that runs entirely in the kernel env and exercises every harness feature except Docker.
+Workflows: `mmm-meridian` (above) as the flagship; `eda-to-report` (ingest →
+profile → gate → report) as the two-persona smoke test. Both use prebuilt Docker
+images in server mode; EDA also exercises the persistent in-container Python tool.
 
 ## 6. Migration from `nmlemus/dsagent`
 
